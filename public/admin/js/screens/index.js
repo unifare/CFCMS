@@ -19,6 +19,7 @@ import menus from "./menus.js";
 import widgets from "./widgets.js";
 import themes from "./themes.js";
 import plugins from "./plugins.js";
+import languages from "./languages.js";
 import themeMenuScreen from "./theme-menu.js";
 
 export const SCREENS = {
@@ -32,7 +33,7 @@ export const SCREENS = {
   menus,
   widgets,
   plugins,
-  languages: (c) => resources(c, "locales", "Languages"),
+  languages,
   sites,
   users,
   seo,

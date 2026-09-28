@@ -9,6 +9,7 @@
 import { Env } from "../../shared/types";
 import { now } from "../../shared/repo";
 import { randomId } from "../../shared/crypto";
+import { syncThemeTables } from "./tables";
 import type {
   ThemeManifest,
   ThemePostType,
@@ -28,6 +29,7 @@ export interface ApplyResult {
   adminMenus: number;
   blocks: number;
   settings: number;
+  tables: number;
 }
 
 /**
@@ -49,6 +51,7 @@ export async function applyThemeCapabilities(
     adminMenus: 0,
     blocks: 0,
     settings: 0,
+    tables: 0,
   };
 
   // Re-declaring from the same theme is idempotent: clear its previous
@@ -192,6 +195,12 @@ export async function applyThemeCapabilities(
     result.settings++;
   }
 
+  // Theme-owned business tables (§2.5.2). The DDL is generated from the
+  // declaration, never written by the theme; the `_i18n` companion is created
+  // only when this site serves more than one language.
+  const tables = await syncThemeTables(env, themeName, manifest, siteId);
+  result.tables = tables.length;
+
   await env.DB.prepare("UPDATE theme_installs SET manifest=?, updated_at=? WHERE name=?")
     .bind(JSON.stringify(manifest), ts, themeName)
     .run();
@@ -202,6 +211,12 @@ export async function applyThemeCapabilities(
 /**
  * Mark everything a theme declared as inactive. Data rows (posts, terms,
  * meta) are deliberately left intact so reactivating restores the site.
+ *
+ * Theme-owned business tables (§2.5.2) are not in this list, and that is not an
+ * oversight. Neither the generated tables nor their `theme_table_defs` rows are
+ * touched: the rows are how the platform remembers which generated name a
+ * logical name resolved to, and without them a re-activation would have to
+ * guess. Switching a theme away hides its data; it never destroys it.
  */
 export async function clearThemeCapabilities(
   env: Env,

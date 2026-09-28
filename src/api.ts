@@ -1,5 +1,5 @@
 import { Env } from "./shared/types";
-import { bootstrapAdmin, currentUser, login, logout, requireAdmin } from "./platform/auth";
+import { bootstrapAdmin, currentUser, login, logout, requireAdmin, setUserUiLang } from "./platform/auth";
 import { activity, jsonBody, now, ok } from "./shared/repo";
 import { randomId } from "./shared/crypto";
 import { CORE_BLOCKS } from "./rendering/blocks";
@@ -22,6 +22,32 @@ import {
   listFieldDefs,
   themeSettings,
 } from "./extensions/theme/capabilities";
+import {
+  availableUiLocales,
+  corePackLocales,
+  disableSiteLocale,
+  enableSiteLocale,
+  isLocaleCode,
+  loadUiPacks,
+  mergePacks,
+  platformLocales,
+  resolveUiLocale,
+  setSiteDefaultLocale,
+  siteDefaultLocale,
+  siteLocaleCodes,
+  siteLocaleRows,
+  siteLocales,
+  upsertPlatformLocale,
+} from "./platform/i18n";
+import { activeTheme } from "./extensions/theme/runtime-declarative";
+import {
+  listThemeTableDefs,
+  refreshThemeTableI18n,
+  resolveThemeTable,
+  syncThemeTables,
+  type ThemeTableDef,
+} from "./extensions/theme/tables";
+import { tableBySlug, tableDelete, tableList, tableSave } from "./extensions/theme/table-facade";
 
 /**
  * Which site does this admin request target? Explicit `?site=` wins; otherwise
@@ -31,6 +57,119 @@ import {
 function requestSiteId(url: URL): string {
   const s = String(url.searchParams.get("site") ?? "").trim();
   return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(s) ? s : DEFAULT_SITE_ID;
+}
+
+/**
+ * Find a theme-owned table by its logical name.
+ *
+ * The active theme is tried first — that is the normal case and it is the only
+ * case where the theme is allowed to *create* rows. Falling back to any
+ * declaration the site knows about keeps data reachable after a theme switch
+ * (§3.4): the table and its rows survive, so an admin listing must still be
+ * able to read them even though the declaring theme is no longer active.
+ */
+async function resolveTableForSite(
+  env: Env,
+  siteId: string,
+  logical: string
+): Promise<ThemeTableDef | null> {
+  const theme = await activeTheme(env, siteId).catch(() => null);
+  if (theme?.name) {
+    const def = await resolveThemeTable(env, siteId, theme.name, logical);
+    if (def) return def;
+  }
+  const all = await listThemeTableDefs(env, siteId);
+  return all.find((d) => d.logical_name === logical) ?? null;
+}
+
+/**
+ * How a post identifies its translation group.
+ *
+ * A row's group is its `lang_group` when that is set, and otherwise its own id —
+ * that is how content created before it had any translations names itself.
+ *
+ * The SQL mirror of `groupOf()` is `GROUP_SQL`, and the two must stay in step.
+ * Matching `p.lang_group = ?` on the SQL side instead *excludes* the very row
+ * whose id named the group (its `lang_group` is NULL), so that row vanished from
+ * its own translation group: the editor reported the language as missing and
+ * offered to create a duplicate of a version that already existed.
+ */
+const GROUP_SQL = "COALESCE(NULLIF(TRIM(p.lang_group), ''), p.id)";
+function groupOf(row: any): string {
+  const g = String(row?.lang_group ?? "").trim();
+  return g || String(row?.id ?? "");
+}
+
+/**
+ * Every language version of one piece of content, keyed by `lang_group`.
+ *
+ * Returns one entry per *enabled site locale*, not per existing row, because
+ * the editor's language bar has to show the versions that do **not** exist yet
+ * (that is what the `＋` button is for).
+ */
+async function translationGroup(env: Env, siteId: string, postId: string) {
+  const source = await env.DB.prepare(
+    "SELECT id, type, lang_group, site_id FROM posts WHERE id=? AND site_id=? LIMIT 1"
+  )
+    .bind(postId, siteId)
+    .first<any>();
+  if (!source) return null;
+  const group = groupOf(source);
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.slug, p.status, p.updated_at, t.locale, t.title
+       FROM posts p LEFT JOIN post_translations t ON t.post_id = p.id
+      WHERE p.site_id = ? AND ${GROUP_SQL} = ?
+      ORDER BY t.locale`
+  )
+    .bind(siteId, group)
+    .all();
+  const existing = ((rows.results as any[]) ?? []);
+  const codes = await siteLocaleCodes(env, siteId);
+  const byLocale = new Map<string, any>();
+  for (const r of existing) {
+    if (r.locale) byLocale.set(String(r.locale), r);
+  }
+  const versions = codes.map((code) => {
+    const hit = byLocale.get(code);
+    return {
+      locale: code,
+      exists: !!hit,
+      post_id: hit?.id ?? null,
+      slug: hit?.slug ?? null,
+      title: hit?.title ?? null,
+      status: hit?.status ?? null,
+    };
+  });
+  // A translation in a locale the site no longer serves still exists in the
+  // database. Surface it rather than hiding it — the content is real.
+  for (const r of existing) {
+    const code = String(r.locale ?? "");
+    if (!code || codes.includes(code)) continue;
+    versions.push({
+      locale: code,
+      exists: true,
+      post_id: r.id,
+      slug: r.slug,
+      title: r.title,
+      status: r.status,
+    });
+  }
+  return { group, type: String(source.type), source_id: String(source.id), versions };
+}
+
+/** A slug that is free for this site+type, derived from `base`. */
+async function freeSlug(env: Env, siteId: string, type: string, base: string): Promise<string> {
+  const clean = String(base || "untitled").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "untitled";
+  for (let i = 0; i < 50; i++) {
+    const candidate = i === 0 ? clean : `${clean}-${i + 1}`;
+    const hit = await env.DB.prepare(
+      "SELECT id FROM posts WHERE site_id=? AND type=? AND slug=? LIMIT 1"
+    )
+      .bind(siteId, type, candidate)
+      .first<any>();
+    if (!hit) return candidate;
+  }
+  return `${clean}-${await randomId()}`;
 }
 
 async function listPosts(env: Env, url: URL, kind: string, siteId: string) {
@@ -75,14 +214,22 @@ async function savePost(
   const slug = String(body.slug ?? "").trim() || entityId;
   const status = String(body.status ?? "draft");
   const publishAt = body.publish_at ? Number(body.publish_at) : null;
-  const locale = String(body.locale ?? "en");
+  // The locale to write. Falling back to a literal `"en"` was wrong for the
+  // same reason `siteId = "default"` was: on a site whose default language is
+  // `zh-CN`, a client that omits `locale` would silently author an English
+  // translation. The fallback belongs to the site, so it is looked up.
+  const locale = String(body.locale ?? "").trim() || (await siteDefaultLocale(env, siteId));
   const title = String(body.title ?? "");
   const excerpt = String(body.excerpt ?? "");
   const content = typeof body.content === "string" ? body.content : JSON.stringify(body.content ?? []);
   const isCreate = !id;
   if (!id) {
-    await env.DB.prepare("INSERT INTO posts (id, site_id, author_id, type, slug, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(entityId, siteId, userId, kind, slug, status, now(), now()).run();
+    // `lang_group` ties the language versions of one piece of content together.
+    // A new post starts as its own group of one; a translation added later
+    // adopts the existing group (see the i18n/translations endpoint).
+    const langGroup = String(body.lang_group ?? "").trim() || entityId;
+    await env.DB.prepare("INSERT INTO posts (id, site_id, author_id, type, slug, status, lang_group, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(entityId, siteId, userId, kind, slug, status, langGroup, now(), now()).run();
   } else {
     const old = await env.DB.prepare("SELECT * FROM post_translations WHERE post_id=? AND locale=? LIMIT 1").bind(entityId,locale).first<any>();
     if(old) await createRevision(env,entityId,userId,locale,String(old.title||""),String(old.excerpt||""),String(old.content||""));
@@ -360,6 +507,295 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
       const r = await deleteSite(env, siteMatch[1]);
       if ("error" in r) return ok({ error: r.error }, 400);
       await activity(env, user.id, "delete", "site", siteMatch[1]);
+      return ok({ ok: true });
+    }
+  }
+
+  // -- Languages: L0 site switch + L2 dictionary (ARCHITECTURE.md §2.2/§2.4) --
+  //
+  // L0 and L2 are separate concerns and are kept as separate endpoints on
+  // purpose. `i18n/locales` is what the *site* serves to visitors;
+  // `i18n/dictionary` is what the platform knows; `i18n/ui-locale` is what one
+  // admin wants to read. Collapsing them is how "content language" and "UI
+  // language" get welded together, which §2.4 forbids.
+  if (path === "i18n/locales" && method === "GET") {
+    const [rows, enabled, dictionary, uiLocales] = await Promise.all([
+      siteLocaleRows(env, siteId),
+      siteLocales(env, siteId),
+      platformLocales(env),
+      availableUiLocales(env, siteId),
+    ]);
+    return ok({
+      site: siteId,
+      items: rows,
+      enabled: enabled.map((l) => l.code),
+      default: await siteDefaultLocale(env, siteId),
+      multilingual: enabled.length >= 2,
+      dictionary,
+      ui_locales: uiLocales,
+      core_locales: corePackLocales(),
+    });
+  }
+  if (path === "i18n/locales" && method === "POST") {
+    if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);
+    const b = await jsonBody(request);
+    const code = String(b.code ?? "").trim();
+    if (!isLocaleCode(code)) return ok({ error: `invalid locale code: ${code}` }, 400);
+    // Enabling a language nobody has a name for would leave the switcher blank,
+    // so the dictionary entry is created from the same request.
+    if (b.name) {
+      await upsertPlatformLocale(env, {
+        code,
+        name: String(b.name),
+        native_name: b.native_name ? String(b.native_name) : String(b.name),
+        direction: b.direction === "rtl" ? "rtl" : "ltr",
+        enabled: 1,
+      });
+    }
+    await enableSiteLocale(env, siteId, code, { isDefault: b.is_default === true });
+    // A second language is exactly the event that makes theme `_i18n` tables
+    // exist (§2.5.3). Nothing else has to remember to do this.
+    const created = await refreshThemeTableI18n(env, siteId);
+    await activity(env, user.id, "enable", "locale", code, { site: siteId, i18nTables: created });
+    return ok({ ok: true, code, created_i18n_tables: created }, 201);
+  }
+  const localeMatch = path.match(/^i18n\/locales\/([A-Za-z0-9-]{2,10})$/);
+  if (localeMatch) {
+    if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);
+    const code = localeMatch[1];
+    if (method === "PATCH" || method === "PUT") {
+      const b = await jsonBody(request);
+      if (b.is_default === true) await setSiteDefaultLocale(env, siteId, code);
+      await activity(env, user.id, "update", "locale", code, { site: siteId });
+      return ok({ ok: true, default: await siteDefaultLocale(env, siteId) });
+    }
+    if (method === "DELETE") {
+      try {
+        await disableSiteLocale(env, siteId, code);
+      } catch (e: any) {
+        return ok({ error: e?.message || "cannot disable locale" }, 400);
+      }
+      await activity(env, user.id, "disable", "locale", code, { site: siteId });
+      return ok({ ok: true, enabled: await siteLocaleCodes(env, siteId) });
+    }
+  }
+  if (path === "i18n/dictionary" && method === "GET") {
+    return ok({ items: await platformLocales(env), core: corePackLocales() });
+  }
+  if (path === "i18n/dictionary" && method === "POST") {
+    if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);
+    const b = await jsonBody(request);
+    const code = String(b.code ?? "").trim();
+    if (!isLocaleCode(code)) return ok({ error: `invalid locale code: ${code}` }, 400);
+    await upsertPlatformLocale(env, {
+      code,
+      name: String(b.name ?? code),
+      native_name: b.native_name ? String(b.native_name) : null,
+      direction: b.direction === "rtl" ? "rtl" : "ltr",
+      enabled: b.enabled === false ? 0 : 1,
+      sort_order: Number(b.sort_order ?? 0),
+    });
+    return ok({ ok: true, code }, 201);
+  }
+  // The admin's own interface language. Resolved through the pack stack, so a
+  // language with no pack is refused rather than accepted and then rendered as
+  // raw keys.
+  if (path === "i18n/ui-locale") {
+    if (method === "GET") {
+      const ui = await resolveUiLocale(env, siteId, {
+        userLang: (user as any).ui_lang ?? null,
+        defaultLocale: await siteDefaultLocale(env, siteId),
+      });
+      return ok({
+        locale: ui,
+        user_preference: (user as any).ui_lang ?? null,
+        available: await availableUiLocales(env, siteId),
+      });
+    }
+    if (method === "POST") {
+      const b = await jsonBody(request);
+      const wanted = String(b.locale ?? "").trim();
+      if (!wanted) {
+        await setUserUiLang(env, user.id, null);
+        return ok({ ok: true, locale: null });
+      }
+      const available = await availableUiLocales(env, siteId);
+      if (!available.includes(wanted)) {
+        return ok({ error: `no interface pack for "${wanted}"`, available }, 400);
+      }
+      await setUserUiLang(env, user.id, wanted);
+      return ok({ ok: true, locale: wanted });
+    }
+  }
+  // The admin SPA fetches its strings once per session. Returning the whole
+  // merged stack (rather than one key per call) keeps the client free of a
+  // per-string round trip and makes the layer precedence observable.
+  if (path === "i18n/messages" && method === "GET") {
+    const available = await availableUiLocales(env, siteId);
+    const wanted = String(url.searchParams.get("locale") ?? "").trim();
+    const locale = wanted && available.includes(wanted)
+      ? wanted
+      : await resolveUiLocale(env, siteId, {
+          userLang: (user as any).ui_lang ?? null,
+          defaultLocale: await siteDefaultLocale(env, siteId),
+        });
+    const packs = await loadUiPacks(env, siteId, locale);
+    return ok({ locale, available, layers: packs.length, messages: mergePacks(packs) });
+  }
+  // Database override layer (§2.4 layer ④).
+  if (path === "i18n/overrides") {
+    if (method === "GET") {
+      const locale = String(url.searchParams.get("locale") ?? "").trim();
+      try {
+        const r = locale
+          ? await env.DB.prepare("SELECT key,value FROM i18n_overrides WHERE site_id=? AND locale=? ORDER BY key").bind(siteId, locale).all()
+          : await env.DB.prepare("SELECT locale,key,value FROM i18n_overrides WHERE site_id=? ORDER BY locale,key").bind(siteId).all();
+        return ok({ items: (r.results as any[]) ?? [] });
+      } catch {
+        return ok({ items: [] });
+      }
+    }
+    if (method === "POST") {
+      if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);
+      const b = await jsonBody(request);
+      const locale = String(b.locale ?? "").trim();
+      const key = String(b.key ?? "").trim();
+      if (!isLocaleCode(locale)) return ok({ error: "valid locale required" }, 400);
+      if (!/^(core|theme|plugin)\.[a-z0-9_.-]+$/i.test(key)) {
+        return ok({ error: "key must be namespaced core.* / theme.* / plugin.*" }, 400);
+      }
+      if (b.value === null || b.value === "") {
+        await env.DB.prepare("DELETE FROM i18n_overrides WHERE site_id=? AND locale=? AND key=?")
+          .bind(siteId, locale, key)
+          .run();
+        return ok({ ok: true, removed: true });
+      }
+      await env.DB.prepare(
+        `INSERT INTO i18n_overrides(site_id,locale,key,value,updated_at) VALUES(?,?,?,?,?)
+         ON CONFLICT(site_id,locale,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
+      )
+        .bind(siteId, locale, key, String(b.value), now())
+        .run();
+      return ok({ ok: true }, 201);
+    }
+  }
+  // -- Content translation groups (L1) ------------------------------------
+  if (path === "i18n/translations" && method === "GET") {
+    const id = String(url.searchParams.get("id") ?? "").trim();
+    if (!id) return ok({ error: "id required" }, 400);
+    const group = await translationGroup(env, siteId, id);
+    if (!group) return ok({ error: "not found" }, 404);
+    return ok({ ...group, site: siteId });
+  }
+  if (path === "i18n/translations" && method === "POST") {
+    if (!(await requirePermission(env, user, "content.write"))) return ok({ error: "Forbidden" }, 403);
+    const b = await jsonBody(request);
+    const id = String(b.id ?? "").trim();
+    const locale = String(b.locale ?? "").trim();
+    const mode = String(b.mode ?? "blank") === "copy" ? "copy" : "blank";
+    if (!id) return ok({ error: "id required" }, 400);
+    if (!isLocaleCode(locale)) return ok({ error: "valid locale required" }, 400);
+    if (!(await siteLocaleCodes(env, siteId)).includes(locale)) {
+      return ok({ error: `locale "${locale}" is not enabled for this site` }, 400);
+    }
+    const source = await env.DB.prepare(
+      "SELECT id, type, slug, status, lang_group FROM posts WHERE id=? AND site_id=? LIMIT 1"
+    )
+      .bind(id, siteId)
+      .first<any>();
+    if (!source) return ok({ error: "source post not found" }, 404);
+    const group = groupOf(source);
+    const already = await env.DB.prepare(
+      `SELECT p.id FROM posts p JOIN post_translations t ON t.post_id=p.id
+        WHERE p.site_id=? AND ${GROUP_SQL}=? AND t.locale=? LIMIT 1`
+    )
+      .bind(siteId, group, locale)
+      .first<any>();
+    if (already) return ok({ error: `a ${locale} version already exists`, post_id: already.id }, 409);
+
+    const newId = `${source.type}_${await randomId()}`;
+    const slug = await freeSlug(env, siteId, String(source.type), String(source.slug));
+    const ts = now();
+    await env.DB.prepare(
+      "INSERT INTO posts(id,site_id,author_id,type,slug,status,lang_group,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)"
+    )
+      .bind(newId, siteId, user.id, String(source.type), slug, "draft", group, ts, ts)
+      .run();
+    let title = "";
+    let excerpt = "";
+    let content = "";
+    if (mode === "copy") {
+      const src = await env.DB.prepare(
+        "SELECT title,excerpt,content FROM post_translations WHERE post_id=? LIMIT 1"
+      )
+        .bind(id)
+        .first<any>();
+      title = String(src?.title ?? "");
+      excerpt = String(src?.excerpt ?? "");
+      content = String(src?.content ?? "");
+    }
+    await env.DB.prepare(
+      "INSERT INTO post_translations(id,post_id,locale,title,excerpt,content,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)"
+    )
+      .bind(await randomId(), newId, locale, title, excerpt, content, ts, ts)
+      .run();
+    await bumpContentCache(env, siteId);
+    await activity(env, user.id, "translate", String(source.type), newId, { from: id, locale, mode, site: siteId });
+    return ok({ id: newId, locale, slug, mode, group }, 201);
+  }
+  // -- Theme-owned tables (L3) --------------------------------------------
+  if (path === "theme-tables" && method === "GET") {
+    const theme = await activeTheme(env, siteId).catch(() => null);
+    const defs = await listThemeTableDefs(env, siteId);
+    return ok({
+      site: siteId,
+      active_theme: theme?.name ?? null,
+      items: defs.map((d) => ({
+        ...d,
+        active: d.theme_name === theme?.name,
+      })),
+    });
+  }
+  const ttMatch = path.match(/^theme-tables\/([a-z][a-z0-9_]{0,63})$/);
+  if (ttMatch) {
+    const def = await resolveTableForSite(env, siteId, ttMatch[1]);
+    if (!def) return ok({ error: `no table "${ttMatch[1]}" is declared for this site` }, 404);
+    const locale = String(url.searchParams.get("locale") ?? "").trim() || (await siteDefaultLocale(env, siteId));
+    if (method === "GET") {
+      const items = await tableList(env, def, {
+        locale,
+        limit: Number(url.searchParams.get("limit") ?? 50),
+        offset: Number(url.searchParams.get("offset") ?? 0),
+        status: url.searchParams.get("status"),
+      });
+      return ok({ def, locale, items });
+    }
+    if (method === "POST" || method === "PUT") {
+      if (!(await requirePermission(env, user, "content.write"))) return ok({ error: "Forbidden" }, 403);
+      const body = await jsonBody(request);
+      try {
+        const row = await tableSave(env, def, body, locale);
+        return ok({ ok: true, locale, row }, 201);
+      } catch (e: any) {
+        return ok({ error: e?.message || "save failed" }, 400);
+      }
+    }
+  }
+  const ttRowMatch = path.match(/^theme-tables\/([a-z][a-z0-9_]{0,63})\/([^/]+)$/);
+  if (ttRowMatch) {
+    const def = await resolveTableForSite(env, siteId, ttRowMatch[1]);
+    if (!def) return ok({ error: `no table "${ttRowMatch[1]}" is declared for this site` }, 404);
+    const locale = String(url.searchParams.get("locale") ?? "").trim() || (await siteDefaultLocale(env, siteId));
+    const slug = decodeURIComponent(ttRowMatch[2]);
+    if (method === "GET") {
+      const row = await tableBySlug(env, def, slug, locale);
+      return row ? ok({ def, locale, row }) : ok({ error: "not found" }, 404);
+    }
+    if (method === "DELETE") {
+      if (!(await requirePermission(env, user, "content.write"))) return ok({ error: "Forbidden" }, 403);
+      const row = await tableBySlug(env, def, slug, locale);
+      if (!row) return ok({ error: "not found" }, 404);
+      await tableDelete(env, def, String(row.id));
       return ok({ ok: true });
     }
   }

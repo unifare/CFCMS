@@ -60,16 +60,31 @@ export async function logout(env: Env, request: Request): Promise<Response> {
   });
 }
 
+/**
+ * The signed-in admin, plus their own UI language.
+ *
+ * `ui_lang` is a personal preference and is deliberately part of the session
+ * identity rather than a site setting: two admins on the same site may read the
+ * admin in different languages, and a Chinese owner managing an English-only
+ * site must still get a Chinese admin (§2.4 — UI language ≠ content language).
+ */
 export async function currentUser(env: Env, request: Request): Promise<SessionUser | null> {
   const sid = cookieValue(request, SESSION_COOKIE);
   if (!sid) return null;
   const row = await env.DB.prepare(`
-    SELECT u.id, u.username, u.email, u.role, u.status, s.id AS sessionId
+    SELECT u.id, u.username, u.email, u.role, u.status, u.ui_lang, s.id AS sessionId
     FROM admin_sessions s JOIN site_users u ON u.id = s.user_id
     WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'
     LIMIT 1
   `).bind(sid, Math.floor(Date.now() / 1000)).first<any>();
   return row ?? null;
+}
+
+/** Persist an admin's interface language. `null` clears it back to the site default. */
+export async function setUserUiLang(env: Env, userId: string, lang: string | null): Promise<void> {
+  await env.DB.prepare("UPDATE site_users SET ui_lang=?, updated_at=? WHERE id=?")
+    .bind(lang, Math.floor(Date.now() / 1000), userId)
+    .run();
 }
 
 export async function requireAdmin(env: Env, request: Request): Promise<SessionUser | Response> {

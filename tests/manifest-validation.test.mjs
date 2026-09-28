@@ -293,6 +293,66 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
+console.log("\n11. Inline language packs (ARCHITECTURE.md §2.4 layers ②/③)");
+// ---------------------------------------------------------------------------
+// A plugin declares its UI strings in `plugin.json` instead of shipping a
+// `langs/` directory, because a plugin package is stored as a zip and never
+// unpacked. The namespace rule is the same one the architecture test applies to
+// a theme's `langs/*.json` — and it has to be enforced here too, because the
+// architecture test can only see the extensions that ship in this repo.
+accepts(
+  v,
+  validTheme({ langs: { en: { "theme.demo.hero": "Hello" }, "zh-CN": { "theme.demo.hero": "你好" } } }),
+  "theme with a correctly namespaced inline pack"
+);
+accepts(
+  v,
+  validTheme({ langs: { en: { "core.action.save": "Save it" } } }),
+  "an inline pack may override a core string"
+);
+rejects(
+  v,
+  validTheme({ langs: { en: { "nav.home": "Home" } } }),
+  "inline pack key without any namespace"
+);
+rejects(
+  v,
+  validTheme({ langs: { en: { "theme.other.hero": "Hello" } } }),
+  "inline pack key namespaced to a different extension"
+);
+rejects(
+  v,
+  validTheme({ langs: { en: { "theme.demo.hero": 42 } } }),
+  "inline pack value that is not a string"
+);
+rejects(
+  v,
+  validTheme({ langs: { "not a locale": { "theme.demo.hero": "Hello" } } }),
+  "inline pack under a malformed locale code"
+);
+rejects(v, validTheme({ langs: ["en"] }), "langs declared as an array");
+
+const validPlugin = (overrides = {}) => ({
+  name: "seo",
+  title: "SEO",
+  version: "1.0.0",
+  hooks: ["beforeRender"],
+  ...overrides,
+});
+accepts(
+  v,
+  validPlugin({ langs: { en: { "plugin.seo.meta.title": "Meta title" } } }),
+  "plugin with a correctly namespaced inline pack",
+  "plugin"
+);
+rejects(
+  v,
+  validPlugin({ langs: { en: { "theme.seo.meta.title": "Meta title" } } }),
+  "plugin inline pack using the theme prefix",
+  "plugin"
+);
+
+// ---------------------------------------------------------------------------
 console.log(`\n${"=".repeat(64)}`);
 console.log(`${pass} passed, ${fail} failed`);
 if (fail) {

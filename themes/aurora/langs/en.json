@@ -1,0 +1,12 @@
+{
+  "theme.aurora.nav.home": "Home",
+  "theme.aurora.nav.writing": "Writing",
+  "theme.aurora.nav.about": "About",
+  "theme.aurora.readingTime": "{n} min read",
+  "theme.aurora.toc.title": "On this page",
+  "theme.aurora.archive.title": "Writing",
+  "theme.aurora.archive.empty": "Nothing published yet.",
+  "theme.aurora.404.title": "Page not found",
+  "theme.aurora.404.body": "That page has moved, or never existed.",
+  "theme.aurora.footer.rss": "RSS"
+}

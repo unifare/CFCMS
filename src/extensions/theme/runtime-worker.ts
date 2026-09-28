@@ -36,6 +36,9 @@
  */
 import { Env } from "../../shared/types";
 import { setting } from "../../platform/frontend";
+import { siteDefaultLocale, siteLocales } from "../../platform/i18n/locale-registry";
+import { resolveThemeTable } from "./tables";
+import { tableBySlug, tableList, tableSave } from "./table-facade";
 import { themeFilePrefix, activeTheme, type ActiveTheme } from "./runtime-declarative";
 
 // ---------------------------------------------------------------------------
@@ -276,6 +279,8 @@ export const THEME_API_CAPABILITIES = [
   "site.read",
   "menu.read",
   "locales.read",
+  "table.read",
+  "table.write",
 ] as const;
 export type ThemeApiCapability = (typeof THEME_API_CAPABILITIES)[number];
 
@@ -320,16 +325,29 @@ export async function handleThemeApi(env: Env, request: Request): Promise<Respon
     }
 
     // -- locales ---------------------------------------------------------
+    //
+    // The site's *enabled* locales, not the platform dictionary. A theme
+    // rendering a language switcher must only offer languages this site
+    // actually serves; the dictionary is what the machine knows, which is a
+    // different question (§2.2).
     if (rest === "locales") {
       if (!allow("locales.read")) return deny();
-      const r = await env.DB.prepare("SELECT code, name, is_default FROM locales ORDER BY is_default DESC, code").all().catch(() => ({ results: [] }));
-      return json({ items: r.results ?? [] });
+      const items = await siteLocales(env, siteId);
+      return json({
+        items: items.map((l) => ({
+          code: l.code,
+          name: l.native_name ?? l.name ?? l.code,
+          is_default: l.is_default,
+          direction: l.direction,
+        })),
+        default: await siteDefaultLocale(env, siteId),
+      });
     }
 
     // -- menu ------------------------------------------------------------
     if (rest === "menu") {
       if (!allow("menu.read")) return deny();
-      const locale = url.searchParams.get("locale") ?? "en";
+      const locale = url.searchParams.get("locale") || (await siteDefaultLocale(env, siteId));
       const m = await env.DB.prepare("SELECT id FROM menus WHERE location='header' AND site_id=? LIMIT 1").bind(siteId).first<any>().catch(() => null);
       if (!m) return json({ items: [] });
       const items = await env.DB.prepare(
@@ -344,7 +362,7 @@ export async function handleThemeApi(env: Env, request: Request): Promise<Respon
     if (rest === "content") {
       if (!allow("content.read")) return deny();
       const type = url.searchParams.get("type") ?? "post";
-      const locale = url.searchParams.get("locale") ?? "en";
+      const locale = url.searchParams.get("locale") || (await siteDefaultLocale(env, siteId));
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 10)));
       const rows = await env.DB.prepare(
         `SELECT p.id, p.slug, p.type, p.created_at,
@@ -363,7 +381,7 @@ export async function handleThemeApi(env: Env, request: Request): Promise<Respon
     if (single) {
       if (!allow("content.read")) return deny();
       const slug = decodeURIComponent(single[1]);
-      const locale = url.searchParams.get("locale") ?? "en";
+      const locale = url.searchParams.get("locale") || (await siteDefaultLocale(env, siteId));
       const type = url.searchParams.get("type") ?? "post";
       // Note: `meta` lives in `post_meta`, not on `posts` — selecting it from
       // the posts table is a SQL error, so it is fetched separately.
@@ -379,6 +397,54 @@ export async function handleThemeApi(env: Env, request: Request): Promise<Respon
       if (!row) return json({ error: "not_found" }, 404);
       row.meta = await postMetaMap(env, row.id);
       return json({ item: row });
+    }
+
+    // -- theme-owned tables (§2.5.3) -------------------------------------
+    //
+    // `host.table('product')` on the sandbox side lands here. The theme names a
+    // *logical* table; the platform resolves it to the generated name and
+    // scopes it to this site and this theme. A theme asking for a table it did
+    // not declare gets 404, not another theme's data.
+    const tableList0 = rest.match(/^table\/([a-z][a-z0-9_]{0,63})$/);
+    if (tableList0) {
+      const def = await resolveThemeTable(env, siteId, themeName, tableList0[1]);
+      if (!def) return json({ error: "unknown_table", table: tableList0[1] }, 404);
+      const locale = url.searchParams.get("locale") || (await siteDefaultLocale(env, siteId));
+      if (request.method === "GET") {
+        if (!allow("table.read")) return deny();
+        const items = await tableList(env, def, {
+          locale,
+          limit: Number(url.searchParams.get("limit") ?? 50),
+          offset: Number(url.searchParams.get("offset") ?? 0),
+          status: url.searchParams.get("status"),
+        });
+        return json({ items, locale, multilingual: !!def.i18n_table });
+      }
+      if (request.method === "POST") {
+        if (!allow("table.write")) return deny();
+        let body: any;
+        try {
+          body = await request.json();
+        } catch {
+          return json({ error: "invalid_json" }, 400);
+        }
+        try {
+          const row = await tableSave(env, def, body ?? {}, locale);
+          return json({ item: row, locale }, 201);
+        } catch (e) {
+          return json({ error: "save_failed", message: String((e as Error)?.message ?? e).slice(0, 200) }, 400);
+        }
+      }
+    }
+    const tableRow = rest.match(/^table\/([a-z][a-z0-9_]{0,63})\/([^/]+)$/);
+    if (tableRow) {
+      if (!allow("table.read")) return deny();
+      const def = await resolveThemeTable(env, siteId, themeName, tableRow[1]);
+      if (!def) return json({ error: "unknown_table", table: tableRow[1] }, 404);
+      const locale = url.searchParams.get("locale") || (await siteDefaultLocale(env, siteId));
+      const row = await tableBySlug(env, def, decodeURIComponent(tableRow[2]), locale);
+      if (!row) return json({ error: "not_found" }, 404);
+      return json({ item: row, locale });
     }
 
     return json({ error: "unknown_endpoint", path: rest }, 404);

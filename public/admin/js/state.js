@@ -18,6 +18,12 @@ export const state = {
   autosaveTimer: null,
   site: "default",
   sites: [],
+  /** Locale codes this site serves, default first. Drives the editor's locale picker. */
+  locales: [],
+  /** The site's default locale. Falls back to `"en"` only when nothing loaded. */
+  defaultLocale: "en",
+  /** The open content's translation group, when the site serves >1 language. */
+  translations: null,
   themeMenus: [],
   postTypes: [],
   fields: [],
@@ -60,4 +66,16 @@ export async function loadContext() {
   try { state.postTypes = (await api(scoped("theme/post-types"))).items ?? []; } catch { state.postTypes = []; }
   try { state.themeMenus = (await api(scoped("theme/menus"))).items ?? []; } catch { state.themeMenus = []; }
   try { state.fields = (await api(scoped("theme/fields"))).items ?? []; } catch { state.fields = []; }
+  // The languages this site serves. The editor needs them to offer a locale
+  // picker and a language-version bar, and to know which locale a new piece of
+  // content should start in.
+  try {
+    const d = await api("i18n/locales");
+    const enabled = Array.isArray(d.enabled) ? d.enabled : [];
+    state.locales = enabled;
+    state.defaultLocale = d.default || enabled[0] || "en";
+  } catch {
+    state.locales = [];
+    state.defaultLocale = "en";
+  }
 }

@@ -105,7 +105,7 @@ if (isMain) {
     for (const e of r.errors) { bad++; console.log(`   ! ${e.message}\n     ${e.sql}`); }
   }
   // Sanity: the tables the runtime depends on.
-  const must = ["sites", "menus", "menu_items", "media_files", "content_cache_versions", "post_types", "field_defs", "post_meta"];
+  const must = ["sites", "menus", "menu_items", "media_files", "content_cache_versions", "post_types", "field_defs", "post_meta", "locales", "site_locales", "i18n_overrides"];
   for (const t of must) {
     const r = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t);
     if (!r) { console.log(`MISSING TABLE: ${t}`); bad++; }

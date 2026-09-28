@@ -64,6 +64,11 @@
 
 ### 1.2 缺什么（本次要补的）
 
+> **本节是规划时的诊断快照。** 截至批次 2 完成的现状：多语言开关 ✅、主题自有表 ✅、
+> 内容翻译组 ✅、防烂代码机制 ✅、目录结构 ✅。**只剩「主题菜单升级为真实后台页面」
+> 与「插件注册后台菜单」两项留给批次 3**（`admin_menu_registry`）。
+> 下表保留原文，是为了让后来者看到"为什么要做这些事"，而不是当成待办清单。
+
 | 缺口 | 现状 | 后果 |
 |---|---|---|
 | **多语言没有"平台开关"** | `locales` 表存在，但没有任何"某主题的多语言是否启用"的概念 | 用户明确要求的核心机制缺失 |
@@ -280,11 +285,13 @@ plugin.{slug}.*   插件文案              plugin.seo.meta.title
     {
       "name": "product",
       "label": "Product",
-      "translatable": ["name", "description", "content"],
+      "translatable": ["name", "description"],
       "fields": [
-        { "key": "price",  "type": "number", "label": "Price" },
-        { "key": "stock",  "type": "integer", "label": "Stock" },
-        { "key": "sku",    "type": "text",   "label": "SKU" }
+        { "key": "name",        "type": "text",     "label": "Name" },
+        { "key": "description", "type": "longtext", "label": "Description" },
+        { "key": "price",       "type": "number",   "label": "Price" },
+        { "key": "stock",       "type": "number",   "label": "Stock" },
+        { "key": "sku",         "type": "text",     "label": "SKU" }
       ]
     },
     {
@@ -292,24 +299,32 @@ plugin.{slug}.*   插件文案              plugin.seo.meta.title
       "label": "Product Category",
       "translatable": ["name", "description"],
       "fields": [
-        { "key": "sort_order", "type": "integer", "label": "Order" }
+        { "key": "name",        "type": "text",     "label": "Name" },
+        { "key": "description", "type": "longtext", "label": "Description" },
+        { "key": "sort_order",  "type": "number",   "label": "Order" }
       ]
     }
   ]
 }
 ```
 
-平台据此**按需生成**：
+> 注意 `translatable` 里的每个 key 都必须在同一张表的 `fields[]` 里声明过（规则 16），
+> 而 `fields[].type` 只有 6 种：`text` / `longtext` / `number` / `boolean` / `date` / `datetime`。
+> **没有 `integer`**——`number` 就够了。写错类型会在**安装时**被拒（400），不会等到渲染。
+
+平台据此**按需生成**（下面是 `theme_eshop_product` 的实际形状）：
 
 ```sql
--- 主表：非语言相关的数据（价格、库存——不随语言变）
+-- 主表：平台列 + 全部声明字段
 CREATE TABLE theme_eshop_product (
   id          TEXT PRIMARY KEY,
   site_id     TEXT NOT NULL,
   slug        TEXT NOT NULL,          -- 平台生成：本地化 URL 用
   lang_group  TEXT NOT NULL,          -- 平台生成：翻译组
-  price       REAL,                   -- 声明式字段
-  stock       INTEGER,
+  name        TEXT,                   -- 声明式字段（translatable，同时也在主表）
+  description TEXT,                   -- 声明式字段（translatable，同时也在主表）
+  price       REAL,                   -- 声明式字段（不随语言变）
+  stock       REAL,
   sku         TEXT,
   status      TEXT NOT NULL DEFAULT 'draft',
   created_at  INTEGER NOT NULL,
@@ -317,18 +332,28 @@ CREATE TABLE theme_eshop_product (
   UNIQUE(site_id, slug)
 );
 
--- 翻译表：只有主题声明为 translatable 的字段
+-- 翻译表：只有声明为 translatable 的字段（仅当站点服务 ≥2 种语言时才建）
 CREATE TABLE theme_eshop_product_i18n (
   row_id     TEXT NOT NULL,
   locale     TEXT NOT NULL,
   name       TEXT,
   description TEXT,
-  content    TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (row_id, locale)
 );
 ```
+
+**可翻译字段为什么同时出现在两张表里**：单语言站点也必须能存产品名。`_i18n` 表在
+启用第二种语言之前根本不存在，如果 `name` 只在 `_i18n` 上，单语言站连名字都没处放。
+主表那一列同时充当**站点默认语言的值**——所以启用第二种语言**不需要数据迁移**，
+已有值就是默认语言的值。读取时 `COALESCE(tr.k, dflt.k, m.k)` 按「请求语言 → 站点默认 → 主表」
+取，**单语言与多语言两条路径返回的内容在构造上完全相同**（`table-facade.ts` 的 `readProjection`）。
+
+> ⚠️ **`posts.lang_group` 可空，生成表的 `lang_group` 是 `NOT NULL`。** 这个不对称是有意的：
+> `posts` 是既有表，SQLite 的 `ALTER TABLE` 加不了 `NOT NULL` 列；生成表是平台从零建的，
+> 当然一开始就写死约束。所以"没有 `lang_group` 就是自己"这条兜底规则只对 `posts` 需要，
+> 但读 `posts` 的代码**必须**按可空来写（见 §5.4③）。
 
 **这个设计的三个要点：**
 
@@ -403,18 +428,36 @@ await host.table('product').save({ slug, price: 299, name, description }, locale
 
 ### 2.7 实施清单
 
-| 步骤 | 内容 | 涉及文件 |
-|---|---|---|
-| M1 | `locales` 加 `native_name/direction/enabled/sort_order`；新建 `site_locales` | `migrations/0011_i18n.sql` |
-| M2 | `posts` 加 `lang_group`；slug 唯一约束收紧 | 同上 |
-| M3 | `users` 加 `ui_lang` | 同上 |
-| M4 | 新建 `i18n_overrides` 存 DB 覆盖层（或复用 `settings`） | 同上 |
-| M5 | 核心 i18n 模块：`pack` 注册表 + `__()` + 语言解析 | `src/core/i18n.ts` |
-| M6 | 界面语言注入（后台 API + admin SPA） | `src/api.ts`, `public/admin/` |
-| M7 | 内容翻译组 CRUD API + 后台语言版本条 | `src/api.ts`, admin |
-| M8 | 主题 `tables[]` 声明解析 + 建表 | `theme-capabilities.ts` |
-| M9 | 主题表 facade + 沙箱 API 端点 | `theme-worker-runtime.ts` |
-| M10 | 语言包 key 前缀架构测试 | `tests/` |
+批次 2 已全部落地（2026-09-28）。下表是**完成状态 + 实际落点**，与最初规划的差异都记在
+「备注」列里——路径变了，规则没变。
+
+| 步骤 | 内容 | 实际落点 | 状态 |
+|---|---|---|---|
+| M1 | `locales` 加 `native_name/direction/enabled/sort_order`；新建 `site_locales` | `migrations/0011_i18n.sql` | ✅ |
+| M2 | `posts` 加 `lang_group`；slug 唯一约束收紧为 `UNIQUE(site_id, type, slug)` | 同上 | ✅ |
+| M3 | `site_users` 加 `ui_lang` | 同上 | ✅ |
+| M4 | 新建 `i18n_overrides` 存 DB 覆盖层 | 同上 | ✅ |
+| M5 | i18n 核心模块：语言包注册表 + `__()` + 语言解析 | `src/platform/i18n/`（`core-pack` / `translate` / `resolve` / `locale-registry` / `packs` / `index`） | ✅ |
+| M6 | 界面语言注入（后台 API + admin SPA） | `src/platform/i18n/packs.ts`（`setPackProviders`）、`src/api.ts`、`public/admin/js/screens/languages.js` | ✅ |
+| M7 | 内容翻译组 CRUD API + 后台语言版本条 | `src/api.ts`（`i18n/translations`）、`public/admin/js/screens/editor.js` | ✅ |
+| M8 | 主题 `tables[]` 声明解析 + 建表 | `src/extensions/theme/tables.ts`，由 `capabilities.ts` 调用 | ✅ |
+| M9 | 主题表 facade + 沙箱 API 端点 | `src/extensions/theme/table-facade.ts`、`src/extensions/theme/runtime-worker.ts` | ✅ |
+| M10 | 语言包 key 前缀架构测试 | `tests/architecture.test.mjs` 的 `checkLangPacks` + `themes/aurora/langs/` | ✅ |
+| M11 | 语言包内联声明（主题/插件都在清单里带 `langs`） | `src/extensions/security.ts` 的 `validateInlineLangs` | ✅ 规划外新增 |
+| M12 | 主题表注册表（切主题后仍能找到自己的表） | `theme_table_defs` 表，见 §6.3 | ✅ 规划外新增 |
+
+**与规划的两处偏离，都是有意的**：
+
+1. **`M5` 的模块落在 `src/platform/i18n/` 而不是 `src/core/i18n.ts`** ——
+   批次 1 已经把 `src/core/*` 拆掉了，`platform/` 才是它的位置。
+2. **多了 M11/M12 两步**。M11 是因为插件包在 `uploadExtension` 里是以 zip 原样存进 R2 的、
+   从不解包，所以插件的语言包只能**内联在清单里**；M12 是因为主题切换后它的表还在，
+   必须有一张注册表记住「逻辑名 → 生成的物理表名」这个映射，否则数据就再也找不到入口了。
+
+**M2 的 slug 约束是 `UNIQUE(site_id, type, slug)`，不含 `locale`**。这不是疏漏：一个语言
+版本就是一条 `posts` 行，`locale` 在 `post_translations` 上；把 `locale` 放进唯一键会让
+「无前缀 URL」变得歧义（`/about` 该命中哪个语言？）。同一个 `slug` 在同站同类型下只属于
+一个翻译组，语言之间用 `-2`、`-3` 之类的自由 slug 区分。
 
 ---
 
@@ -448,8 +491,16 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
 
   // ---- 平台要求的语言开关（关键）----
   // 主题声明自己"支持"哪些语言。平台据此判断某语言下能否激活本主题。
-  // 主题实际的界面文案在 langs/ 目录，这里只声明支持范围。
+  // 声明式主题的实际文案在 langs/{locale}.json（运行时从 R2 读）。
   "locales": ["zh-CN", "en", "ja"],
+
+  // ---- 内联语言包（插件必须用这个形式，主题也可用）----
+  // key 必须带前缀：theme.{name}. / plugin.{name}. / core.（core. 是覆盖平台文案）
+  // 插件没有 langs/ 目录可读（包是 zip，从不解包），只能内联声明。
+  "langs": {
+    "zh-CN": { "theme.eshop.nav.home": "首页" },
+    "en":    { "theme.eshop.nav.home": "Home" }
+  },
 
   // ---- 模板 ----
   "templates": ["index", "home", "single", "page", "archive", "404"],
@@ -473,16 +524,21 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
     { "key": "source_url", "label": "Source", "type": "url", "postTypes": ["news"] }
   ],
 
-  // ---- 主题自有表（本规划新增，商城/房产/宠物等主题需要）----
+  // ---- 主题自有表（商城/房产/宠物等主题需要）----
+  // name 是逻辑名（不带斜杠）；物理表名由平台拼成 theme_{theme}_{name}。
+  // fields[].type 只有 6 种：text / longtext / number / boolean / date / datetime。
+  // translatable 里的每个 key 都必须在该表的 fields[] 里声明过。
   "tables": [
     {
       "name": "product",
       "label": "Product",
-      "translatable": ["name", "description", "content"],
+      "translatable": ["name", "description"],
       "fields": [
-        { "key": "price", "type": "number",  "label": "Price", "required": true },
-        { "key": "stock", "type": "integer", "label": "Stock" },
-        { "key": "sku",   "type": "text",    "label": "SKU" }
+        { "key": "name",        "type": "text",     "label": "Name", "required": true },
+        { "key": "description", "type": "longtext", "label": "Description" },
+        { "key": "price",       "type": "number",   "label": "Price", "required": true },
+        { "key": "stock",       "type": "number",   "label": "Stock" },
+        { "key": "sku",         "type": "text",     "label": "SKU" }
       ],
       "hasArchive": true,
       "rewrite": { "slug": "products" }
@@ -765,13 +821,25 @@ export async function findContent(
 - routes[].resolve.table 必须已声明
 - locales[]             必须是合法语言代码格式
 - 所有 key 前缀           语言包文件里的 key 必须匹配 L2 命名规范（见 §5.5）
+- langs{}               内联语言包：locale 必须是合法代码、value 必须是字符串、
+                        每个 key 必须带 theme.{name}. / plugin.{name}. / core. 前缀
 ```
+
+`langs` 那条是本批次新增的（M11）。**插件为什么把语言包内联在清单里**：`uploadExtension`
+把插件包当 zip 原样存进 R2，从不解包，所以插件没有"一个 `langs/` 目录"可以读。
+主题有（`themes/<name>/langs/<locale>.json`，运行时从 R2 读），插件只能声明。
+
+两个扩展都定义 `nav.home` 时，谁生效取决于加载顺序，而且**没有正确的修复位置**——
+所以前缀不是风格要求，是让 key 全局唯一、且冲突时能一眼看出该改谁。校验必须拦住它：
+`tests/manifest-validation.test.mjs` 第 11 段（42 条断言）里每条规则都有
+「注入缺陷 → 断言必须抛错」的用例。
 
 **校验失败必须让安装失败，不能警告后继续。** 一个装不上的主题胜过半个能跑的主题。
 
 ### 5.4 防线三：契约测试（挡 B/C 类）
 
-**现状**：测试规模不小（47+46+63+32+25+28 = 241 条断言），且是**驱动真实 Worker 源码 + 真实本地 D1**，这个基础很好。
+**现状**：11 个套件、约 400 条断言，且是**驱动真实 Worker 源码 + 真实本地 D1**，这个基础很好。
+判据是 **0 failures**，不要把断言数写死当验收标准——数字会随套件增减。
 
 要补的测试类型：
 
@@ -789,6 +857,34 @@ export async function findContent(
 ```
 
 最后两条尤其重要——它们**直接验证"translatable 划分是否正确工作"**。这是本设计最核心的语义。
+
+**已落地**：`tests/i18n.test.mjs`（62 条断言，0 failures，可重复）。八条全覆盖，其中承重的
+两条是「`price` 跨语言同值」和「`name` 跨语言不同值」——一个商店在英文站少收 20% 就是这两条
+没守住的样子。用例里的 fixture 主题 `eshoptheme` 声明了一张表 `product`，
+`translatable: ["name","description"]`，字段 `price/sku/name/description`。
+
+浏览器侧的验收（真实 Chromium 打真实 `wrangler dev`）在 `tests/_i18n-browser.cjs`：22 条断言，
+覆盖登录 → 语言开关 → 编辑器语言版本条 → 建翻译 → 删翻译 → 停用语言，并断言零 console 错误、
+零失败请求、零 5xx。它**自己清理自己**（建出来的版本当场删掉、语言停用回原样），所以可以重复跑。
+
+**③ 一个必须记住的坑：`lang_group` 是可空的**
+
+`lang_group` 允许为 NULL，一行没有它时**用它自己的 id 当组名**。这个规则必须在**查和写两边
+写成同一个表达式**：
+
+```ts
+const GROUP_SQL = "COALESCE(NULLIF(TRIM(p.lang_group), ''), p.id)";
+function groupOf(row) { return String(row?.lang_group ?? "").trim() || String(row?.id ?? ""); }
+```
+
+只写 `WHERE p.lang_group = ?` 会把**组名所指的那一行自己**排除掉（它的 `lang_group` 是 NULL），
+于是这个组看起来是空的：编辑器报告该语言缺失，并诱导用户**再建一个已经存在的语言的副本**。
+迁移前写入的数据、任何不写这一列的外部导入，都会踩到这里。
+`tests/i18n.test.mjs` 第 9b 段专门守它（两处调用点都反向验证过：注入旧写法 → 断言确实变红）。
+
+**教训（第三次同类）**：「同一意图的另一种写法」是这类 bug 的固定来源。凡是一个概念有两处
+表达（JS 表达式 ↔ SQL 表达式、字符串 ↔ 常量、路径 ↔ 字符串匹配），就必须让两处**共用同一个
+定义**，而不是各写一遍看起来等价的版本。
 
 **② 架构测试（新增，关键）**
 
@@ -916,8 +1012,12 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `users` / `roles` / `permissions` / `sessions` | 平台 | 权限体系 |
 | `media` | 平台 | 媒体库 |
 | `menus` / `menu_items` | 平台 | 前台导航 |
-| `admin_menu_registry` | 平台 | **新增**，后台菜单统一注册表 |
-| `i18n_overrides` | 平台 | **新增**，界面翻译覆盖 |
+| `admin_menu_registry` | 平台 | **规划中**，后台菜单统一注册表（批次 3；当前仍是 `theme_admin_menus` + 插件菜单两套） |
+| `i18n_overrides` | 平台 | **新增**，界面翻译覆盖（L2 最高优先层） |
+| `theme_table_defs` | 平台 | **新增**，主题自有表的注册表：`logical_name → table_name / i18n_table / fields`。见 §6.3 |
+
+> 表里写的是 `users`/`roles`/…，但**实际的管理员账号表叫 `site_users`**（`M3` 加的是
+> `site_users.ui_lang`）。`sessions`/`users` 在本仓库并不存在——别照着这行去写迁移。
 
 ### 6.2 主题声明表（平台代管，数据属主题）
 
@@ -938,6 +1038,23 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `theme_{theme}_{table}` | 主题声明的业务主表（如 `theme_eshop_product`） |
 | `theme_{theme}_{table}_i18n` | 翻译表，**仅当站点启用 ≥2 语言时才建** |
 
+生成规则由 `src/extensions/theme/tables.ts` 持有，**表名永远由平台拼**，主题清单里写的是
+逻辑名（`product`），不写物理表名。
+
+`theme_table_defs` 记录这个映射（`site_id + theme_name + logical_name → table_name / i18n_table`）。
+存在的理由只有一条：**主题切换后，它的表和数据都还在**（§3.4「只删声明、保留数据」）。
+如果物理表名每次都从清单现推，那么主题一旦停用，清单没了，那些数据就永远没有入口了。
+
+两条不变量：
+
+- `i18n_table` 只在站点变多语言时被填上，**之后永不清回 NULL**。语言被停用不代表翻译数据
+  该消失——重新启用时它们必须原样还在。
+- 主表用 `ALTER TABLE ADD COLUMN` 增量补字段，**从不删列**。删列会丢数据，而"清单里去掉一个
+  字段"和"我要删掉这一列的数据"是两件不同的事。
+
+字段名不得与保留列冲突（`id` / `site_id` / `slug` / `lang_group` / `status` / `created_at` /
+`updated_at`），这条由清单校验拦下（AGENTS.md 规则 17）。
+
 ### 6.4 插件表
 
 | 表 | 说明 |
@@ -945,9 +1062,14 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `plugin_installs` | 插件安装记录 |
 | `plugin_setting_defs` / `plugin_settings` | 插件设置 |
 | `extension_capabilities` | 能力授权记录 |
-| `theme_{plugin}_{table}` | 插件自有表（若支持，与主题同机制） |
+| `plugin_{plugin}_{table}` | 插件自有表（⏳ 批次 3；与主题同机制，走同一份 DDL 生成器） |
 
-**命名约定（强制）**：动态生成的表一律 `theme_` 前缀开头。这让"哪些表是扩展生成的"一眼可辨，也让架构测试有稳定的匹配模式。
+**命名约定（强制）**：扩展生成的表一律带**归属前缀**——主题 `theme_{theme}_{table}`、
+插件 `plugin_{plugin}_{table}`。这让"哪些表是扩展生成的、属于谁"一眼可辨，也让架构测试有稳定
+的匹配模式（`isGeneratedThemeTable` 只认 `theme_` 前缀，所以它不会误把平台表当成主题表）。
+
+> 前缀是**归属标记，不是装饰**。没有它，平台就没法回答"这张表能不能删"——而"切主题时该不该
+> 动这张表"正是靠这个答案决定的。
 
 ---
 
@@ -964,23 +1086,21 @@ cfpress/
 │   ├── api.ts                    # 管理 API
 │   │
 │   ├── platform/                 # ── 平台层（不认识主题/插件）──
-│   │   ├── content/              # 文章、页面、翻译组
-│   │   │   ├── repository.ts
-│   │   │   └── translations.ts
-│   │   ├── i18n/                 # 多语言四层
-│   │   │   ├── locale-registry.ts    # L0
-│   │   │   ├── packs.ts              # L2 分层字典
-│   │   │   ├── resolve.ts            # URL/参数/cookie 解析
-│   │   │   └── translate.ts          # __()
-│   │   ├── auth/                 # 认证与权限
-│   │   ├── sites/                # 多站点
-│   │   ├── media/
-│   │   ├── menus/                # 前台菜单 + 后台菜单注册表
-│   │   └── settings/
+│   │   ├── i18n/                 # ✅ 多语言四层
+│   │   │   ├── core-pack.ts          # L2 内置核心语言包（TS 常量，不依赖 R2）
+│   │   │   ├── translate.ts          # interpolate / createTranslator / mergePacks
+│   │   │   ├── resolve.ts            # 路径 → ?lang= → cookie → 站点默认
+│   │   │   ├── locale-registry.ts    # L0 站点语言开关 + 增删改
+│   │   │   ├── packs.ts              # L2 分层装配 + setPackProviders 注入槽
+│   │   │   └── index.ts              # barrel
+│   │   ├── auth/                 # 认证与权限（当前 auth.ts）
+│   │   ├── sites.ts              # 多站点
+│   │   ├── frontend.ts           # 前台内容查询
+│   │   ├── permissions.ts  seo.ts  revisions.ts
 │   │
 │   ├── rendering/                # ── 渲染层 ──
 │   │   ├── template-engine.ts
-│   │   ├── resolver.ts           # WP 式模板层级
+│   │   ├── template-resolver.ts  # WP 式模板层级
 │   │   └── blocks.ts
 │   │
 │   ├── extensions/               # ── 扩展层（主题 + 插件）──
@@ -989,16 +1109,19 @@ cfpress/
 │   │   │   ├── manifest.ts       # ⏳ 批次 3：声明模型
 │   │   │   ├── validation.ts     # ⏳ 批次 3：清单校验（§5.3）
 │   │   │   └── capabilities.ts   # ⏳ 批次 3：能力枚举
-│   │   ├── security.ts           # ✅ 已落地：能力清单 + 清单字段校验
+│   │   ├── security.ts           # ✅ 已落地：能力清单 + 清单字段校验 + 内联语言包校验
 │   │   ├── theme/
 │   │   │   ├── runtime-declarative.ts  # ✅ 声明式渲染
-│   │   │   ├── runtime-worker.ts       # ✅ L3 沙箱
+│   │   │   ├── runtime-worker.ts       # ✅ L3 沙箱（含 table/* 端点）
 │   │   │   ├── capabilities.ts         # ✅ 声明落实（建表/建菜单）
 │   │   │   ├── templates.ts            # ✅ 模板加载与缓存
-│   │   │   ├── tables.ts               # ⏳ 批次 3：自有表 DDL 生成
+│   │   │   ├── tables.ts               # ✅ 自有表 DDL 生成 + theme_table_defs 注册表
+│   │   │   ├── table-facade.ts         # ✅ 宿主侧表访问（读投影 / 写分派）
+│   │   │   ├── packs.ts                # ✅ 主题语言包提供者（R2）
 │   │   │   └── admin-screens.ts        # ⏳ 批次 3
 │   │   ├── plugin/
 │   │   │   ├── runtime.ts        # ✅ 已落地：hook 注册表 + 运行时装配
+│   │   │   ├── packs.ts          # ✅ 插件内联语言包提供者
 │   │   │   ├── hooks.ts          # ⏳ 批次 4：hook 目录拆分
 │   │   │   └── facade.ts         # ⏳ 批次 4：能力门面拆分
 │   │
@@ -1019,35 +1142,39 @@ cfpress/
 │
 ├── plugins/
 │   └── seo/
-│       ├── plugin.json
-│       ├── views/               # 后台 HTML 片段（custom screen 用）
-│       └── langs/
+│       ├── plugin.json           # 语言包内联在这里的 `langs{}`，不在这里建目录
+│       └── views/                # 后台 HTML 片段（custom screen 用）
 │
-├── admin/                        # 后台 SPA（与平台源码分开）
+├── public/admin/                 # 后台 SPA（零构建，纯原生 ESM）
 │   ├── index.html
-│   ├── css/  admin.css
+│   ├── admin.css
+│   ├── icons.js                  # 内联 SVG，禁引 CDN（有加载竞态）
+│   ├── ui.js                     # UI kit：主题 / toast / 对话框 / 下拉 / 格式化
 │   └── js/
-│       ├── app.js               # 引导
-│       ├── state.js             # 状态
-│       ├── nav.js               # 导航模型
-│       ├── screens/             # 每个屏幕一个文件
-│       │   ├── dashboard.js  content-list.js  content-edit.js
-│       │   ├── media.js  themes.js  plugins.js
-│       │   ├── table-list.js  table-edit.js     # 主题自有表
-│       │   ├── languages.js  sites.js  users.js
-│       │   └── custom.js
-│       ├── ui.js                # 通用组件
-│       ├── icons.js
-│       └── i18n.js              # 后台界面语言
+│       ├── admin.js              # 入口：只做装配 + WINDOW_HANDLERS（< 120 行）
+│       ├── state.js              # 共享 state + API 帮手（叶子模块）
+│       ├── nav.js                # 导航模型 / 侧栏 / header（纯 markup）
+│       ├── shell.js              # render 循环 + 页面骨架（不得 import 任何屏幕）
+│       ├── auth.js               # 登录屏（注入进 shell）
+│       └── screens/
+│           ├── index.js          # 页名 → 屏幕 注册表（唯一 import 全部屏幕的模块）
+│           ├── dashboard.js  content-list.js  editor.js
+│           ├── media.js  themes.js  plugins.js
+│           ├── languages.js      # L0 站点语言 + L2 界面语言
+│           ├── sites.js  users.js  settings.js  menus.js
+│           └── table-list.js  table-edit.js     # ⏳ 批次 3：主题自有表
 │
 ├── migrations/                   # D1 迁移，编号递增
 ├── tests/
-│   ├── architecture.test.mjs     # ★ 分层与越界检查
-│   ├── contract/                 # 契约测试
-│   ├── integration/              # 集成测试
-│   └── helpers/                  # 共享测试工具
+│   ├── architecture.test.mjs     # ★ 分层与越界检查（11 项）
+│   ├── manifest-validation.test.mjs
+│   ├── i18n.test.mjs             # ★ 多语言四层契约（§5.4①）
+│   ├── _i18n-browser.cjs         # ★ 真实 Chromium 打真实 wrangler dev
+│   ├── admin-spa.test.mjs        # 后台结构守门人（模块图 + window.* 契约）
+│   ├── _apply-migrations.mjs     # 本地迁移（**别用 wrangler CLI**，见 HANDOVER）
+│   └── run-all.mjs
 ├── scripts/
-│   ├── make-theme.mjs            # ★ 脚手架
+│   ├── make-theme.mjs            # ⏳ 批次 4 脚手架
 │   ├── make-plugin.mjs
 │   ├── deploy-theme.mjs
 │   └── seed-demo-content.mjs
@@ -1305,40 +1432,55 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 注入 bug 立刻产生两条 FAIL。
 **教训：断言必须盯住"注入缺陷后必然会变的那一个值"，否则写出来的只是装饰。**
 
-### 批次 2：多语言四层（P1，约 2-3 天）
+### 批次 2：多语言四层（P1）—— ✅ 已完成（2026-09-28）
+
+**做了什么**
+1. 迁移 `0011_i18n.sql`（L0 两张表 + `posts.lang_group` + `site_users.ui_lang` + `i18n_overrides` + `theme_table_defs`）
+2. `src/platform/i18n/` 六个模块（`core-pack` / `translate` / `resolve` / `locale-registry` / `packs` / `index`）
+3. 界面语言注入（API + admin SPA）：`setPackProviders` 走的是与 `setHostHooks` 同一套依赖倒置
+4. 内容翻译组 CRUD + 后台语言版本条（`public/admin/js/screens/languages.js`、`editor.js`）
+5. 主题自有表 DDL 生成 + 注册表 + facade + 沙箱端点（M8/M9，原本排在批次 3，**提前做了**）
+6. 多语言契约测试（§5.4①）+ 清单内联语言包校验（M11）
+
+**验收（逐条有测试对着）**
+- 只启用 `zh-CN` 时，主题自有表**不建** `_i18n` 表 → `i18n.test.mjs` 第 2 段
+- 启用第二种语言后，`_i18n` 表出现 → 第 3 段
+- 同一产品的中英文标题可分别编辑、分别访问 → 第 4/6 段
+- `price` 在两种语言下值相同（验证 translatable 划分）→ 第 4 段
+- 后台界面语言与内容语言独立可设 → 第 7 段
+- 真实浏览器里上述界面真的能点 → `tests/_i18n-browser.cjs`（22 条）
+
+**这一步真实发现并修复的缺陷**（都是"只在真机/真实交互下才暴露"的那一类）：
+
+1. **`translationGroup` 把组名所指的那一行自己排除掉了。** 详见 §5.4③。
+   后果不是报错，而是**静默诱导用户建重复内容**。
+2. **改语言开关后没有刷新后台上下文**，`state.locales` 还是旧的 `["en"]`，
+   于是编辑器的语言版本条**整条不渲染**，屏幕上没有任何东西解释它为什么不在。
+   `loadVersions` 原本把"缓存是空的"和"这个站只有一种语言"当成同一件事。
+3. **`loadVersions` 的守卫写成 `state.locales.length < 2`** —— 空数组走的是"单语言"分支。
+   改成只在**确知**单语言（长度恰为 1）时短路，其余情况问服务端。
+
+> 这三条有一个共同形状：**状态缓存与事实源不一致时，界面选择"什么都不显示"**。
+> 界面上"少了一块"比"显示错了"更难发现，因为没有任何东西是红的。
+
+### 批次 3：后台菜单统一 + 脚手架（P1）
+
+> 主题自有表的部分（原批次 3 的 1–3 项）已在批次 2 落地，见上。
 
 **做什么**
-1. 迁移 `0011_i18n.sql`（L0 两张表 + `posts.lang_group` + `users.ui_lang`）
-2. `src/platform/i18n/` 四个模块
-3. 界面语言注入（API + admin SPA）
-4. 内容翻译组 CRUD + 后台语言版本条
-5. 多语言契约测试（§5.4①）
+1. `admin_menu_registry` 统一菜单表（主题 + 插件），迁移时 **drop `theme_admin_menus`**
+2. `table-list` / `table-edit` / `theme-settings` 屏幕
+3. 插件菜单支持（与主题走同一条注册路径）
+4. `extensions/contract/` 补齐 `manifest.ts` / `validation.ts` / `capabilities.ts`
 
 **验收**
-- 只启用 `zh-CN` 时，主题自有表**不建** `_i18n` 表
-- 启用 `en` 后，`_i18n` 表出现
-- 同一产品的中英文标题可分别编辑、分别访问
-- `price` 在两种语言下值相同（验证 translatable 划分）
-- 后台界面语言与内容语言独立可设
-
-### 批次 3：主题自有表 + 后台菜单（P1，约 2-3 天）
-
-**做什么**
-1. `theme-capabilities.ts` 支持 `tables[]`
-2. 表 DDL 生成器 + diff 迁移
-3. `host.table()` facade + 沙箱 API 端点
-4. `admin_menu_registry` 统一菜单表（主题 + 插件）
-5. `table-list` / `table-edit` / `theme-settings` 屏幕
-6. 插件菜单支持
-
-**验收**
-- 一个 `eshop` 示例主题能建出 `theme_eshop_product` 与 `_i18n`
+- 一个 `eshop` 示例主题能建出 `theme_eshop_product` 与 `_i18n`（DDL 部分已完成）
 - 后台自动出现"产品"菜单，列表和表单**由声明生成**（主题无表单代码）
 - SEO 插件能注册自己的后台菜单
 - 停用插件后，只有它的菜单消失
 - 切主题后，旧主题的表在、菜单消失、切回来菜单恢复
 
-### 批次 4：脚手架 + 文档（P2，约 1 天）
+### 批次 4：脚手架 + 文档（P2）
 
 **做什么**
 1. `scripts/make-theme.mjs` / `make-plugin.mjs`
@@ -1390,23 +1532,30 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 1. 平台的表在 platform/，主题的表在 extensions/theme/，不得互访
 2. 主题与插件互不可见，只能通过平台提供的接口交互
 3. shared/ 里的代码不得 import 任何业务层
+4. platform/ 与 rendering/ 不得 import extensions/（要扩展就反转依赖：注入接口）
 
 【多语言】
-4. 任何数据访问函数必须显式接收 locale 与 siteId，不得有默认值
-5. 语言查询的回退顺序：当前语言 → 站点默认 → 空。不抛错
-6. 显式语言的 URL（/en/x）找不到时返回 404，不回退
-7. 语言包 key 必须带前缀：core. / theme.{slug}. / plugin.{slug}.
-8. 界面语言与内容语言是两件事，不得混用
+5. 任何数据访问函数必须显式接收 locale 与 siteId，不得有默认值
+6. 语言查询的回退顺序：当前语言 → 站点默认 → 空。不抛错
+7. 显式语言的 URL（/en/x）找不到时返回 404，不回退
+8. 语言包 key 必须带前缀：core. / theme.{slug}. / plugin.{slug}.
+9. 界面语言与内容语言是两件事，不得混用
+10. lang_group 可空，「没有它就是自己」只能有一份定义（JS + SQL 共用）
+11. 改了语言开关必须刷新后台上下文（loadContext），否则界面会静默少一块
+12. {table}_i18n 只在站点服务 ≥2 种语言时创建；语言停用后永不 drop、永不清回 NULL
 
 【主题/插件】
-9. 主题不得直接写 SQL，只能用 host.table() facade
-10. 表名由平台生成（theme_{owner}_{table}），不得硬编码
-11. 后台表单由声明生成，不得手写
-12. 鉴权由平台施加，不得在主题/插件里自己验证
-13. 只读所属主题/插件声明过的表，访问其他表必须失败
+13. 主题不得直接写 SQL，只能用 host.table() facade
+14. 表名由平台生成（theme_{owner}_{table} / plugin_{owner}_{table}），不得硬编码
+15. 后台表单由声明生成，不得手写
+16. 鉴权由平台施加，不得在主题/插件里自己验证
+17. 只读所属主题/插件声明过的表，访问其他表必须失败
 
 【改代码前】
-14. 先跑 npm test，确认基线是绿的
-15. 改完再跑 npm test 与 npx tsc --noEmit，两个都必须绿
-16. 如果改了扩展的声明能力，同步更新 tests/architecture.test.mjs
+18. 先跑 npm test，确认基线是绿的（判据是 0 failures，不是断言数）
+19. 改完再跑全部套件与 npx tsc --noEmit，都必须绿
+20. 如果改了扩展的声明能力，同步更新 tests/architecture.test.mjs 与本文档
+21. 改了多语言就同步 tests/i18n.test.mjs；改了后台就跑 tests/_i18n-browser.cjs
+22. 新增守卫必须反向验证：注入一次违规，确认它真的会 FAIL
+23. 一个概念要在两处表达时（JS ↔ SQL、字符串 ↔ 常量），让两处共用同一个定义
 ```

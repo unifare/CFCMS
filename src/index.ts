@@ -1,4 +1,5 @@
 import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,latestPosts,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
+import{resolveLocale,langFromUrl,langFromCookie,langCookie}from "./platform/i18n/resolve";import{setPackProviders}from "./platform/i18n/packs";import{themePackProvider}from "./extensions/theme/packs";import{pluginPackProvider}from "./extensions/plugin/packs";
 
 let booted=false;
 
@@ -30,8 +31,10 @@ async function media(env:Env,u:URL){
   return new Response(o.body,{headers:h});
 }
 
-function htmlResponse(html:string,template:string,status:number,siteId:string){
-  return new Response(html,{status,headers:{"Content-Type":"text/html;charset=UTF-8","Cache-Control":"public,max-age=60","X-CFPress-Template":template,"X-CFPress-Site":siteId}});
+function htmlResponse(html:string,template:string,status:number,siteId:string,setCookie?:string|null){
+  const h:Record<string,string>={"Content-Type":"text/html;charset=UTF-8","Cache-Control":"public,max-age=60","X-CFPress-Template":template,"X-CFPress-Site":siteId};
+  if(setCookie)h["Set-Cookie"]=setCookie;
+  return new Response(html,{status,headers:h});
 }
 
 /** Match a theme-declared route against a path. `:param` captures a segment. */
@@ -80,6 +83,12 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
    renderShortcodes:(env2,html)=>renderShortcodes(env2,html),
    boot:(env2)=>bootPluginRuntime(env2),
  });
+ // Same dependency-inversion trick for the UI dictionary. `platform/i18n`
+ // owns the *stack* (core → plugin → theme → DB override) but may not import
+ // `extensions/` to fetch layers ② and ③, so the two providers are handed over
+ // here — the one module allowed to know every layer. Without them the stack is
+ // core + overrides, which reads exactly like "nothing is translating".
+ setPackProviders({ theme: themePackProvider, plugin: pluginPackProvider });
  const u=new URL(request.url);
  if(u.pathname.startsWith("/api/"))return handleApi(env,request);
  // Sandboxed theme Workers read data exclusively through this endpoint.
@@ -114,14 +123,28 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  // asset layer instead of the theme, which read as "the theme does not work".
  // A URL prefix is a routing concern, so it is decided here, not by whether
  // an unrelated asset happens to exist at that path.
+ //
+ // The priority order (path → `?lang=` → cookie → site default) and the
+ // "explicit prefix means 404, everything else may fall through" rule now live
+ // in `platform/i18n/resolve.ts`, because they are language policy rather than
+ // routing and the admin API needs the same answers.
  const known=await locales(env,siteId) as any[];
  const knownCodes=known.map(l=>String(l?.code??"")).filter(Boolean);
- const seg0=path.split("/").filter(Boolean)[0]??"";
- // Only treat segment 0 as a locale when it really is one of this site's
- // locales, so a page legitimately named `/en`-like never becomes a locale.
- const hasLocale=seg0!==""&&knownCodes.includes(seg0);
- const locale=hasLocale?seg0:await defaultLocale(env,siteId);
- const rest=hasLocale?path.split("/").slice(2).join("/"):path.replace(/^\//,"");
+ const match=resolveLocale(path,{
+   codes:knownCodes,
+   defaultLocale:await defaultLocale(env,siteId),
+   queryLang:langFromUrl(u),
+   cookieLang:langFromCookie(request),
+ });
+ const locale=match.locale;
+ // Only a *path* prefix counts as explicit. That is the one case where a miss
+ // must 404 instead of falling through to another language.
+ const hasLocale=match.explicit;
+ const rest=match.rest;
+ // Remember an explicit `?lang=` choice so the next request does not need it.
+ // A path prefix is already self-describing and gets no cookie.
+ const langSetCookie=match.source==="query"?langCookie(locale,365):null;
+ const respond=(html:string,template:string,status:number)=>htmlResponse(html,template,status,siteId,langSetCookie);
  const site=await siteInfo(env,siteId);
  // Attach plugin hooks once per isolate. The `beforeRender` action itself is
  // fired from `buildScope`, which has the fully-built render scope in hand.
@@ -134,7 +157,7 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
      siteId,locale,path:u.pathname,kind:"home",title:site.title,description:site.description,
      extra:{posts:ps.map((p:any)=>({slug:p.slug,title:p.title,excerpt:p.excerpt,url:`/${locale}/blog/${p.slug}`}))}
    },request);
-   return htmlResponse(r.html,r.template,r.status,siteId);
+   return respond(r.html,r.template,r.status);
  }
 
  // Theme-declared routes take priority over the built-in fallbacks so a theme
@@ -192,8 +215,8 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
        posts:rows.map(p=>({...p,url:`/${locale}/blog/${p.slug}`})),
      }
    },request);
-   if(!post&&kind==="single")return htmlResponse(r.html,"404",404,siteId);
-   return htmlResponse(r.html,r.template,r.status,siteId);
+   if(!post&&kind==="single")return respond(r.html,"404",404);
+   return respond(r.html,r.template,r.status);
  }
 
  // Built-in post permalink
@@ -202,7 +225,7 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
    const x=await findContent(env,"post",slug,locale,siteId);
    if(x){
      const r=await renderPage(env,{siteId,locale,path:u.pathname,kind:"single",postType:"post",slug,title:x.title,description:x.excerpt,post:x},request);
-     return htmlResponse(r.html,r.template,r.status,siteId);
+     return respond(r.html,r.template,r.status);
    }
  }
 
@@ -219,7 +242,7 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
      const x=await findContent(env,pt.name,segs[1],locale,siteId);
      if(x){
        const r=await renderPage(env,{siteId,locale,path:u.pathname,kind:"single",postType:pt.name,slug:segs[1],title:x.title,description:x.excerpt,post:x},request);
-       return htmlResponse(r.html,r.template,r.status,siteId);
+       return respond(r.html,r.template,r.status);
      }
      // Nested path that is not this CPT -> fall through to pages below.
    }
@@ -232,7 +255,7 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
        title:String(pt.plural_label||pt.label||pt.name),
        extra:{posts:(rows as any[]).map(p=>({...p,url:`/${locale}/${ptBase}/${p.slug}`}))}
      },request);
-     return htmlResponse(r.html,r.template,r.status,siteId);
+     return respond(r.html,r.template,r.status);
    }
  }
 
@@ -240,7 +263,7 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  const page=await findContent(env,"page",rest,locale,siteId);
  if(page){
    const r=await renderPage(env,{siteId,locale,path:u.pathname,kind:"page",postType:"page",slug:rest,title:page.title,description:page.excerpt,post:page},request);
-   return htmlResponse(r.html,r.template,r.status,siteId);
+   return respond(r.html,r.template,r.status);
  }
 
  // Unprefixed path that missed in the default locale: try the site's other
@@ -255,13 +278,13 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
      const alt=await findContent(env,"page",rest,code,siteId);
      if(alt){
        const r=await renderPage(env,{siteId,locale:code,path:u.pathname,kind:"page",postType:"page",slug:rest,title:alt.title,description:alt.excerpt,post:alt},request);
-       return htmlResponse(r.html,r.template,r.status,siteId);
+       return respond(r.html,r.template,r.status);
      }
    }
  }
 
  const r=await renderPage(env,{siteId,locale,path:u.pathname,kind:"404",title:"Not Found"},request);
- return htmlResponse(r.html,r.template,r.status===200?404:r.status,siteId);
+ return respond(r.html,r.template,r.status===200?404:r.status);
 },async scheduled(_event:ScheduledController,env:Env,_ctx:ExecutionContext){await processScheduled(env)}};
 
 export{listPostTypes};

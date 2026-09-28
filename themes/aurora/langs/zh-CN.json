@@ -1,0 +1,12 @@
+{
+  "theme.aurora.nav.home": "首页",
+  "theme.aurora.nav.writing": "文章",
+  "theme.aurora.nav.about": "关于",
+  "theme.aurora.readingTime": "约 {n} 分钟读完",
+  "theme.aurora.toc.title": "本页目录",
+  "theme.aurora.archive.title": "文章",
+  "theme.aurora.archive.empty": "还没有发布内容。",
+  "theme.aurora.404.title": "页面不存在",
+  "theme.aurora.404.body": "这个页面被移动过，或者从未存在。",
+  "theme.aurora.footer.rss": "RSS 订阅"
+}

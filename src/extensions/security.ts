@@ -80,9 +80,46 @@ export function validateManifest(manifest:any,type:"plugin"|"theme"){
   const perms=asArray(manifest.permissions)
   for(const p of perms) if(!CAPABILITIES.includes(p as Capability)) fail(`Unsupported capability: ${p}`)
 
+  validateInlineLangs(manifest,type)
+
   if(type==="theme") validateThemeManifest(manifest)
 
   return {name:String(manifest.name),title:String(manifest.title||manifest.name),version:String(manifest.version),manifest}
+}
+
+/**
+ * Inline language packs (§2.4 layers ②/③).
+ *
+ * A plugin declares its strings in `plugin.json` rather than shipping a
+ * `langs/` directory, because a plugin package is stored as a zip and never
+ * unpacked (see `uploadExtension`). The namespace rule is the same one the
+ * architecture test applies to a theme's `langs/*.json`: two extensions that
+ * both define `nav.home` overwrite each other once the dictionaries are merged,
+ * and which one wins depends on load order — a heisenbug with no correct fix at
+ * the call site.
+ *
+ * Checked here as well as in the architecture test on purpose: the test guards
+ * the *shipped* extensions, this guards anything installed at runtime from a
+ * third-party zip.
+ */
+function validateInlineLangs(m:any,type:"plugin"|"theme"){
+  if(m.langs===undefined) return
+  if(!m.langs||typeof m.langs!=="object"||Array.isArray(m.langs)){
+    fail("langs must be an object mapping locale codes to string dictionaries")
+  }
+  const prefix=`${type}.${String(m.name)}.`
+  for(const [locale,pack] of Object.entries(m.langs as Record<string,unknown>)){
+    if(!LOCALE_CODE_RE.test(locale)) fail(`langs: invalid locale code "${locale}"`)
+    if(!pack||typeof pack!=="object"||Array.isArray(pack)){
+      fail(`langs.${locale} must be an object of {key: string}`)
+    }
+    for(const [key,value] of Object.entries(pack as Record<string,unknown>)){
+      if(typeof value!=="string") fail(`langs.${locale}.${key} must be a string`)
+      if(!key.startsWith(prefix)&&!key.startsWith("core.")){
+        fail(`langs.${locale}: key "${key}" must start with "${prefix}"`)
+      }
+    }
+  }
 }
 
 function validateThemeManifest(m:any){

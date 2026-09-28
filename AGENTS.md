@@ -13,15 +13,21 @@
 1. 跑 `npm test`，确认基线是绿的（**判据是 0 failures**；断言数会随套件增减变化）。
 2. 跑 `npx tsc --noEmit`，`src/` 必须 0 错误。
    （`node_modules` 里 `lib.dom.d.ts` 与 `@cloudflare/workers-types` 的冲突是上游问题，可忽略。）
+   ⚠️ 本机 `npm test` 会因沙箱锁住 node 二元文件而**整体报 SKIP（`EBUSY`）**——
+   那不是测试失败。可靠做法是逐个 `node tests/<name>.test.mjs`。
 
 ## 改完代码后
 
-3. 再跑一次 `npm test` 与 `npx tsc --noEmit`，两个都必须绿。
+3. 再跑一次全部套件与 `npx tsc --noEmit`，都必须绿。
 4. 如果改了扩展的声明能力（主题清单 / 插件清单的字段），同步更新
    `tests/architecture.test.mjs` 与 `docs/ARCHITECTURE.md`。
-5. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
+5. 如果改了多语言（`src/platform/i18n/`、翻译组、主题自有表），跑
+   `node tests/i18n.test.mjs`，并同步 `docs/ARCHITECTURE.md` §2.7 / §5.4①。
+6. 如果改了后台界面，跑 `node tests/admin-spa.test.mjs`，并跑一次真实浏览器验收
+   `node tests/_i18n-browser.cjs`（需要另开 `npx wrangler dev --port 8787 --ip 127.0.0.1`）。
+7. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
-   本仓库已经发生过两次（见下方「守卫失效记录」）。
+   本仓库已经发生过三次（见下方「守卫失效记录」与「同一意图的两种写法」）。
 
 **当前源码布局**（已重整完毕，新代码必须放对位置）：
 
@@ -32,12 +38,19 @@ src/
 ├── shared/               叶子层：types crypto repo cache scheduler
 ├── rendering/            纯渲染：template-engine template-resolver blocks
 ├── platform/             auth permissions sites frontend seo revisions
+│   └── i18n/             多语言四层：core-pack translate resolve
+│                         locale-registry packs index
 └── extensions/
     ├── contract/hooks.ts ★ 主题与插件共享的接口（依赖倒置的支点）
-    ├── security.ts
-    ├── theme/            runtime-declarative runtime-worker capabilities templates
-    └── plugin/           runtime
+    ├── security.ts       清单校验（安装边界，失败必须抛错）
+    ├── theme/            runtime-declarative runtime-worker capabilities
+    │                     templates tables table-facade packs
+    └── plugin/           runtime packs
 ```
+
+`platform/i18n/packs.ts` 的 `setPackProviders()` 与 `contract/hooks.ts` 的
+`setHostHooks()` 是**同一个模式**：平台只认接口，实现在 boot 时由 `index.ts` 注入。
+`platform/` 因此不需要认识 `extensions/`（分层规则 1）。
 
 ---
 
@@ -100,9 +113,12 @@ await hooks.applyFilters("html", ctx, out);
 |---|---|---|---|
 | `siteId` 默认值 | 只匹配 `= "default"` 字面量 | `siteId = DEFAULT_SITE_ID` 完全匹配不到，6 处长期漏网 | 已同时匹配字符串与常量，并锚定到参数列表 |
 | 主题/插件互不 import | `spec.includes("/extensions/plugin/")` | 真实写法是 `"../plugin/runtime"`，**不含 `/extensions/`** | 已改为按文件目录**解析路径**再比较 |
+| 语言包 key 前缀 | 检查存在，但所有 `langs/` 目录都是空的 | **对空集合的检查是空转**——直到批次 2 才第一次有真文件 | `themes/aurora/langs/*.json` 已落地并反向验证过 |
 
-**教训**：文本匹配容易被"同一意图的另一种写法"绕过。凡是要守卫结构，就解析结构
-（路径、AST、类型），别匹配字符串。**每次新增守卫，都要注入一次违规确认它会红。**
+**教训**：文本匹配容易被"同一意图的另一种写法"绕过（前两行），
+而**对空集合的检查等于没有检查**（第三行）。凡是要守卫结构，就解析结构
+（路径、AST、类型），别匹配字符串；凡是守卫集合，先确认集合非空。
+**每次新增守卫，都要注入一次违规确认它会红。**
 
 ## 多语言（§10 规则 5、7、8）
 
@@ -112,10 +128,21 @@ await hooks.applyFilters("html", ctx, out);
 | 11 | 语言包 key 必须带前缀：`core.` / `theme.{name}.` / `plugin.{name}.` |
 | 12 | **界面语言**（后台菜单）与**内容语言**（前台文章）是两件事，不得混用 |
 | 13 | 显式语言的 URL（`/en/x`）找不到时返回 404，**不回退到别的语言** |
+| 13b | `lang_group` 可空，**「没有它就是自己」这条规则必须只写一次**：JS 用 `groupOf()`，SQL 用 `GROUP_SQL`（`src/api.ts`），两处共用同一个定义 |
+| 13c | 语言开关（启用/停用/加语言/改默认）改动后**必须刷新后台上下文**（`loadContext()`），否则编辑器的语言版本条会整条不渲染 |
 
 规则 11 的后果：`themes/aurora/langs/zh-CN.json` 里写 `"nav.home"` 会让测试失败，
 必须写 `"theme.aurora.nav.home"`。**这不是风格要求**——两个扩展都定义 `nav.home`
 时，谁生效取决于加载顺序，且没有正确的修复位置。
+
+规则 13b 的后果：只写 `WHERE p.lang_group = ?` 会**排除掉组名所指的那一行自己**
+（它的 `lang_group` 是 NULL），于是组看起来是空的，编辑器报告语言缺失并诱导用户
+**再建一个已经存在的语言的副本**——不报错，只是悄悄多出一份内容。
+守卫在 `tests/i18n.test.mjs` 第 9b 段，两处调用点都反向验证过。
+
+规则 13c 的后果：`state.locales` 是缓存，语言开关是它的事实源。改了开关不刷新缓存，
+`loadVersions()` 会以为站点是单语言的，于是**整个语言版本条不渲染**——
+屏幕上没有任何东西是红的，因为"少一块"不会报错。
 
 ## 主题 / 插件清单（§5.3）
 
@@ -127,13 +154,18 @@ await hooks.applyFilters("html", ctx, out);
 | 17 | 表的字段名不得与保留列冲突：`id`/`site_id`/`slug`/`lang_group`/`status`/`created_at`/`updated_at` |
 | 18 | `runtime: "worker"` 的主题必须真的提供 `entry` 指向的文件 |
 | 19 | `blocks[].name` 是**纯标识符、不带斜杠**（`property-card` ✅ / `theme/property-card` ❌）。`core/` 前缀是平台内置专用的 |
+| 20 | 内联语言包 `langs{}`：locale 必须是合法代码、value 必须是字符串、key 必须带 `theme.{name}.` / `plugin.{name}.` / `core.` 前缀 |
 
 **理由**：清单是主题唯一能出错的地方，那就在这里出错。放行会变成渲染期的报错，
 而那个报错会指向渲染器，不指向清单——排查成本高一个数量级。
 
+**规则 20 为什么存在**：`uploadExtension` 把插件包当 zip 原样存进 R2、**从不解包**，
+所以插件没有 `langs/` 目录可读，只能把语言包内联在清单里。主题有目录
+（`themes/<name>/langs/<locale>.json`，运行时从 R2 读）。两条路径，同一套前缀规则。
+
 **校验失败必须抛出、必须让安装失败**，不能警告后继续。写法是 `validateManifest` 抛
 `Error`，`src/api.ts` 的 `uploadExtension()` 捕获后返回 400。一个装不上的主题
-胜过半个能跑的主题。规则 14–19 每一条都在 `tests/manifest-validation.test.mjs` 里
+胜过半个能跑的主题。规则 14–20 每一条都在 `tests/manifest-validation.test.mjs` 里
 有对应的"注入缺陷 → 断言必须抛错"用例；改校验逻辑时那道套件必须跟着改。
 
 ---
@@ -155,26 +187,71 @@ js/screens/<name>.js   一屏一模块
 
 | # | 规则 |
 |---|---|
-| 20 | `js/shell.js` **不得 import 任何屏幕**（屏幕经 `setScreenTable()` 自注册），否则立即成环 |
-| 21 | 屏幕之间**不得互相 import**；共用逻辑抽独立模块（如 `extension-install.js`） |
-| 22 | 每个被 markup 调用的处理器**必须登记进入口的 `WINDOW_HANDLERS`** |
-| 23 | 不得引入打包器；不得删 `index.html` `<head>` 里的绘制前主题脚本 |
+| 21 | `js/shell.js` **不得 import 任何屏幕**（屏幕经 `setScreenTable()` 自注册），否则立即成环 |
+| 22 | 屏幕之间**不得互相 import**；共用逻辑抽独立模块（如 `extension-install.js`） |
+| 23 | 每个被 markup 调用的处理器**必须登记进入口的 `WINDOW_HANDLERS`** |
+| 24 | 不得引入打包器；不得删 `index.html` `<head>` 里的绘制前主题脚本 |
 
-**理由（规则 20–21）**：屏幕要调 `render()`，`render()` 要调屏幕——直接互相
+**理由（规则 21–22）**：屏幕要调 `render()`，`render()` 要调屏幕——直接互相
 import 就是环。环在部分浏览器能跑、部分不能，且让"改一个屏幕"重新变成
 "必须理解全部屏幕"。自注册把这条边反转成单向。
 
-**理由（规则 22）**：markup 用内联 `onclick="name(...)"`，浏览器把它解析在
+**理由（规则 23）**：markup 用内联 `onclick="name(...)"`，浏览器把它解析在
 `window` 上、**不在模块作用域**。少登记一个**不会有任何报错**——
 不编译、不报 console、不发失败请求，按钮就是点了没反应。这是最贵的一类回归。
 
-规则 20–23 由 `tests/admin-spa.test.mjs` 强制（模块图无环 + 无孤儿模块 +
+> 新代码优先用 `data-action` + document 级委托，这样根本不产生新的
+> `WINDOW_HANDLERS` 条目（`screens/languages.js` 就是这么做的）。
+
+规则 21–24 由 `tests/admin-spa.test.mjs` 强制（模块图无环 + 无孤儿模块 +
 `window.*` 契约 + 每个屏幕真渲染一次）。**改后台结构时那道套件必须跟着改。**
 
 > ⚠️ 该套件有一处**已修过的假绿**：它最初断言"`render()` 没有抛错"，
 > 而 `render()` 自己 catch 住屏幕异常并换成 "Something went wrong" 面板，
 > 于是注入一个未定义标识符后测试依然全绿。现在断言的是**写进 DOM 的内容**
 > （非空、不含错误面板）。**别把它改回"断言没抛错"。**
+
+---
+
+## 主题自有表（§6.3）
+
+| # | 规则 |
+|---|---|
+| 25 | 表名**只由平台拼**（`theme_{theme}_{table}`）。主题清单里写逻辑名（`product`），**不得出现物理表名** |
+| 26 | `{table}_i18n` **只在站点服务 ≥2 种语言时创建**；语言被停用后**永不清回、永不 drop** |
+| 27 | 主表字段用 `ALTER TABLE ADD COLUMN` 增量补，**从不删列** |
+| 28 | `theme_table_defs` 记录 `逻辑名 → 物理表名` 映射，**切主题时不清**（清了数据就没入口了） |
+| 29 | 主题只能读**自己**声明过的表：`resolveThemeTable()` 按 `theme_name` 过滤 |
+
+**理由（规则 26）**：把 `_i18n` 表当成"多语言才有的东西"，好处是「我们不做多语言」
+变成**数据库里可验证的事实**，而不是代码里的承诺。反过来，语言停用时删表就是
+WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐藏，不删除。**
+
+**理由（规则 28）**：物理表名如果每次都从清单现推，那么主题一旦停用、清单没了，
+那些数据就永远找不到入口。所以映射要记在平台自己的表里。
+
+> 单语言站点上，可翻译字段**仍然存在主表上**——否则单语言站连产品名都存不了。
+> 主表那一列同时充当**默认语言的值**，所以启用第二种语言**不需要数据迁移**。
+
+---
+
+## 一条反复踩到的坑：同一意图的两种写法
+
+本仓库已经**三次**因为"同一个概念有两处表达"而出现假绿或静默错误：
+
+| 概念 | 写法 A | 写法 B | 后果 |
+|---|---|---|---|
+| 默认站点 | `siteId = "default"` | `siteId = DEFAULT_SITE_ID` | 守卫只匹配 A，6 处漏网 |
+| 跨层依赖 | `spec.includes("/extensions/plugin/")` | `"../plugin/runtime"` | 守卫从不触发 |
+| 翻译组 | JS `lang_group ?? id` | SQL `lang_group = ?` | 组里丢了组名所指的那一行，编辑器诱导建重复内容 |
+
+**规则（30）**：凡是一个概念需要在两处表达（JS ↔ SQL、字符串 ↔ 常量、路径 ↔ 正则），
+**让两处共用同一个定义**，不要各写一份"看起来等价"的版本。`src/api.ts` 的
+`GROUP_SQL` + `groupOf()` 就是范例：SQL 片段是常量，JS 函数在它旁边，
+注释里写明两者必须同步。
+
+**规则（31）**：新增守卫后，**必须注入一次违规确认它会红**。已经发生过两次
+「检查存在但从不触发」——**守不住东西的守卫比没有守卫更糟，因为它是被信任的**。
 
 ---
 
@@ -194,7 +271,9 @@ import 就是环。环在部分浏览器能跑、部分不能，且让"改一个
 - ❌ 在主题/插件里自己写鉴权（`jwt.verify` / 检查 `role`）
 - ❌ 手写后台表单（应由 `fields[]` 声明生成）
 - ❌ 主题切换时删除业务数据（只隐藏，不删除）
+- ❌ 语言停用时 drop `{table}_i18n` 表（翻译要留住）
 - ❌ 新增架构规则却不做反向验证（测不出失败的检查不是检查）
+- ❌ 把一个概念在 JS 和 SQL 里各写一遍（共用定义，见规则 30）
 
 ---
 

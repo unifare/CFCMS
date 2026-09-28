@@ -1,5 +1,6 @@
 import { Env } from "../shared/types";
 import { parseBlocks } from "../rendering/blocks";
+import { siteLocales, siteDefaultLocale } from "./i18n/locale-registry";
 
 export function esc(v:unknown){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!))}
 /**
@@ -10,28 +11,30 @@ export function esc(v:unknown){return String(v??"").replace(/[&<>"']/g,c=>({"&":
  * single-site install and wrong the moment a second site exists.
  */
 export async function setting(env:Env,key:string,fallback:string,siteId:string){const r=await env.DB.prepare("SELECT value FROM settings WHERE site_id=? AND key=?").bind(siteId,key).first<any>();return r?.value??fallback}
-export async function locales(env:Env,siteId:string){
-  try{
-    const r=await env.DB.prepare("SELECT * FROM locales ORDER BY is_default DESC,code").all();
-    if(r.results.length)return r.results;
-  }catch{/* table absent on very old databases */}
-  void siteId;
-  return [{code:"en",name:"English",is_default:1}];
-}
+/**
+ * Locales this *site* serves, default first.
+ *
+ * This used to read the global `locales` table and ignore `siteId` entirely
+ * (`void siteId`). That was correct while the dictionary was the only concept —
+ * every site saw every language — but it made a per-site language switch
+ * impossible to express, and it was a silent multi-site bug waiting for the
+ * first install that wanted two sites with different language sets.
+ *
+ * The switch now lives in `site_locales`; the shape returned here is unchanged
+ * (`code` / `name` / `is_default`), with `native_name` and `direction` added for
+ * language switchers.
+ */
+export async function locales(env:Env,siteId:string){return await siteLocales(env,siteId)}
 /**
  * The site's default locale code.
  *
  * Front-end URLs may omit the locale segment (`/about` instead of
- * `/en/about`), and those paths must resolve against *some* locale. The
- * `is_default` flag in the `locales` table is the single source of truth for
- * which one; ordering already puts it first, but we look it up explicitly so
- * the intent survives a future change to the query's ORDER BY.
+ * `/en/about`), and those paths must resolve against *some* locale.
+ * `site_locales.is_default` is the single source of truth for which one — note
+ * this is NOT `locales.is_default`, which describes the platform dictionary and
+ * says nothing about any particular site.
  */
-export async function defaultLocale(env:Env,siteId:string):Promise<string>{
-  const all=await locales(env,siteId) as any[];
-  const def=all.find(l=>Number(l?.is_default)===1)??all[0];
-  return String(def?.code??"en");
-}
+export async function defaultLocale(env:Env,siteId:string):Promise<string>{return await siteDefaultLocale(env,siteId)}
 export async function siteInfo(env:Env,siteId:string){return {title:await setting(env,"site.title","CFPress",siteId),description:await setting(env,"site.description","",siteId),robots:await setting(env,"seo.robots","index,follow",siteId)}}
 /**
  * Load one published object by slug (or any column matched by `type`).

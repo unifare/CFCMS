@@ -29,6 +29,9 @@ const suites = [
   ["template engine (unit)", "template-engine.test.mjs"],
   ["theme integration (e2e)", "theme-integration.test.mjs"],
   ["multi-site", "multisite.test.mjs"],
+  // Multi-language runs after multi-site: both write per-site locale switches
+  // and the i18n suite asserts on a site it configures itself.
+  ["multi-language (L0-L3)", "i18n.test.mjs"],
   ["admin contract", "admin-contract.test.mjs"],
   ["plugin hooks", "plugin-hooks.test.mjs"],
   ["theme sandbox (L3)", "theme-worker.test.mjs"],

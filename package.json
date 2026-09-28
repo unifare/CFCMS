@@ -14,6 +14,7 @@
     "test:architecture": "node tests/architecture.test.mjs",
     "test:integration": "node tests/theme-integration.test.mjs",
     "test:multisite": "node tests/multisite.test.mjs",
+    "test:i18n": "node tests/i18n.test.mjs",
     "test:admin": "node tests/admin-contract.test.mjs",
     "test:plugins": "node tests/plugin-hooks.test.mjs",
     "test:sandbox": "node tests/theme-worker.test.mjs",
@@ -22,7 +23,7 @@
     "test:admin-spa": "node tests/admin-spa.test.mjs",
     "theme:deploy": "node scripts/deploy-theme.mjs",
     "seed:demo": "node scripts/seed-demo-content.mjs",
-    "test": "node tests/architecture.test.mjs && node tests/manifest-validation.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/theme-integration.test.mjs && node tests/multisite.test.mjs && node tests/admin-contract.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs"
+    "test": "node tests/architecture.test.mjs && node tests/manifest-validation.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/theme-integration.test.mjs && node tests/multisite.test.mjs && node tests/i18n.test.mjs && node tests/admin-contract.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.3",
