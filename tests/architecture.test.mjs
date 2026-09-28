@@ -489,6 +489,115 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+section("Declared admin menus are renderable (batch 3)");
+// ---------------------------------------------------------------------------
+
+/**
+ * A manifest's `adminMenus[].screen` is the only thing that decides which admin
+ * page opens. An unknown value does not fail the install — it produces a
+ * sidebar entry that leads to a "no renderer for this screen type" panel, and
+ * nothing points back at the manifest. So the shipped extensions are checked
+ * against the same list the validator uses.
+ *
+ * The list is read out of `security.ts` rather than copied, and then compared
+ * against a pinned set. Copying it would let the two drift; not pinning it
+ * would let someone "fix" a failure by adding a screen nobody implements.
+ */
+const securitySrc = read(join(ROOT, "src/extensions/security.ts"));
+const allowedBlock = securitySrc.match(/const ALLOWED_ADMIN_SCREENS\s*=\s*\[([\s\S]*?)\]/);
+const allowedScreens = allowedBlock
+  ? [...allowedBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+  : [];
+const EXPECTED_SCREENS = [
+  "dashboard", "content-list", "content-edit", "settings", "media", "custom",
+  "theme-settings", "plugin-settings", "table-list", "table-edit",
+];
+check(
+  "ALLOWED_ADMIN_SCREENS contains exactly the pinned set",
+  JSON.stringify([...allowedScreens].sort()) === JSON.stringify([...EXPECTED_SCREENS].sort()),
+  `implementation: ${JSON.stringify(allowedScreens)}\n       pinned:         ${JSON.stringify(EXPECTED_SCREENS)}`
+);
+
+const TABLE_SCREENS = ["table-list", "table-edit"];
+const menuProblems = [];
+for (const [kind, dir] of [["theme", "themes"], ["plugin", "plugins"]]) {
+  const base = join(ROOT, dir);
+  if (!existsSync(base)) continue;
+  for (const name of readdirSync(base)) {
+    const manifestPath = join(base, name, kind === "theme" ? "theme.json" : "plugin.json");
+    if (!existsSync(manifestPath)) continue;
+    let manifest;
+    try { manifest = JSON.parse(read(manifestPath)); } catch { continue; }
+    const declaredTables = new Set(
+      (Array.isArray(manifest.tables) ? manifest.tables : []).map((t) => String(t?.name ?? ""))
+    );
+    for (const menu of Array.isArray(manifest.adminMenus) ? manifest.adminMenus : []) {
+      const where = `${dir}/${name}: menu "${menu?.id}"`;
+      const screen = String(menu?.screen ?? "");
+      if (!allowedScreens.includes(screen)) {
+        menuProblems.push(`${where} uses unknown screen "${screen}"`);
+        continue;
+      }
+      if (TABLE_SCREENS.includes(screen)) {
+        const table = String(menu?.args?.table ?? "");
+        if (!table) menuProblems.push(`${where} screen "${screen}" has no args.table`);
+        else if (!declaredTables.has(table)) {
+          menuProblems.push(`${where} references table "${table}" which is not in its tables[]`);
+        }
+      }
+      if (screen === "custom" && !String(menu?.args?.view ?? "")) {
+        menuProblems.push(`${where} screen "custom" has no args.view`);
+      }
+    }
+  }
+}
+check(
+  "every shipped admin menu uses a known screen and names a real table",
+  menuProblems.length === 0,
+  menuProblems.join("\n       ")
+);
+
+// ---------------------------------------------------------------------------
+section("The retired menu table stays retired");
+// ---------------------------------------------------------------------------
+
+/**
+ * 0012 moved theme menus into `admin_menu_registry` and dropped
+ * `theme_admin_menus`. Two things would quietly undo that:
+ *
+ *   * source code still reading or writing the old table — the new registry
+ *     would fill up while a stale reader returned an empty list, which looks
+ *     exactly like "the theme declared no menus";
+ *   * a later migration re-creating it, which would leave two tables holding
+ *     the same thing again.
+ *
+ * A text scan is the right shape here: this is a *name* that must not appear,
+ * not a structure to be parsed. Comments are stripped first — prose *about*
+ * the retirement ("0012 moved rows out of theme_admin_menus") is documentation,
+ * not a reader of the table, and punishing it would push the next person to
+ * delete the explanation.
+ */
+const RETIRED = "theme_admin_menus";
+const withoutComments = (s) =>
+  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const retiredOffenders = [];
+for (const f of walk(join(ROOT, "src"), [".ts"])) {
+  if (withoutComments(read(f)).includes(RETIRED)) retiredOffenders.push(`${rel(f)} still references ${RETIRED}`);
+}
+const laterMigrations = readdirSync(join(ROOT, "migrations"))
+  .filter((f) => /^\d+_.*\.sql$/.test(f))
+  .filter((f) => Number(f.split("_")[0]) > 12)
+  .filter((f) => withoutComments(read(join(ROOT, "migrations", f))).includes(RETIRED));
+for (const f of laterMigrations) {
+  retiredOffenders.push(`migrations/${f} references ${RETIRED} after 0012 retired it`);
+}
+check(
+  "no source file or later migration uses the dropped menu table",
+  retiredOffenders.length === 0,
+  retiredOffenders.join("\n       ")
+);
+
+// ---------------------------------------------------------------------------
 console.log(`\n${"=".repeat(64)}`);
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) {

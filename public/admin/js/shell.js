@@ -121,13 +121,36 @@ export function pageHead({ title, sub = "", actions = "", crumbs = null }) {
 }
 
 /**
- * Resolve a page name to a screen. Two prefixes are dynamic:
- * `cpt:<name>` (a theme-declared post type) and `menu:<id>` (a theme-declared
- * admin menu). Everything else is a plain lookup.
+ * Resolve a page name to a screen. Four prefixes are dynamic:
+ * `cpt:<name>` (a theme-declared post type), `menu:<id>` (a declared admin
+ * menu), and the two table pages — `table:<table>` for the list and
+ * `table-edit:<table>[:<slug>]` / `table-new:<table>` for the form.
+ *
+ * The table pages use three distinct prefixes rather than one prefix plus an
+ * optional segment. An earlier version used `table:<table>[:<slug>]`, which
+ * made "the list" and "a new row" the *same* page name when the slug was
+ * absent — so the Add button navigated to the list it was already on and
+ * nothing happened. Three prefixes cannot collide that way, and the absence of
+ * a slug no longer has to mean two different things.
  */
 async function renderScreen(c, page) {
   if (page.startsWith("cpt:")) return screens.get("content-list")(c, page.slice(4));
   if (page.startsWith("menu:")) return screens.get("theme-menu")(c, page.slice(5));
+  if (page.startsWith("table-new:")) {
+    return screens.get("table-edit")(c, page.slice("table-new:".length) || null, null);
+  }
+  if (page.startsWith("table-edit:")) {
+    const rest = page.slice("table-edit:".length);
+    const at = rest.indexOf(":");
+    const table = at === -1 ? rest : rest.slice(0, at);
+    // The slug was percent-encoded when the page name was built, because a
+    // slug may contain anything a URL path segment may contain.
+    const slug = at === -1 ? null : decodeURIComponent(rest.slice(at + 1));
+    return screens.get("table-edit")(c, table || null, slug || null);
+  }
+  if (page.startsWith("table:")) {
+    return screens.get("table-list")(c, page.slice("table:".length) || null);
+  }
   const screen = screens.get(page);
   if (!screen) {
     c.innerHTML = `<div class="panel">${esc(page)} is not a screen.</div>`;

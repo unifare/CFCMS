@@ -11,6 +11,15 @@
     "beforeRender",
     "html"
   ],
+  "adminMenus": [
+    {
+      "id": "seo-settings",
+      "label": "SEO Settings",
+      "icon": "chart",
+      "screen": "plugin-settings",
+      "capability": "settings.read"
+    }
+  ],
   "settings": [
     {
       "key": "title_template",

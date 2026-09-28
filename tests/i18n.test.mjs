@@ -256,8 +256,15 @@ async function main() {
   check("no _i18n table while monolingual", names1.includes(I18N_TABLE), false);
 
   const tt1 = await (await req(worker, env, "/api/v1/theme-tables", { headers: auth })).json();
-  check("table is registered", tt1.items.map((d) => d.logical_name), ["product"]);
-  check("registered without a translation table", tt1.items[0].i18n_table, null);
+  // Scope to *this* theme's declarations. `theme-tables` is site-wide on
+  // purpose (the registry survives deactivation, by design), so a sibling
+  // suite that registers a table on the same site would otherwise show up
+  // here — the assertion would then be measuring the D1's history instead of
+  // this suite's behaviour. Filtering by theme keeps it just as strong (a
+  // duplicate row for the same theme still fails) without the coupling.
+  const mine = tt1.items.filter((d) => d.theme_name === THEME);
+  check("table is registered", mine.map((d) => d.logical_name), ["product"]);
+  check("registered without a translation table", mine[0].i18n_table, null);
 
   // Single-language write and read.
   const saved1 = await (await req(worker, env, "/api/v1/theme-tables/product", {

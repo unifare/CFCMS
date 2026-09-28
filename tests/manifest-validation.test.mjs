@@ -225,6 +225,56 @@ rejects(
   "admin menu args is not an object"
 );
 
+// -- batch 3: the generated-table screens and per-screen args schema --------
+//
+// `table-list` / `table-edit` are the two screens that let a theme show its own
+// table without writing admin code. A menu that names no table, or names one
+// the manifest never declared, renders an empty page in production — the
+// manifest is the only place that mistake is cheap to catch.
+rejects(
+  v,
+  validTheme({
+    tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }],
+    adminMenus: [{ id: "products", screen: "table-list" }],
+  }),
+  "table-list menu without args.table"
+);
+rejects(
+  v,
+  validTheme({ adminMenus: [{ id: "products", screen: "table-list", args: { table: "product" } }] }),
+  "table-list menu naming a table that is not declared"
+);
+rejects(
+  v,
+  validTheme({ adminMenus: [{ id: "products", screen: "table-edit", args: { table: "product" } }] }),
+  "table-edit menu naming a table that is not declared"
+);
+rejects(
+  v,
+  validTheme({
+    adminMenus: [
+      { id: "same", screen: "content-list", args: { type: "posts" } },
+      { id: "same", screen: "theme-settings" },
+    ],
+  }),
+  "duplicate admin menu id  ← both rows would claim the same page key"
+);
+rejects(
+  v,
+  validTheme({ adminMenus: [{ id: "shop/settings", screen: "theme-settings" }] }),
+  "admin menu id is not an identifier  ← it becomes the SPA page key"
+);
+rejects(
+  v,
+  validTheme({ adminMenus: [{ id: "orders", screen: "custom" }] }),
+  "custom screen without args.view"
+);
+rejects(
+  v,
+  validTheme({ adminMenus: [{ id: "orders", screen: "custom", args: { view: "../../etc/passwd" } }] }),
+  "custom screen whose view escapes the package"
+);
+
 // ---------------------------------------------------------------------------
 console.log("\n4. Rejected: locales / settings / runtime  (§5.3)");
 // ---------------------------------------------------------------------------
@@ -266,6 +316,28 @@ rejects(v, { name: "Bad Name", version: "0.1.0" }, "extension name has a space",
 rejects(v, { name: "seo", version: "1.0" }, "version is not semver", "plugin");
 rejects(v, "not an object", "manifest is not an object", "plugin");
 
+// A plugin's `adminMenus` used to be accepted and never read — installed, no
+// menu, nothing to explain the gap. It is validated now, and the two rules that
+// genuinely differ from a theme's are pinned here.
+rejects(
+  v,
+  { name: "seo", version: "0.1.0", adminMenus: [{ id: "x", screen: "not-a-screen" }] },
+  "plugin admin menu with an unsupported screen",
+  "plugin"
+);
+rejects(
+  v,
+  { name: "seo", version: "0.1.0", adminMenus: [{ id: "x", screen: "table-list", args: { table: "product" } }] },
+  "plugin admin menu using a table screen  ← plugin-owned tables are not materialised",
+  "plugin"
+);
+rejects(
+  v,
+  { name: "seo", version: "0.1.0", tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }] },
+  "plugin declaring tables[]  ← refused, not silently ignored",
+  "plugin"
+);
+
 // ---------------------------------------------------------------------------
 console.log("\n6. Tolerance: optional surface must not over-reject");
 // ---------------------------------------------------------------------------
@@ -282,6 +354,26 @@ accepts(
   v,
   validTheme({ tables: [{ name: "thing", fields: [{ key: "a", type: "text" }] }] }),
   "table without translatable / without admin screen"
+);
+// The positive side of the batch-3 rules: every new screen must be reachable by
+// a manifest that gets it right, or the rules above would just be a wall.
+accepts(
+  v,
+  validTheme({
+    tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }],
+    adminMenus: [
+      { id: "products", screen: "table-list", args: { table: "product" } },
+      { id: "product-form", screen: "table-edit", args: { table: "product" } },
+      { id: "orders", screen: "custom", args: { view: "admin/orders.html" } },
+    ],
+  }),
+  "theme using table-list / table-edit / custom with correct args"
+);
+accepts(
+  v,
+  { name: "seo", version: "0.1.0", permissions: ["settings.read"], adminMenus: [{ id: "seo-settings", screen: "plugin-settings" }] },
+  "plugin declaring its own settings menu",
+  "plugin"
 );
 // A one-character table name is *supposed* to be rejected (TABLE_NAME_RE needs
 // ≥2 chars). Pinning that here keeps the boundary explicit, so a future

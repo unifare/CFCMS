@@ -628,24 +628,36 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
 
 ### 3.5 主题后台菜单：从"链接"升级为"页面"
 
-**现状问题**：`ALLOWED_ADMIN_SCREENS` 只有 7 个固定值（`dashboard`/`content-list`/`content-edit`/`settings`/`media`/`custom`/`theme-settings`），且 `screen` 只是告诉 SPA "打开哪个内置页面"。主题无法提供自己的后台界面。
+> **✅ 已落地（批次 3，`0012_admin_menu_registry.sql`）。** 本节原以"现状问题"开头；
+> 现在 `ALLOWED_ADMIN_SCREENS` 有 **10 个**值，两个表屏幕由 `fields[]` 生成表单，
+> 主题确实不再需要写任何后台代码。下面是实现后的形状。
 
-**新设计**：`screen` 是**屏幕类型**，主题选类型并给参数，平台负责渲染。
+**旧问题**：`ALLOWED_ADMIN_SCREENS` 只有 7 个固定值（`dashboard`/`content-list`/`content-edit`/`settings`/`media`/`custom`/`theme-settings`），且 `screen` 只是告诉 SPA "打开哪个内置页面"。主题无法提供自己的后台界面。
+
+**设计**：`screen` 是**屏幕类型**，主题选类型并给参数，平台负责渲染。
 
 | `screen` | 参数 | 渲染什么 | 用途 |
 |---|---|---|---|
 | `dashboard` | — | 仪表盘 | |
 | `content-list` | `{ type }` | 平台内容的列表（含 CPT） | 新闻、产品（若走 `posts`） |
 | `content-edit` | `{ type }` | 平台内容编辑器 | |
-| `table-list` | `{ table }` | **主题自有表的列表**（新） | 商城产品、房产列表 |
-| `table-edit` | `{ table }` | **主题自有表的编辑器**（新） | 由 `fields[]` 自动生成表单 |
-| `theme-settings` | — | `settings[]` 声明的表单 | 商城设置 |
-| `custom` | `{ view }` | 主题自带的 HTML 片段（沙箱渲染） | 订单看板等复杂界面 |
+| `table-list` | `{ table }` | **主题自有表的列表**（批次 3 新增） | 商城产品、房产列表 |
+| `table-edit` | `{ table }` | **主题自有表的编辑器**（批次 3 新增） | 由 `fields[]` 自动生成表单 |
+| `theme-settings` | — | 主题 `settings[]` 声明的表单 | 商城设置 |
+| `plugin-settings` | — | 插件 `settings[]` 声明的表单（批次 3 新增） | 插件自己的配置页 |
+| `custom` | `{ view }` | 扩展自带的 HTML 片段（沙箱渲染） | 订单看板等复杂界面 |
 | `media` | — | 媒体库 | |
+| `settings` | — | 站点设置 | |
 
 **`table-edit` 由 `fields[]` 自动生成表单**——这是关键。主题声明 `{ key: "price", type: "number", label: "Price" }`，平台就渲染出一个数字输入框。主题**不需要写 HTML 表单**，AI 也就**没机会写错表单**。
 
+落地位置：`public/admin/js/table-form.js`（唯一的"字段类型 → 控件"映射表）+ `screens/table-list.js` / `screens/table-edit.js`。声明侧只有 6 种字段类型，所以映射是完备的；新增类型必须同时改这三处，否则表单会渲染出一个控件却丢掉用户输入的值（见 `table-form.js` 顶部注释）。
+
+**`args` 按屏幕类型做 schema 校验**（§5.3）：`table-list`/`table-edit` 必须给出 `args.table`，且该表必须在本清单的 `tables[]` 里声明过；`custom` 必须给出 `args.view` 且不得越出扩展包。**理由**：参数写错的清单能装上、能激活，然后渲染出一个空白页——而报错会指向渲染器，不指向清单。
+
 **权限统一由平台施加**：每个菜单项声明 `capability`（如 `content.read`）。菜单可见性、API 访问都由平台在这一处检查。**主题不写鉴权代码**——对照 nodecms 的 `themes/eShop/admin-routes.js` 自己 `jwt.verify` + 自己查 `user.role !== 'admin'`，那种写法必然有主题写漏。
+
+**页面键（SPA 侧）**：`table:` 系列用**三个互不重叠的前缀**——`table:<table>` 是列表，`table-new:<table>` 是新建表单，`table-edit:<table>:<slug>` 是编辑某一行。曾经用"一个前缀 + 可选段"（`table:<table>[:<slug>]`），结果"列表"和"新建"在缺省 slug 时**是同一个页面名**：点"新增"跳回它自己所在的列表，什么也没发生。这个缺陷只有真实浏览器验收才暴露得出来（`tests/_admin-menus-browser.cjs`）。
 
 ---
 
@@ -761,7 +773,25 @@ CREATE TABLE admin_menu_registry (
 
 后台 API 按 `capability` 过滤后返回给 SPA，SPA 只管渲染。**排序规则**：core 菜单按固定顺序，主题菜单紧跟内容组，插件菜单归入"扩展"组。
 
-`theme_admin_menus` 旧表可以废弃（数据迁移到新表）或者保留为视图。倾向**迁移后废弃**——两张表存同一件事是 bug 温床。
+`theme_admin_menus` 旧表**迁移后废弃**（原方案里"或保留为视图"这条路没走）——两张表存同一件事是 bug 温床。0012 把行搬进新表后 `DROP TABLE`，`tests/_apply-migrations.mjs` 会断言它不再存在。
+
+> **✅ 已落地（批次 3）。** 实现分散在三处，各自的职责不要混：
+>
+> | 位置 | 职责 |
+> |---|---|
+> | `src/platform/admin-menus.ts` | 注册表的唯一读写口（`registerOwnerMenus` / `clearOwnerMenus` / `listAdminMenuGroups`） |
+> | `src/extensions/theme/capabilities.ts` | 主题激活/停用时调上面的口，`owner_type='theme'` |
+> | `src/extensions/plugin/menus.ts` | 插件启用/停用时调上面的口，`owner_type='plugin'` |
+>
+> **为什么读写口在 `platform/` 而不在任一扩展目录**：两种扩展都要写它。放在 `extensions/theme/`，插件路径就得 import 主题（违反 §7.3 规则 3）；放在 `extensions/plugin/` 则反过来。`platform/` 是唯一"两种扩展都能 import、且允许碰数据库"的层。
+>
+> **三个实现期才暴露的坑，都写进了守卫：**
+>
+> 1. **行主键必须内嵌 owner。** 自然键是四元组，但主键只能是一个值。旧方案 `scopedId("tam", site, menuId)` **不含 owner**，两个主题各声明一个 `main` 菜单就会撞主键——第二个主题静默覆盖第一个。现在 `menuRowId()` 内嵌四元组，并追加一个四元组的短哈希：`acme-shop` 与 `acme_shop` 会 slug 成同一个串，只靠可读部分仍会撞（`tests/admin-menus.test.mjs` 第 2 段钉住这一点）。
+> 2. **插件菜单是"全站"的，主题菜单是"单站"的。** 主题按站点激活，所以它的菜单按站点存；插件只有一个安装级 `enabled` 开关，没有按站点的镜像。若在启用时给每个站点写一行，就必须再挂一个"建站时补写"的钩子——**漏掉那个钩子，新站点会静默地没有插件菜单**。所以插件行写 `site_id = '*'`（`ALL_SITES`），读取时 `site_id=? OR site_id='*'`。一次写入，对尚未存在的站点也正确。
+> 3. **读菜单要有 owner 的名字，而唯一正确的来源是 `settings` 的 `theme.active`。** 用 `theme_installs.active` 会在多站点上选错主题（§6.1 的老坑）。
+>
+> **收敛时机**：插件菜单在 `loadEnabledPlugins()` 里物化——那里本来就在回答"哪些插件是启用的、各自声明了什么"，hook 与菜单共用同一个答案。enable/disable 端点会 `resetPluginRuntime()` + `bootPluginRuntime()`，所以改动立即生效；其余请求由 boot 收敛。
 
 ---
 
@@ -814,10 +844,13 @@ export async function findContent(
 - tables[].name        必须匹配 /^[a-z][a-z0-9_]{1,63}$/
 - tables[].translatable 必须是 fields 里存在的 key（否则翻译一个不存在的字段）
 - tables[].fields[].key 不得与平台保留字冲突（id/site_id/slug/lang_group/status/created_at/updated_at）
-- adminMenus[].screen   必须在 ALLOWED_ADMIN_SCREENS 里
+- adminMenus[].id       必须是纯标识符（IDENT_RE），且同一扩展内不得重复
+- adminMenus[].screen   必须在 ALLOWED_ADMIN_SCREENS 里（现 10 个）
 - adminMenus[].capability 必须在 CAPABILITIES 里
-- adminMenus[].args      按 screen 类型做 schema 校验
-                          (screen='table-list' → args.table 必填且必须已声明)
+- adminMenus[].args      按 screen 类型做 schema 校验：
+                          'table-list'/'table-edit' → args.table 必填且必须已声明
+                          'custom'                 → args.view 必填且必须是相对路径
+                          其余 screen              → args 允许为空对象
 - routes[].resolve.table 必须已声明
 - locales[]             必须是合法语言代码格式
 - 所有 key 前缀           语言包文件里的 key 必须匹配 L2 命名规范（见 §5.5）
@@ -825,21 +858,38 @@ export async function findContent(
                         每个 key 必须带 theme.{name}. / plugin.{name}. / core. 前缀
 ```
 
+**批次 3 的收口：`adminMenus` 校验抽成了共享函数 `validateAdminMenus(menus, declaredTables, ownerType)`**，
+主题与插件走**同一份**校验（`validateManifest` 里按 `type` 分派）。这条不是重构洁癖——两套写法
+早晚会分叉，而分叉的那一刻，"插件菜单能不能用某个 screen"就没有唯一答案了。
+
+插件侧多两条硬边界：
+
+- **`table-list` / `table-edit` 对插件一律拒绝**。这两个 screen 渲染的是**主题声明的表**，
+  插件没有 `tables[]` 可依赖（见下一条），放行只会得到一个渲染期 500。
+- **插件的 `tables[]` 被明确拒绝**（报错，不是忽略）。原因是结构性的：`theme_table_defs`
+  目前只有 `theme_name` 列，要支持插件自有表必须**重建该表**（SQLite 不能 `ALTER` 主键/UNIQUE），
+  属批次 4。**静默忽略一个已声明的能力比拒绝它更危险**——作者会以为表建好了。
+
 `langs` 那条是本批次新增的（M11）。**插件为什么把语言包内联在清单里**：`uploadExtension`
 把插件包当 zip 原样存进 R2，从不解包，所以插件没有"一个 `langs/` 目录"可以读。
 主题有（`themes/<name>/langs/<locale>.json`，运行时从 R2 读），插件只能声明。
 
 两个扩展都定义 `nav.home` 时，谁生效取决于加载顺序，而且**没有正确的修复位置**——
 所以前缀不是风格要求，是让 key 全局唯一、且冲突时能一眼看出该改谁。校验必须拦住它：
-`tests/manifest-validation.test.mjs` 第 11 段（42 条断言）里每条规则都有
-「注入缺陷 → 断言必须抛错」的用例。
+`tests/manifest-validation.test.mjs` 第 11 段里每条规则都有
+「注入缺陷 → 断言必须抛错」的用例（现 54 条断言，其中 8 条专为批次 3 的菜单规则新增）。
 
 **校验失败必须让安装失败，不能警告后继续。** 一个装不上的主题胜过半个能跑的主题。
 
 ### 5.4 防线三：契约测试（挡 B/C 类）
 
-**现状**：11 个套件、约 400 条断言，且是**驱动真实 Worker 源码 + 真实本地 D1**，这个基础很好。
+**现状**：12 个套件，且是**驱动真实 Worker 源码 + 真实本地 D1**，这个基础很好。
 判据是 **0 failures**，不要把断言数写死当验收标准——数字会随套件增减。
+
+> 批次 3 新增 `tests/admin-menus.test.mjs`（43 条断言）：注册表 schema、`menuRowId` 防碰撞、
+> 归属隔离、排序、能力过滤、主题注册、插件注册、**停用插件只删它自己的菜单**、
+> **安装级插件菜单对新站点立即可见**、主题切走/切回。另有两个真实浏览器脚本
+> （`tests/_i18n-browser.cjs`、`tests/_admin-menus-browser.cjs`）。
 
 要补的测试类型：
 
@@ -927,6 +977,15 @@ test('每个 cap 检查成对出现', () => {
 
 **这些测试的价值在于它们是"无情的"**。AI 写新代码时，如果越界，测试立刻红。它不需要"理解架构"，只需要"运行测试"。
 
+**已落地**：`tests/architecture.test.mjs` 现有 13 项检查。批次 3 新增 3 项：
+
+1. **`ALLOWED_ADMIN_SCREENS` 被钉住**（集合相等，不是"包含"）——加屏幕必须同时改测试，
+   否则"这个 screen 存不存在"就没有唯一答案。
+2. **仓库里每个已声明的菜单都用了已知 screen，且 `table-*` 引用的表真的在某个主题的 `tables[]` 里**——
+   这条会读真实清单文件，不是读源码字符串。
+3. **`src/` 与 0012 之后的迁移不得再引用 `theme_admin_menus`**（比对前剥掉注释）——
+   守住"旧表已退役"，防止有人从历史提交里复制粘贴回来。
+
 **③ 主题一致性测试**
 
 ```
@@ -1012,7 +1071,7 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `users` / `roles` / `permissions` / `sessions` | 平台 | 权限体系 |
 | `media` | 平台 | 媒体库 |
 | `menus` / `menu_items` | 平台 | 前台导航 |
-| `admin_menu_registry` | 平台 | **规划中**，后台菜单统一注册表（批次 3；当前仍是 `theme_admin_menus` + 插件菜单两套） |
+| `admin_menu_registry` | 平台 | **已落地**（批次 3，0012），后台菜单统一注册表。主题与插件走同一条注册路径，`owner_type`/`owner_name` 决定停用谁时清谁。旧表 `theme_admin_menus` 已 `DROP`。见 §4.4 |
 | `i18n_overrides` | 平台 | **新增**，界面翻译覆盖（L2 最高优先层） |
 | `theme_table_defs` | 平台 | **新增**，主题自有表的注册表：`logical_name → table_name / i18n_table / fields`。见 §6.3 |
 
@@ -1030,6 +1089,10 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `theme_blocks` | 主题区块 |
 | `theme_setting_defs` / `theme_settings` | 主题设置 |
 | `theme_installs` | 主题安装记录（含 manifest） |
+
+> **后台菜单不在这个表里了。** 它曾经是 `theme_admin_menus`，批次 3 起归入
+> `admin_menu_registry`（§6.1 / §4.4）——因为插件也要注册菜单，而"主题的菜单表"这个
+> 形状本身就把插件挡在门外。
 
 ### 6.3 主题自有业务表（动态生成）
 
@@ -1062,7 +1125,7 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `plugin_installs` | 插件安装记录 |
 | `plugin_setting_defs` / `plugin_settings` | 插件设置 |
 | `extension_capabilities` | 能力授权记录 |
-| `plugin_{plugin}_{table}` | 插件自有表（⏳ 批次 3；与主题同机制，走同一份 DDL 生成器） |
+| `plugin_{plugin}_{table}` | 插件自有表（⏳ **推迟到批次 4**；机制与主题同源，但 `theme_table_defs` 目前只有 `theme_name` 列，要支持插件得把它泛化成 owner 概念——这是一次表重建，不是加一列） |
 
 **命名约定（强制）**：扩展生成的表一律带**归属前缀**——主题 `theme_{theme}_{table}`、
 插件 `plugin_{plugin}_{table}`。这让"哪些表是扩展生成的、属于谁"一眼可辨，也让架构测试有稳定
@@ -1086,6 +1149,7 @@ cfpress/
 │   ├── api.ts                    # 管理 API
 │   │
 │   ├── platform/                 # ── 平台层（不认识主题/插件）──
+│   │   ├── admin-menus.ts        # ✅ 后台菜单注册表（主题/插件/核心共用的唯一读写入口）
 │   │   ├── i18n/                 # ✅ 多语言四层
 │   │   │   ├── core-pack.ts          # L2 内置核心语言包（TS 常量，不依赖 R2）
 │   │   │   ├── translate.ts          # interpolate / createTranslator / mergePacks
@@ -1106,10 +1170,10 @@ cfpress/
 │   ├── extensions/               # ── 扩展层（主题 + 插件）──
 │   │   ├── contract/             # 两层共享的契约
 │   │   │   ├── hooks.ts          # ✅ 已落地：HostHooks 接口 + NULL_HOOKS + 注入槽
-│   │   │   ├── manifest.ts       # ⏳ 批次 3：声明模型
-│   │   │   ├── validation.ts     # ⏳ 批次 3：清单校验（§5.3）
-│   │   │   └── capabilities.ts   # ⏳ 批次 3：能力枚举
-│   │   ├── security.ts           # ✅ 已落地：能力清单 + 清单字段校验 + 内联语言包校验
+│   │   │   ├── manifest.ts       # ⏳ 批次 4：声明模型
+│   │   │   ├── validation.ts     # ⏳ 批次 4：清单校验（§5.3）
+│   │   │   └── capabilities.ts   # ⏳ 批次 4：能力枚举
+│   │   ├── security.ts           # ✅ 已落地：能力清单 + 清单字段校验 + 内联语言包 + adminMenus 校验
 │   │   ├── theme/
 │   │   │   ├── runtime-declarative.ts  # ✅ 声明式渲染
 │   │   │   ├── runtime-worker.ts       # ✅ L3 沙箱（含 table/* 端点）
@@ -1118,9 +1182,10 @@ cfpress/
 │   │   │   ├── tables.ts               # ✅ 自有表 DDL 生成 + theme_table_defs 注册表
 │   │   │   ├── table-facade.ts         # ✅ 宿主侧表访问（读投影 / 写分派）
 │   │   │   ├── packs.ts                # ✅ 主题语言包提供者（R2）
-│   │   │   └── admin-screens.ts        # ⏳ 批次 3
+│   │   │   └── admin-screens.ts        # ✖ 不再需要：后台屏幕改为**由声明生成**（§3.5）
 │   │   ├── plugin/
-│   │   │   ├── runtime.ts        # ✅ 已落地：hook 注册表 + 运行时装配
+│   │   │   ├── runtime.ts        # ✅ 已落地：hook 注册表 + 运行时装配 + 启用插件时注册菜单
+│   │   │   ├── menus.ts          # ✅ 插件菜单（写一次 site_id='*'）
 │   │   │   ├── packs.ts          # ✅ 插件内联语言包提供者
 │   │   │   ├── hooks.ts          # ⏳ 批次 4：hook 目录拆分
 │   │   │   └── facade.ts         # ⏳ 批次 4：能力门面拆分
@@ -1154,22 +1219,26 @@ cfpress/
 │       ├── admin.js              # 入口：只做装配 + WINDOW_HANDLERS（< 120 行）
 │       ├── state.js              # 共享 state + API 帮手（叶子模块）
 │       ├── nav.js                # 导航模型 / 侧栏 / header（纯 markup）
-│       ├── shell.js              # render 循环 + 页面骨架（不得 import 任何屏幕）
+│       ├── shell.js              # render 循环 + 页面骨架 + 页名分发（不得 import 任何屏幕）
 │       ├── auth.js               # 登录屏（注入进 shell）
+│       ├── table-form.js         # ✅ 字段类型 → 控件 的唯一映射 + date/datetime 往返
 │       └── screens/
 │           ├── index.js          # 页名 → 屏幕 注册表（唯一 import 全部屏幕的模块）
 │           ├── dashboard.js  content-list.js  editor.js
 │           ├── media.js  themes.js  plugins.js
 │           ├── languages.js      # L0 站点语言 + L2 界面语言
 │           ├── sites.js  users.js  settings.js  menus.js
-│           └── table-list.js  table-edit.js     # ⏳ 批次 3：主题自有表
+│           ├── theme-menu.js     # ✅ 统一菜单分发器（menu:<id>）
+│           └── table-list.js  table-edit.js     # ✅ 生成式：列与控件来自 fields[]
 │
 ├── migrations/                   # D1 迁移，编号递增
 ├── tests/
-│   ├── architecture.test.mjs     # ★ 分层与越界检查（11 项）
+│   ├── architecture.test.mjs     # ★ 分层与越界检查（13 项）
 │   ├── manifest-validation.test.mjs
+│   ├── admin-menus.test.mjs      # ★ 菜单注册表契约（归属隔离 / 安装级可见）
 │   ├── i18n.test.mjs             # ★ 多语言四层契约（§5.4①）
 │   ├── _i18n-browser.cjs         # ★ 真实 Chromium 打真实 wrangler dev
+│   ├── _admin-menus-browser.cjs  # ★ 菜单 + 生成式屏幕的真实浏览器验收
 │   ├── admin-spa.test.mjs        # 后台结构守门人（模块图 + window.* 契约）
 │   ├── _apply-migrations.mjs     # 本地迁移（**别用 wrangler CLI**，见 HANDOVER）
 │   └── run-all.mjs
@@ -1324,7 +1393,7 @@ index.ts  ←  唯一知道所有层的地方
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| 架构测试（11 组检查） | ✅ 已建 | `tests/architecture.test.mjs`，已接入 `npm test` 与 `run-all.mjs` |
+| 架构测试（11 组检查） | ✅ 已建 | `tests/architecture.test.mjs`，已接入 `npm test` 与 `run-all.mjs`（批次 3 后为 13 组） |
 | 反向验证（测试确实会失败） | ✅ 已验证 | 7 项注入测试均如期失败（见下） |
 | 主题清单漂移修复 | ✅ 已修 | `themes/default`、`themes/magazine` 声明与实际文件对齐 |
 | 硬规则文档 | ✅ 已建 | [`AGENTS.md`](../AGENTS.md) |
@@ -1333,7 +1402,7 @@ index.ts  ←  唯一知道所有层的地方
 | **其余 6 处常量默认值** | ✅ 已修 | `siteId = DEFAULT_SITE_ID`，旧正则漏掉的那批 |
 | **目录重整（src/）** | ✅ 已完成 | `src/core/*` → `shared/` `platform/` `rendering/` `extensions/`，见下表 |
 | **依赖倒置（theme↔plugin）** | ✅ 已完成 | 新增 `extensions/contract/hooks.ts`，红线 4 从"纸面"变为"真实成立" |
-| **运行时清单校验** | ✅ 已完成 | §5.3 全部规则实现进 `validateManifest`；`tests/manifest-validation.test.mjs` 33 条断言逐条证明"拒绝" |
+| **运行时清单校验** | ✅ 已完成 | §5.3 全部规则实现进 `validateManifest`；`tests/manifest-validation.test.mjs` 33 条断言逐条证明"拒绝"（批次 3 后为 54 条） |
 | **后台 JS 拆分** | ✅ 已完成 | `admin.js` 1514 行 → 入口 < 120 行 + `js/` 下 4 个基础模块与 18 个屏幕模块；新增 `tests/admin-spa.test.mjs`（15 条）看住模块图与 `window.*` 契约，见 §7.2 |
 
 **批次 1 验收状态（2026-09-28 实测）**
@@ -1463,7 +1532,7 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 > 这三条有一个共同形状：**状态缓存与事实源不一致时，界面选择"什么都不显示"**。
 > 界面上"少了一块"比"显示错了"更难发现，因为没有任何东西是红的。
 
-### 批次 3：后台菜单统一 + 脚手架（P1）
+### 批次 3：后台菜单统一 + 脚手架（P1）—— ✅ 已完成（2026-09-28）
 
 > 主题自有表的部分（原批次 3 的 1–3 项）已在批次 2 落地，见上。
 
@@ -1479,6 +1548,74 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 - SEO 插件能注册自己的后台菜单
 - 停用插件后，只有它的菜单消失
 - 切主题后，旧主题的表在、菜单消失、切回来菜单恢复
+
+#### 落地情况
+
+| 项 | 状态 | 落点 |
+|---|---|---|
+| 1. 统一注册表 + drop 旧表 | ✅ | `migrations/0012_admin_menu_registry.sql`（迁移时把旧行搬过去，再 `DROP`） |
+| 2. `table-list` / `table-edit` 屏幕 | ✅ | `public/admin/js/table-form.js` + `screens/table-list.js` + `screens/table-edit.js` |
+| 2b. `plugin-settings` 屏幕 | ✅ | 批次 3 新增（原清单没列，但插件菜单需要它才有落点），`screens/theme-menu.js` 统一分发 |
+| 3. 插件菜单 | ✅ | `src/extensions/plugin/menus.ts`，写入 `ALL_SITES`（见 §4.4 坑 2） |
+| 4. `extensions/contract/` 补齐 | ⏳ **推迟到批次 4** | 见下方「本轮未做」 |
+
+**本轮未做（明确登记，不静默放行）**
+
+- **`extensions/contract/` 只拆 `hooks.ts` 一件事。** 这是纯结构性重构（把 `manifest.ts` /
+  `validation.ts` / `capabilities.ts` 挪进契约层），不改行为；与批次 3 的功能项混在一个提交里
+  会让"哪一行改动导致了行为变化"变难判断。推迟到批次 4。
+- **插件自有表（`plugin_{plugin}_{table}`）推迟到批次 4。** §6.4 曾把它标为批次 3，实现时发现
+  `theme_table_defs` 只有 `theme_name` 列，要支持插件必须把它泛化成 owner 概念——**那是表重建，
+  不是加一列**（SQLite 不能 `ALTER` 主键/UNIQUE，见 0009 的教训）。插件声明 `tables[]` 目前
+  **被校验器明确拒绝**，而不是被静默忽略。
+- **`eshop` 示例主题本身**仍是批次 4 的产物。本批次用 `menusdemo` 夹具（测试内）与
+  `menusbrowser`（浏览器验收内）验证了同一组能力。
+
+**验收证据（2026-09-28 实测）**
+
+```
+architecture         13 passed, 0 failed   ← 新增 3 组（屏幕白名单/已装扩展的菜单/旧表已退役）
+manifest-validation  54 passed, 0 failed   ← 新增 12 条（含 8 条"注入缺陷必须抛错"）
+admin-menus          43 passed, 0 failed   ← 本轮新增，覆盖 §4.4 的三条不变量
+admin-spa            15 passed, 0 failed   ← 22 个已注册页面全部渲染
+admin-contract       32 passed, 0 failed
+i18n                 62 passed, 0 failed
+multisite            74 passed, 0 failed
+plugin-hooks         25 passed, 0 failed
+template-engine      47 passed, 0 failed
+theme-integration    46 passed, 0 failed
+theme-worker         28 passed, 0 failed
+theme-aurora          0 failure(s)
+npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
+```
+
+外加一次**真实浏览器**端到端验收（`tests/_admin-menus-browser.cjs`，31 条断言，连跑两次均绿）：
+启用插件 → 侧栏长出 "Extensions" 组 → 菜单打开插件自己的设置页 → 改值并**重新加载后仍在**
+→ 上传并激活带 `tables[]` 的主题 → 侧栏 "From theme" 组出现 → 打开生成列表（列来自声明）
+→ 新增行（表单控件来自 `fields[].type`）→ 保存 → 列表出现该行 → 从列表删除 → 复原初始状态
+→ 全程零 console 错误 / 零 5xx。
+
+> **这次浏览器验收抓到了一个 Node 层抓不到的缺陷。** SPA 的页面键原本是
+> `table:<table>[:<slug>]`，于是"列表"与"新增"在缺省 slug 时是**同一个页面名**——
+> 点"新增"跳回它自己所在的列表，**界面上什么也没发生、控制台什么也没报**。
+> 结构测试（渲染桩）与 API 测试都覆盖不到"点一下之后去了哪"。
+> 修法是把三个深度拆成互不重叠的前缀：`table:` / `table-new:` / `table-edit:`（§3.5）。
+
+**反向验证记录（批次 3 新增，逐条注入确认会红）**
+
+| 注入的违规 | 测试的反应 |
+|---|---|
+| `clearOwnerMenus` 忽略 `owner_name`（只按站点+类型清） | ✅ `admin-menus` FAIL ×3 |
+| 插件菜单写成具体站点而非 `ALL_SITES` | ✅ `admin-menus` FAIL ×2（含"新站点看不到插件菜单"） |
+| 关掉 `table-list` 的 `args.table` 校验 | ✅ `manifest-validation` FAIL ×4 |
+| 关掉**插件**分支的清单校验 | ✅ `manifest-validation` FAIL ×3 |
+| 已装主题的菜单指向一个不存在的屏幕 | ✅ `architecture` FAIL |
+| 在 `src/` 里引用已退役的 `theme_admin_menus` | ✅ `architecture` FAIL |
+
+> ⚠️ **第一条第一版是假绿，值得记下来。** 最初的用例是"清掉插件 B，断言主题 A 还在"——
+> 两个 owner **类型不同**，所以只验证了谓词里 `owner_type` 那一半；把 `owner_name` 整段删掉，
+> 测试依然全绿。改成"两个同类型 owner"后才真正红。**教训：隔离性测试必须让被删掉的那一半
+> 成为唯一的区分依据**，否则它在测别的东西。
 
 ### 批次 4：脚手架 + 文档（P2）
 
@@ -1501,8 +1638,8 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 |---|---|---|---|---|
 | 1 | **slug 唯一性** | **跨语言唯一**——`/en/about` 与 `/zh/about` 视为同一资源的不同语言版本，不允许两个独立内容共用 slug | CFCMS 支持**无前缀访问**（`/about` 要能落到某个语言），共用 slug 必然歧义；且翻译组（`lang_group`）本来就要求"同一内容的不同语言版本共用 slug" | §2.3 唯一索引 `UNIQUE(site_id, type, slug)`，**不含 locale** |
 | 2 | **主题自有表的字段类型** | **先只支持基础类型**：`text` / `number` / `boolean` / `date`（+ 后续 `longtext`） | 关系（外键到平台 `posts`）看起来诱人，但会让主题表与平台表 schema 耦合——平台改字段就崩主题。等有真实需求再加，加时走**新版本 manifest** 而不是改语义 | §3.2 `tables[].fields[].type` 枚举；§2.5 `translatable` 只对有意义的类型生效 |
-| 3 | **插件是否也能声明自有表** | **支持，与主题同机制** | 机制已经统一（同一份 DDL 生成器、同一套 `host.table()` facade）。不支持反而要维护两套路径，且现实中"插件带表"是常见需求（如表单插件） | §6.4 插件表命名 `plugin_{slug}_{table}`（与主题 `theme_{owner}_{table}` 对称） |
-| 4 | **`theme_admin_menus` 旧表** | **迁移后删除**（批次 3 的迁移里 drop） | 与 `admin_menu_registry` 存同一件事，两张表 = bug 温床（一定会有代码读错那张、有代码只写一张） | §6.2 改为 `admin_menu_registry`；旧表在批次 3 drop |
+| 3 | **插件是否也能声明自有表** | **支持，与主题同机制**（决策不变，落地推迟到批次 4） | 机制已经统一（同一份 DDL 生成器、同一套 `host.table()` facade）。不支持反而要维护两套路径，且现实中"插件带表"是常见需求（如表单插件）。⚠️ **落地障碍**：`theme_table_defs` 只有 `theme_name` 一列，支持插件必须把它泛化成 owner 概念，那是**表重建**（SQLite 不能 `ALTER` 主键/UNIQUE）。在此之前插件声明 `tables[]` 被校验器**明确拒绝** | §6.4 插件表命名 `plugin_{slug}_{table}`（与主题 `theme_{owner}_{table}` 对称） |
+| 4 | **`theme_admin_menus` 旧表** | **迁移后删除**（批次 3 的迁移里 drop）✅ **已执行** | 与 `admin_menu_registry` 存同一件事，两张表 = bug 温床（一定会有代码读错那张、有代码只写一张） | §6.2 改为 `admin_menu_registry`；旧表已在 `0012` drop |
 | 5 | **目录重整的时机** | **批次 1 就做（先重整）** | 先重整，后面所有新代码自然落在对的位置；若最后做，则批次 2–4 写的每一行代码都要再动一次 | §7.1；本批次执行中 |
 | 6 | **界面语言（L2）是否本期做** | **做** | "中文站长管英文站"是内容站常态，缺了后台就没法用 | §2.4；批次 2 交付 |
 

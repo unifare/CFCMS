@@ -145,7 +145,7 @@ async function main() {
     "DELETE FROM posts WHERE id LIKE 'adm_%' OR id LIKE 'widget_%'",
     "DELETE FROM post_types WHERE declared_by_theme='admtheme'",
     "DELETE FROM field_defs WHERE declared_by_theme='admtheme'",
-    "DELETE FROM theme_admin_menus WHERE declared_by_theme='admtheme'",
+    "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='admtheme'",
     "DELETE FROM theme_setting_defs WHERE theme_name='admtheme'",
     "DELETE FROM theme_settings WHERE theme_name='admtheme'",
     "DELETE FROM theme_installs WHERE name='admtheme'",

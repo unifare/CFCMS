@@ -27,9 +27,28 @@ const ALLOWED_FIELD_TYPES = [
   "text","textarea","number","boolean","select","date","datetime",
   "media","media-multiple","color","url","email","richtext"
 ];
+/**
+ * Screen types a declared admin menu may open.
+ *
+ * `table-list` / `table-edit` (batch 3) are the two that let a theme show a
+ * generated form for its own table without shipping a line of admin code — the
+ * form is built from `tables[].fields[]`. `plugin-settings` is the plugin
+ * counterpart of `theme-settings`: it opens the extension's own declared
+ * settings rather than the site's.
+ */
 const ALLOWED_ADMIN_SCREENS = [
-  "dashboard","content-list","content-edit","settings","media","custom","theme-settings"
+  "dashboard","content-list","content-edit","settings","media","custom",
+  "theme-settings","plugin-settings","table-list","table-edit"
 ];
+
+/**
+ * Screen types that read a theme-owned table, and therefore must name one.
+ *
+ * Kept next to the screen list rather than inside the validator so the two can
+ * never drift: adding a screen here without adding it to
+ * `ALLOWED_ADMIN_SCREENS` is a no-op, not a hole.
+ */
+const TABLE_ADMIN_SCREENS = ["table-list","table-edit"];
 
 /**
  * Columns the platform owns on every generated table.
@@ -83,6 +102,19 @@ export function validateManifest(manifest:any,type:"plugin"|"theme"){
   validateInlineLangs(manifest,type)
 
   if(type==="theme") validateThemeManifest(manifest)
+  else{
+    // Plugins get their menus validated too. Until batch 3 this branch did not
+    // exist, so a plugin's `adminMenus` was silently accepted and never read —
+    // the author saw an installed plugin and no menu, with nothing to explain
+    // the gap.
+    validateAdminMenus(manifest.adminMenus, new Set<string>(), "plugin")
+    // `tables[]` is not ignored, it is refused. Accepting it would let a plugin
+    // declare a table the platform never creates, and the failure would only
+    // show up later as an empty admin page.
+    if(manifest.tables!==undefined){
+      fail("tables[] is not supported for plugins yet; plugin-owned tables are registered tech debt (AGENTS.md)")
+    }
+  }
 
   return {name:String(manifest.name),title:String(manifest.title||manifest.name),version:String(manifest.version),manifest}
 }
@@ -118,6 +150,80 @@ function validateInlineLangs(m:any,type:"plugin"|"theme"){
       if(!key.startsWith(prefix)&&!key.startsWith("core.")){
         fail(`langs.${locale}: key "${key}" must start with "${prefix}"`)
       }
+    }
+  }
+}
+
+/**
+ * Validate `adminMenus` for either extension kind.
+ *
+ * Shared on purpose. Before batch 3 this loop lived inside
+ * `validateThemeManifest`, so a plugin's `adminMenus` was never checked at all
+ * — a plugin could declare `screen: "nonsense"` and install cleanly, then
+ * produce a sidebar entry that opened a dead end. Now both kinds go through
+ * one function, and `ownerType` is only used for the one rule that genuinely
+ * differs (plugin-owned tables are not materialised yet).
+ *
+ * `args` is checked *per screen type* rather than as a bare object, because
+ * "object, but missing the key this screen reads" is the failure that reaches
+ * production: the manifest is valid, activation succeeds, and the page renders
+ * empty. Better to refuse the manifest.
+ */
+function validateAdminMenus(menus:unknown, declaredTables:Set<string>, ownerType:"plugin"|"theme"){
+  const seen=new Set<string>()
+  for(const menu of asArray(menus)){
+    if(!menu||typeof menu!=="object") fail("adminMenus entries must be objects")
+
+    const id=String(menu.id||"")
+    if(!id) fail("adminMenus entries need an id")
+    // The id becomes the SPA's page key (`menu:<id>`) and part of the registry
+    // primary key, so it has to survive being an identifier.
+    if(!IDENT_RE.test(id)) fail(`Invalid admin menu id: "${id}"`)
+    if(seen.has(id)) fail(`Duplicate admin menu id: ${id}`)
+    seen.add(id)
+
+    const screen=String(menu.screen||"")
+    if(!ALLOWED_ADMIN_SCREENS.includes(screen)) fail(`Unsupported admin screen "${screen}" for menu ${id}`)
+
+    // A menu may gate itself behind a capability. Checking it here means an
+    // installed-but-unusable menu is impossible.
+    if(menu.capability!==undefined&&menu.capability!==null&&!CAPABILITIES.includes(String(menu.capability) as Capability)){
+      fail(`adminMenu ${id}: unsupported capability "${menu.capability}"`)
+    }
+
+    if(menu.args!==undefined&&(typeof menu.args!=="object"||menu.args===null||Array.isArray(menu.args))){
+      fail(`adminMenu ${id}: args must be an object`)
+    }
+    const args:Record<string,unknown>=(menu.args&&typeof menu.args==="object"&&!Array.isArray(menu.args))
+      ? menu.args as Record<string,unknown>
+      : {}
+
+    if(TABLE_ADMIN_SCREENS.includes(screen)){
+      // Deliberately before the declared-table lookup, so the message a plugin
+      // author gets says *why*, not "table not declared" for a table they were
+      // never allowed to declare in the first place.
+      if(ownerType==="plugin"){
+        fail(`adminMenu ${id}: screen "${screen}" is not available to plugins yet (plugin-owned tables are not materialised; see AGENTS.md tech debt)`)
+      }
+      const table=String(args.table||"")
+      if(!table) fail(`adminMenu ${id}: screen "${screen}" requires args.table`)
+      if(!declaredTables.has(table)){
+        fail(`adminMenu ${id}: references table "${table}" which is not declared in tables[]`)
+      }
+    }
+
+    if(screen==="custom"){
+      const view=String(args.view||"")
+      if(!view) fail(`adminMenu ${id}: screen "custom" requires args.view`)
+      // The view is resolved inside the extension package, so it must not be
+      // able to walk out of it.
+      if(view.startsWith("/")||view.includes("..")||view.includes("\\")||view.includes("\0")){
+        fail(`adminMenu ${id}: args.view must be a relative path inside the package`)
+      }
+    }
+
+    if(screen==="content-list"&&args.type!==undefined&&!IDENT_RE.test(String(args.type))){
+      fail(`adminMenu ${id}: args.type must be an identifier`)
     }
   }
 }
@@ -163,21 +269,9 @@ function validateThemeManifest(m:any){
     if(!String(r.template||"")) fail(`Route ${path} must declare a template`)
   }
 
-  for(const menu of asArray(m.adminMenus)){
-    if(!menu||typeof menu!=="object") fail("adminMenus entries must be objects")
-    if(!String(menu.id||"")) fail("adminMenus entries need an id")
-    const screen=String(menu.screen||"")
-    if(!ALLOWED_ADMIN_SCREENS.includes(screen)) fail(`Unsupported admin screen "${screen}" for menu ${menu.id}`)
-    // A menu may gate itself behind a capability the theme also declares.
-    // Checking it here means an installed-but-unusable menu is impossible.
-    if(menu.capability!==undefined&&!CAPABILITIES.includes(String(menu.capability) as Capability)){
-      fail(`adminMenu ${menu.id}: unsupported capability "${menu.capability}"`)
-    }
-    // `args` must be an object when present; entries are read by screen type.
-    if(menu.args!==undefined&&(typeof menu.args!=="object"||menu.args===null||Array.isArray(menu.args))){
-      fail(`adminMenu ${menu.id}: args must be an object`)
-    }
-  }
+  // `adminMenus` is validated *after* `tables[]` below, because a
+  // `table-list` / `table-edit` menu must name a table this manifest declares
+  // and the declared set does not exist yet at this point.
 
   // -- Theme-owned tables (§3.2 / §9 decisions 2, 3) ------------------------
   //
@@ -232,6 +326,9 @@ function validateThemeManifest(m:any){
       fail(`route ${r?.path}: resolves table "${tbl}" which is not declared in tables[]`)
     }
   }
+
+  // Now that `declaredTables` exists, the menus can be checked against it.
+  validateAdminMenus(m.adminMenus, declaredTables, "theme");
 
   for(const code of asArray(m.locales)){
     if(!LOCALE_CODE_RE.test(String(code))){

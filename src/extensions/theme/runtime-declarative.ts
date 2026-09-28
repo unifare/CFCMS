@@ -80,6 +80,12 @@ export interface ThemeAdminMenu {
   icon?: string;
   screen: string;
   args?: Record<string, unknown>;
+  /**
+   * Optional gate. The menu is hidden unless the viewer holds this capability.
+   * It was accepted by the validator long before it was declared here, so a
+   * theme could set it and have the type checker call it a mistake.
+   */
+  capability?: string;
 }
 
 export interface ThemeBlock {

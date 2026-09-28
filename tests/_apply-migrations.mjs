@@ -57,8 +57,15 @@ export function splitStatements(sql) {
   return out;
 }
 
-/** Statements that fail harmlessly when re-applied. */
-const BENIGN = /duplicate column name|already exists|no such table: (menus_new|menu_items_new|menus_v2)/i;
+/**
+ * Statements that fail harmlessly when re-applied.
+ *
+ * `theme_admin_menus` is in the "no such table" alternation because 0012 drops
+ * it: if a database is ever brought up by applying only the tail of the
+ * migration set, the copy-out statement must not abort the run. The data it
+ * would have copied is, in that case, already absent.
+ */
+const BENIGN = /duplicate column name|already exists|no such table: (menus_new|menu_items_new|menus_v2|theme_admin_menus)/i;
 
 export function applyMigrations(db, dir) {
   const files = readdirSync(dir).filter((f) => /^\d+_.*\.sql$/.test(f)).sort();
@@ -105,11 +112,14 @@ if (isMain) {
     for (const e of r.errors) { bad++; console.log(`   ! ${e.message}\n     ${e.sql}`); }
   }
   // Sanity: the tables the runtime depends on.
-  const must = ["sites", "menus", "menu_items", "media_files", "content_cache_versions", "post_types", "field_defs", "post_meta", "locales", "site_locales", "i18n_overrides"];
+  const must = ["sites", "menus", "menu_items", "media_files", "content_cache_versions", "post_types", "field_defs", "post_meta", "locales", "site_locales", "i18n_overrides", "admin_menu_registry"];
   for (const t of must) {
     const r = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t);
     if (!r) { console.log(`MISSING TABLE: ${t}`); bad++; }
   }
+  // 0012 retires the old table; a leftover copy would mean the drop never ran.
+  const retired = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='theme_admin_menus'").get();
+  if (retired) { console.log("STALE TABLE: theme_admin_menus still present (0012 did not drop it)"); bad++; }
   const menuCols = db.prepare("PRAGMA table_info(menus)").all().map((c) => c.name);
   console.log("menus columns: " + menuCols.join(","));
   console.log("menus pk: " + db.prepare("PRAGMA table_info(menus)").all().filter((c) => c.pk).map((c) => c.name).join(","));

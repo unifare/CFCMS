@@ -7,8 +7,10 @@ import { installedPlugins, installedThemes, seedBundledExtensions, capabilityLis
 import { unzipSync } from "fflate";
 import { validateManifest, safeZipPath, sha256, CAPABILITIES } from "./extensions/security";
 import { createRevision, autosave } from "./platform/revisions";
-import { requirePermission } from "./platform/permissions";
+import { requirePermission, can } from "./platform/permissions";
 import { bumpContentCache } from "./shared/cache";
+import { listAdminMenuGroups } from "./platform/admin-menus";
+import { clearPluginMenus } from "./extensions/plugin/menus";
 import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./platform/sites";
 import { invalidateThemeWorker } from "./extensions/theme/runtime-worker";
 import {
@@ -916,6 +918,13 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
   const pm=path.match(/^extensions\/plugins\/([^/]+)\/(enable|disable)$/);
   if(pm&&method==="POST"){
     await env.DB.prepare("UPDATE plugin_installs SET enabled=?,updated_at=? WHERE name=?").bind(pm[2]==="enable"?1:0,now(),pm[1]).run();
+    if(pm[2]==="disable"){
+      // Drop this plugin's menus — and only this plugin's. The registry is
+      // keyed by owner so that disabling one extension cannot disturb a theme
+      // or a different plugin. Re-enabling re-registers them from the manifest
+      // in `loadEnabledPlugins`, so nothing is lost by deleting here.
+      await clearPluginMenus(env,pm[1]);
+    }
     // Rebuild the hook registry so the change is live for this isolate; the
     // memoised payload would otherwise keep the previous enabled-set for up
     // to `ENABLED_TTL_MS`.
@@ -976,6 +985,22 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
   if(path==="theme/post-types"&&method==="GET") return ok({items:await listPostTypes(env,siteId),site:siteId});
   if(path==="theme/routes"&&method==="GET") return ok({items:await listRoutes(env,siteId),site:siteId});
   if(path==="theme/menus"&&method==="GET") return ok({items:await listThemeAdminMenus(env,siteId),site:siteId});
+  // The unified view: theme menus and plugin menus in one list, grouped by
+  // owner and already filtered by what this user may see (§4.4). The SPA
+  // renders it verbatim rather than asking which extension kind produced each
+  // item — that is the whole reason the registry exists.
+  if(path==="admin-menus"&&method==="GET"){
+    // One lookup per distinct capability, not per menu.
+    const memo=new Map<string,boolean>();
+    const canView=async(capability:string)=>{
+      if(memo.has(capability)) return memo.get(capability)!;
+      const allowed=await can(env,user,capability).catch(()=>false);
+      memo.set(capability,allowed);
+      return allowed;
+    };
+    const groups=await listAdminMenuGroups(env,siteId,{can:canView});
+    return ok({site:siteId,groups,items:groups.flatMap(g=>g.items)});
+  }
   if(path==="theme/blocks"&&method==="GET") return ok({items:await listThemeBlocks(env,siteId),site:siteId});
   if(path==="theme/fields"&&method==="GET") return ok({items:await listFieldDefs(env,siteId),site:siteId});
   if(path==="theme/taxonomies"&&method==="GET") return ok({items:await listTaxonomies(env,siteId),site:siteId});

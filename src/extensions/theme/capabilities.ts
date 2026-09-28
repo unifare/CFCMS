@@ -10,6 +10,7 @@ import { Env } from "../../shared/types";
 import { now } from "../../shared/repo";
 import { randomId } from "../../shared/crypto";
 import { syncThemeTables } from "./tables";
+import { registerOwnerMenus, clearOwnerMenus, listOwnerMenus } from "../../platform/admin-menus";
 import type {
   ThemeManifest,
   ThemePostType,
@@ -155,20 +156,30 @@ export async function applyThemeCapabilities(
     result.routes++;
   }
 
-  for (const m of manifest.adminMenus ?? []) {
-    if (!m.id || !m.screen) continue;
-    await env.DB.prepare(
-      `INSERT INTO theme_admin_menus(id,site_id,menu_id,label,icon,screen,args_json,sort_order,declared_by_theme,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(site_id,menu_id) DO UPDATE SET
-         label=excluded.label, icon=excluded.icon, screen=excluded.screen,
-         args_json=excluded.args_json, sort_order=excluded.sort_order,
-         declared_by_theme=excluded.declared_by_theme, updated_at=excluded.updated_at`
-    )
-      .bind(scopedId("tam", siteId, m.id), siteId, m.id, m.label ?? m.id, m.icon ?? null, m.screen, JSON.stringify(m.args ?? {}), result.adminMenus, themeName, ts, ts)
-      .run();
-    result.adminMenus++;
-  }
+  // Admin menus now go into the shared registry (§4.4) rather than a
+  // theme-only table, so a plugin's menus and a theme's menus are one list
+  // with one renderer. `owner_type`/`owner_name` are what let the deactivation
+  // path below remove exactly this theme's menus and nothing else.
+  result.adminMenus = await registerOwnerMenus(
+    env,
+    siteId,
+    "theme",
+    themeName,
+    (manifest.adminMenus ?? [])
+      .filter((m) => m && m.id && m.screen)
+      .map((m, i) => ({
+        id: m.id,
+        label: m.label ?? m.id,
+        icon: m.icon ?? null,
+        screen: m.screen,
+        args: m.args ?? {},
+        capability: m.capability ?? null,
+        // Declaration order *is* the menu order; the manifest has no explicit
+        // sort field, and inventing one would let a theme claim a position
+        // ahead of the platform's own items.
+        sortOrder: i,
+      }))
+  );
 
   for (const b of manifest.blocks ?? []) {
     if (!b.name) continue;
@@ -229,10 +240,12 @@ export async function clearThemeCapabilities(
     env.DB.prepare("DELETE FROM taxonomies WHERE site_id=? AND declared_by_theme=?").bind(siteId, themeName),
     env.DB.prepare("DELETE FROM field_defs WHERE site_id=? AND declared_by_theme=?").bind(siteId, themeName),
     env.DB.prepare("DELETE FROM theme_routes WHERE site_id=? AND declared_by_theme=?").bind(siteId, themeName),
-    env.DB.prepare("DELETE FROM theme_admin_menus WHERE site_id=? AND declared_by_theme=?").bind(siteId, themeName),
     env.DB.prepare("DELETE FROM theme_blocks WHERE site_id=? AND declared_by_theme=?").bind(siteId, themeName),
   ];
   for (const s of statements) await s.run().catch(() => {});
+  // Menus live in the shared registry, so they are cleared through its API
+  // rather than a raw DELETE — the ownership predicate stays in one place.
+  await clearOwnerMenus(env, siteId, "theme", themeName);
   // Settings are per-theme; keep definitions but they simply stop being used.
   void ts;
 }
@@ -313,19 +326,36 @@ export async function listTaxonomies(env: Env, siteId: string): Promise<Taxonomy
   }
 }
 
+/**
+ * The active theme's admin menus for one site.
+ *
+ * Reads the shared registry filtered to `owner_type='theme'`, which means the
+ * result includes *every* theme that ever registered menus on this site — not
+ * only the active one. That is intentional and matches the rest of the
+ * capability model: deactivating a theme removes its declarations, so anything
+ * still here belongs to a theme that is currently active.
+ */
 export async function listThemeAdminMenus(env: Env, siteId: string) {
+  const rows = await listOwnerMenus(env, siteId, "theme", await activeThemeOwner(env, siteId));
+  return rows;
+}
+
+/**
+ * Which theme currently owns this site's menus.
+ *
+ * The registry is keyed by owner, so the reader needs the owner's name, and
+ * the only correct source for it is the per-site `theme.active` setting —
+ * `theme_installs.active` is a global flag and would pick the wrong theme on a
+ * multi-site install (see AGENTS.md).
+ */
+async function activeThemeOwner(env: Env, siteId: string): Promise<string> {
   try {
-    const r = await env.DB.prepare(
-      "SELECT * FROM theme_admin_menus WHERE site_id=? ORDER BY sort_order, menu_id"
-    )
+    const row = await env.DB.prepare("SELECT value FROM settings WHERE site_id=? AND key='theme.active'")
       .bind(siteId)
-      .all();
-    return ((r.results as any[]) ?? []).map((row) => ({
-      ...row,
-      args: safeJsonObject(row.args_json),
-    }));
+      .first<any>();
+    return String(row?.value ?? "");
   } catch {
-    return [];
+    return "";
   }
 }
 
@@ -401,15 +431,6 @@ function safeJsonArray(v: unknown): any[] {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
-  }
-}
-
-function safeJsonObject(v: unknown): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(String(v ?? "{}"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
   }
 }
 

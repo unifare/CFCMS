@@ -25,6 +25,12 @@ export const state = {
   /** The open content's translation group, when the site serves >1 language. */
   translations: null,
   themeMenus: [],
+  /** Menus contributed by enabled plugins. Install-wide, so they show on every site. */
+  pluginMenus: [],
+  /** The unified menu list (theme + plugin + core) the API returned. */
+  adminMenus: [],
+  /** The same rows grouped by owner, for the sidebar's section headings. */
+  menuGroups: [],
   postTypes: [],
   fields: [],
   sidebarCollapsed: localStorage.getItem("cfpress.admin.sidebar") === "1",
@@ -64,7 +70,19 @@ export async function loadContext() {
   try { state.sites = (await api("sites")).items ?? []; } catch { state.sites = [{ id: "default", name: "Default Site" }]; }
   if (!state.sites.some((s) => s.id === state.site)) state.site = state.sites[0]?.id ?? "default";
   try { state.postTypes = (await api(scoped("theme/post-types"))).items ?? []; } catch { state.postTypes = []; }
-  try { state.themeMenus = (await api(scoped("theme/menus"))).items ?? []; } catch { state.themeMenus = []; }
+  // One request for every declared menu, whatever its owner. The API has
+  // already filtered out what this user may not see, so the SPA never has to
+  // know which extension kind produced a row.
+  try {
+    const d = await api(scoped("admin-menus"));
+    state.menuGroups = Array.isArray(d.groups) ? d.groups : [];
+    state.adminMenus = Array.isArray(d.items) ? d.items : [];
+  } catch {
+    state.menuGroups = [];
+    state.adminMenus = [];
+  }
+  state.themeMenus = state.adminMenus.filter((m) => m.owner_type === "theme");
+  state.pluginMenus = state.adminMenus.filter((m) => m.owner_type === "plugin");
   try { state.fields = (await api(scoped("theme/fields"))).items ?? []; } catch { state.fields = []; }
   // The languages this site serves. The editor needs them to offer a locale
   // picker and a language-version bar, and to know which locale a new piece of

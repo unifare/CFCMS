@@ -1,6 +1,7 @@
 import { Env } from "../../shared/types";
 import { randomId } from "../../shared/crypto";
 import { CAPABILITIES } from "../security";
+import { registerPluginMenus } from "./menus";
 
 export type ExtensionContext = {
   env: Env;
@@ -183,6 +184,20 @@ async function loadEnabledPlugins(env: Env): Promise<RuntimePlugin[]> {
       : [];
     return { name: String(r.name), title: String(r.title ?? r.name), manifest, permissions, hooks };
   });
+
+  // Converge the menu registry with the enabled set. Hooks and menus both come
+  // from "which plugins are enabled and what did each declare", so they are
+  // materialised at the same moment — a plugin whose `adminMenus` never made it
+  // into the database would otherwise be a plugin with hooks that work and a
+  // sidebar entry that silently never appears.
+  for (const plugin of out) {
+    try {
+      await registerPluginMenus(env, plugin.name, plugin.manifest?.adminMenus);
+    } catch {
+      // A menu that cannot be written must not take the request down with it.
+    }
+  }
+
   enabledCache = { env, at: Date.now(), rows: out };
   return out;
 }

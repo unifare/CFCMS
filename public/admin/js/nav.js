@@ -16,7 +16,10 @@ import { attr, esc, themePref } from "../ui.js";
  * args: { type: "product" } }`. The CPT already occupies a Content slot and
  * opens the very same screen, so rendering the menu too would show "Products"
  * twice. Drop any content-list menu that a CPT entry already covers; keep every
- * other theme menu (custom panels, settings screens, …).
+ * other menu (custom panels, settings screens, table screens, …).
+ *
+ * Applies to plugin menus as well: a plugin that adds a post type and a menu
+ * for it has the same double-entry problem.
  */
 function isRedundantThemeMenu(menu, postTypes) {
   if (menu.screen !== "content-list") return false;
@@ -24,6 +27,18 @@ function isRedundantThemeMenu(menu, postTypes) {
   if (!type) return false;
   if (type === "posts" || type === "pages") return true; // core screens
   return postTypes.some((pt) => pt.name === type);
+}
+
+/** One sidebar entry per declared menu, regardless of which owner declared it. */
+function extensionItems(menus, postTypes) {
+  return menus
+    .filter((m) => !isRedundantThemeMenu(m, postTypes))
+    .map((m) => ({
+      key: `menu:${m.menu_id}`,
+      title: String(m.label || m.menu_id),
+      icon: "sparkles",
+      active: state.page === `menu:${m.menu_id}`,
+    }));
 }
 
 export function navGroups() {
@@ -34,14 +49,12 @@ export function navGroups() {
     icon: "layers",
     active: state.page === `cpt:${pt.name}`,
   }));
-  const themeItems = state.themeMenus
-    .filter((m) => !isRedundantThemeMenu(m, state.postTypes))
-    .map((m) => ({
-      key: `menu:${m.menu_id}`,
-      title: String(m.label || m.menu_id),
-      icon: "sparkles",
-      active: state.page === `menu:${m.menu_id}`,
-    }));
+  const themeItems = extensionItems(state.themeMenus, state.postTypes);
+  // Plugin menus get their own group rather than being mixed into "From theme":
+  // a plugin is install-wide while a theme is per site, and an admin debugging
+  // "where did this menu come from" should be able to tell them apart at a
+  // glance.
+  const pluginItems = extensionItems(state.pluginMenus, state.postTypes);
 
   return [
     {
@@ -63,6 +76,9 @@ export function navGroups() {
     },
     ...(themeItems.length
       ? [{ label: "From theme", items: themeItems }]
+      : []),
+    ...(pluginItems.length
+      ? [{ label: "Extensions", items: pluginItems }]
       : []),
     {
       label: "Appearance",

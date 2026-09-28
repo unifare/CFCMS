@@ -21,9 +21,10 @@
     "test:aurora": "node tests/theme-aurora.test.mjs",
     "test:manifest": "node tests/manifest-validation.test.mjs",
     "test:admin-spa": "node tests/admin-spa.test.mjs",
+    "test:admin-menus": "node tests/admin-menus.test.mjs",
     "theme:deploy": "node scripts/deploy-theme.mjs",
     "seed:demo": "node scripts/seed-demo-content.mjs",
-    "test": "node tests/architecture.test.mjs && node tests/manifest-validation.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/theme-integration.test.mjs && node tests/multisite.test.mjs && node tests/i18n.test.mjs && node tests/admin-contract.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs"
+    "test": "node tests/architecture.test.mjs && node tests/manifest-validation.test.mjs && node tests/admin-menus.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/theme-integration.test.mjs && node tests/multisite.test.mjs && node tests/i18n.test.mjs && node tests/admin-contract.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.3",

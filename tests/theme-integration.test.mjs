@@ -275,7 +275,7 @@ async function main() {
     "DELETE FROM taxonomies WHERE declared_by_theme='realestate'",
     "DELETE FROM field_defs WHERE declared_by_theme='realestate'",
     "DELETE FROM theme_routes WHERE declared_by_theme='realestate'",
-    "DELETE FROM theme_admin_menus WHERE declared_by_theme='realestate'",
+    "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='realestate'",
     "DELETE FROM theme_blocks WHERE declared_by_theme='realestate'",
   ]) {
     try { sqlite.exec(sql); } catch { /* table may not exist yet */ }

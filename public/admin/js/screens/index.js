@@ -21,6 +21,8 @@ import themes from "./themes.js";
 import plugins from "./plugins.js";
 import languages from "./languages.js";
 import themeMenuScreen from "./theme-menu.js";
+import { tableListScreen } from "./table-list.js";
+import { tableEditScreen } from "./table-edit.js";
 
 export const SCREENS = {
   dashboard,
@@ -40,7 +42,12 @@ export const SCREENS = {
   urls,
   settings,
 
-  // Targets of the dynamic `cpt:` / `menu:` prefixes, resolved by the shell.
+  // Targets of the dynamic `cpt:` / `menu:` / `table:` prefixes, resolved by
+  // the shell. `table-list` and `table-edit` are also registered directly so
+  // the structure test renders them; reached without a table they show an
+  // explanatory panel rather than an empty grid.
   "content-list": contentList,
   "theme-menu": themeMenuScreen,
+  "table-list": tableListScreen,
+  "table-edit": tableEditScreen,
 };

@@ -24,7 +24,8 @@
 5. 如果改了多语言（`src/platform/i18n/`、翻译组、主题自有表），跑
    `node tests/i18n.test.mjs`，并同步 `docs/ARCHITECTURE.md` §2.7 / §5.4①。
 6. 如果改了后台界面，跑 `node tests/admin-spa.test.mjs`，并跑一次真实浏览器验收
-   `node tests/_i18n-browser.cjs`（需要另开 `npx wrangler dev --port 8787 --ip 127.0.0.1`）。
+   `node tests/_i18n-browser.cjs` / `node tests/_admin-menus-browser.cjs`
+   （需要另开 `npx wrangler dev --port 8787 --ip 127.0.0.1`）。
 7. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
    本仓库已经发生过三次（见下方「守卫失效记录」与「同一意图的两种写法」）。
@@ -38,6 +39,7 @@ src/
 ├── shared/               叶子层：types crypto repo cache scheduler
 ├── rendering/            纯渲染：template-engine template-resolver blocks
 ├── platform/             auth permissions sites frontend seo revisions
+│   ├── admin-menus.ts   ★ 后台菜单注册表（主题/插件/核心共用的唯一读写入口）
 │   └── i18n/             多语言四层：core-pack translate resolve
 │                         locale-registry packs index
 └── extensions/
@@ -45,9 +47,11 @@ src/
     ├── security.ts       清单校验（安装边界，失败必须抛错）
     ├── theme/            runtime-declarative runtime-worker capabilities
     │                     templates tables table-facade packs
-    └── plugin/           runtime packs
+    └── plugin/           runtime packs menus
 ```
 
+`platform/admin-menus.ts` 放在 `platform/` 而不是任一扩展里，理由是**两种扩展都要写它，
+而它们互不 import（规则 3）**——放在任一侧都会逼出一次越界 import。
 `platform/i18n/packs.ts` 的 `setPackProviders()` 与 `contract/hooks.ts` 的
 `setHostHooks()` 是**同一个模式**：平台只认接口，实现在 boot 时由 `index.ts` 注入。
 `platform/` 因此不需要认识 `extensions/`（分层规则 1）。
@@ -107,7 +111,7 @@ await hooks.applyFilters("html", ctx, out);
 
 ## 守卫失效记录（READ THIS）
 
-`tests/architecture.test.mjs` 自己出过两次**假绿**，两次都是「检查存在但从不触发」：
+`tests/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」：
 
 | 检查 | 曾经的写法 | 为什么失效 | 现状 |
 |---|---|---|---|
@@ -119,6 +123,18 @@ await hooks.applyFilters("html", ctx, out);
 而**对空集合的检查等于没有检查**（第三行）。凡是要守卫结构，就解析结构
 （路径、AST、类型），别匹配字符串；凡是守卫集合，先确认集合非空。
 **每次新增守卫，都要注入一次违规确认它会红。**
+
+### 反向验证本身也会假绿：fixture 必须只有一处差异
+
+批次 3 发现第四种失败，**不在被守卫的代码里，而在验证用的 fixture 里**：
+
+> 为 `clearOwnerMenus` 写的"归属隔离"用例，原本拿**主题 owner** 对**插件 owner**。
+> 于是把 `WHERE` 里的 `owner_name` 整条删掉，测试**依然全绿**——因为两个 fixture 的
+> `owner_type` 本来就不同，`owner_name` 在这一次比较里是多余的。
+
+**规则**：反向验证时，被删掉的那一半必须是**唯一区分 fixture 的那一项**。
+写用例时先问一句「我把这一条删了，哪个断言会变红」——答不上来就说明 fixture 没设对。
+（修正后：再加一个**同类型**的第二个 owner，注入后产生 3 个 FAIL。）
 
 ## 多语言（§10 规则 5、7、8）
 
@@ -181,6 +197,7 @@ js/state.js            共享 state + API 帮手（叶子模块，不 import 任
 js/nav.js              导航模型 / 侧栏 / header（纯 markup 构造）
 js/shell.js            render 循环 + 页面骨架 + 导航动作 + 屏幕注册表
 js/auth.js             登录屏 / 登录 / 登出
+js/table-form.js       ★ 字段类型 → 控件 的唯一映射 + 值往返（date/datetime 转换）
 js/screens/index.js    页名 → 屏幕 注册表（唯一 import 全部屏幕的模块）
 js/screens/<name>.js   一屏一模块
 ```
@@ -255,11 +272,43 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 
 ---
 
+## 后台菜单注册表与生成式屏幕（§3.5 / §4.4 / §6.1）
+
+| # | 规则 |
+|---|---|
+| 32 | 后台菜单**只有一个来源**：`admin_menu_registry`。`theme_admin_menus` 已退役——`src/` 与 0012 之后的迁移**不得再引用它**（架构测试会扫，比对前剥注释） |
+| 33 | 菜单必须带**归属**：`owner_type` + `owner_name`。「停用插件只消失它自己的菜单」是这个 `WHERE` 子句的直接结果，**不是特例逻辑** |
+| 34 | 主题菜单**按站点**（主题是按站点激活的）；插件菜单**只写一次 `site_id = '*'`**，读时匹配 `site_id = ? OR site_id = '*'` |
+| 35 | 后台页名用**三个前缀**：`table:<t>`（列表）/ `table-new:<t>`（新建）/ `table-edit:<t>:<slug>`（编辑）。**不得合并成一个带可选后缀的前缀** |
+| 36 | `table-list` / `table-edit` 的列表列与表单控件**必须由 `tables[].fields[]` 生成**；主题不得手写后台表单 |
+| 37 | 插件清单**不得声明 `tables[]`**（校验器直接拒绝，不是忽略），也**不得使用 `table-list` / `table-edit`** screen |
+
+**理由（规则 34）**：插件只有一个**安装级** `enabled` 标志，主题是**按站点**激活的。
+所以插件菜单写一次 `site_id='*'`、读时用 `OR` 匹配；按站点扇出会需要"新建站点时补菜单"
+的钩子，而那个钩子**目前不存在**——少了它，新建的站点会静默地没有任何插件菜单，
+而且没有任何报错。用一个 `OR` 换掉一个不存在的钩子，是这笔交易里唯一划算的一侧。
+
+**理由（规则 35）**：这一条是**真实浏览器验收**抓出来的产品缺陷。页名曾经是
+`table:<t>[:<slug>]`，"列表"和"新建"因此是**同一个页名**：点 Add 时路由判断"我已经在
+这个页面上了"→ 不重渲染 → **按钮看起来完全没反应**（无报错、无失败请求）。
+单元测试看不见它，因为两边的 DOM 都能单独渲染出来。
+
+**理由（规则 32–33）**：注册表把"谁声明的"变成数据，而不是调用顺序。合并前，
+主题菜单和插件菜单是两张表、两套读取路径，"插件也能注册菜单"要靠特例代码实现；
+合并后它只是 `owner_type` 的一个取值。
+
+**反向验证要求**：规则 33 的用例必须包含**同类型的两个 owner**。只拿"主题 owner vs
+插件 owner"对比是**假绿**——删掉 `owner_name` 依然通过（见上「反向验证本身也会假绿」）。
+
+---
+
 ## 允许做的事
 
-- ✅ 加新的 `screen` 类型（同时更新 `ALLOWED_ADMIN_SCREENS` 与 `docs/ARCHITECTURE.md` §3.5）
+- ✅ 加新的 `screen` 类型（同时更新 `ALLOWED_ADMIN_SCREENS`、`docs/ARCHITECTURE.md` §3.5，
+  以及 `tests/architecture.test.mjs` 里**钉住**的那个集合——三者必须一致）
 - ✅ 加新的 capability（同时更新 `CAPABILITIES` 与 §4.3）
 - ✅ 加新的 `DECLARABLE_HOOKS`（同时更新 §4.2）
+- ✅ 加新的后台菜单 screen 实现（`public/admin/js/screens/`，须在 `screens/index.js` 注册）
 - ✅ 重构实现，只要不跨越上面的规则
 
 ## 明确不做的事
@@ -272,6 +321,9 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 - ❌ 手写后台表单（应由 `fields[]` 声明生成）
 - ❌ 主题切换时删除业务数据（只隐藏，不删除）
 - ❌ 语言停用时 drop `{table}_i18n` 表（翻译要留住）
+- ❌ 在 `src/` 或新迁移里引用已退役的 `theme_admin_menus`（唯一来源是 `admin_menu_registry`）
+- ❌ 把后台"新建"与"列表"合并成同一个页名（会让 Add 静默失效）
+- ❌ 让插件声明 `tables[]` 或使用 `table-list` / `table-edit`（属批次 4）
 - ❌ 新增架构规则却不做反向验证（测不出失败的检查不是检查）
 - ❌ 把一个概念在 JS 和 SQL 里各写一遍（共用定义，见规则 30）
 
@@ -281,10 +333,10 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 
 | 事项 | 现状 | 原因 |
 |---|---|---|
-| `theme_admin_menus` 与插件菜单 | 尚未合并为 `admin_menu_registry` | 批次 3（已决定：迁移时 drop 旧表） |
 | 后台 SPA 的目录位置 | 模块结构已按 §7.2 拆好，但仍在 `public/admin/` 而非仓库根的 `admin/` | `wrangler.jsonc` 的 `assets.directory` 只接受一个目录，而 `/admin/*` 必须保留；搬迁需与 `public/` 的资源归属一并规划 |
 | `public/admin/ui.js` | 仍是 303 行单文件（UI kit 未再细分） | 与屏幕拆分正交；真要拆应等后台多语言（L2）落地时一起做 |
-| `extensions/contract/` | 目前只有 `hooks.ts`；`manifest.ts`/`validation.ts`/`capabilities.ts` 未拆 | 批次 3 |
+| `extensions/contract/` | 目前只有 `hooks.ts`；`manifest.ts`/`validation.ts`/`capabilities.ts` 未拆 | 批次 4（纯结构重构，无行为变化） |
+| 插件自有表 | 插件**不能**声明 `tables[]`（校验器拒绝） | `theme_table_defs` 只有 `theme_name` 列，支持插件必须**重建该表**（SQLite 不能 `ALTER` 主键/UNIQUE）；批次 4 |
 
 这些**不是"可以随意违反规则"的许可证**——它们是**已登记的技术债**，
 每一项都有明确的归属批次。新增类似问题时，登记到这里，不要静默放行。
