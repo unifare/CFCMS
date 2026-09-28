@@ -34,9 +34,9 @@
  *      isolate when the source is byte-identical — so this costs almost nothing
  *      while remaining correct.
  */
-import { Env } from "../types";
-import { setting } from "./frontend";
-import { themeFilePrefix, activeTheme, type ActiveTheme } from "./theme-runtime";
+import { Env } from "../../shared/types";
+import { setting } from "../../platform/frontend";
+import { themeFilePrefix, activeTheme, type ActiveTheme } from "./runtime-declarative";
 
 // ---------------------------------------------------------------------------
 // Manifest shape
@@ -107,7 +107,7 @@ export async function loadThemeWorkerSource(
 export async function getThemeWorker(
   env: Env,
   theme: ActiveTheme,
-  siteId = "default"
+  siteId: string
 ): Promise<LoadedThemeWorker | null> {
   if (!env.LOADER) return null; // feature not available on this deploy
 
@@ -413,7 +413,7 @@ export async function themeCapabilities(env: Env, themeName: string): Promise<st
 }
 
 /** Is this site's active theme a worker-runtime theme? */
-export async function activeThemeIsWorker(env: Env, siteId = "default"): Promise<boolean> {
+export async function activeThemeIsWorker(env: Env, siteId: string): Promise<boolean> {
   try {
     // Resolve through `activeTheme` so this agrees with the renderer. Reading
     // the setting directly would disagree whenever the setting is absent and

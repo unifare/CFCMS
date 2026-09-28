@@ -178,7 +178,11 @@ function buildThemeZip(name) {
       { id: "properties", label: "Properties", screen: "content-list", args: { type: "property" } },
       { id: "theme-options", label: "Theme Options", screen: "theme-settings" },
     ],
-    blocks: [{ name: "theme/property-card", title: "Property Card", template: "parts/card" }],
+    // Block names are plain identifiers, not namespaced paths: the platform
+    // reserves `core/` for its own built-ins (`src/rendering/blocks.ts`), and a
+    // declared block becomes a row keyed by `name` alone. A slash here is
+    // rejected by the manifest validator before install.
+    blocks: [{ name: "property-card", title: "Property Card", template: "parts/card" }],
     settings: [
       { key: "accent", label: "Accent colour", type: "color", default: "#0b5fff" },
       { key: "currency", label: "Currency", type: "text", default: "¥" },
@@ -503,7 +507,7 @@ async function main() {
 
 async function importEngine() {
   const esbuild = require("esbuild");
-  const src = readFileSync(join(root, "src/core/template-engine.ts"), "utf8");
+  const src = readFileSync(join(root, "src/rendering/template-engine.ts"), "utf8");
   const out = esbuild.transformSync(src, { loader: "ts", format: "esm", target: "es2022" });
   const tmp = join(root, ".wrangler", "engine.mjs");
   writeFileSync(tmp, out.code);

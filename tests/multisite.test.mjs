@@ -440,6 +440,58 @@ async function main() {
     (await cacheKeyFor(env, "/en", "shop")).includes(":shop:") &&
     (await cacheKeyFor(env, "/en", "default")).includes(":default:"));
 
+  // -- 9b. SEO endpoints are site-scoped ----------------------------------
+  //
+  // Regression test for a real bug: `/sitemap.xml` and `/robots.txt` were
+  // routed *before* site resolution, and called `locales(env)` / `siteInfo(env)`
+  // without a `siteId`. On a multi-site install every host therefore served the
+  // default site's sitemap — silently, with a 200.
+  //
+  // The fix moved both routes after `resolveSite()` and made `siteId` a
+  // required argument, so this can no longer compile if it regresses.
+  console.log("\n9b. SEO endpoints are site-scoped");
+
+  // Give each site a distinct title so the robots output is distinguishable.
+  await req(worker, env, "/api/v1/settings", {
+    method: "POST", headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "site.title", value: "Default Title" }),
+  });
+  await req(worker, env, "/api/v1/settings?site=shop", {
+    method: "POST", headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "site.title", value: "Shop Title" }),
+  });
+
+  const smDefault = await req(worker, env, "/sitemap.xml", {}, "localhost");
+  check("sitemap served on the default host", smDefault.status, 200);
+  const smShopHost = await req(worker, env, "/sitemap.xml", {}, "shop.example.com");
+  check("sitemap served on the shop host", smShopHost.status, 200);
+
+  // The discriminating assertion: section 4 published `default-post` on the
+  // default site and `shop-post` on shop. A sitemap that ignores `site_id`
+  // lists BOTH on every host, so asserting on these two slugs is what actually
+  // catches the bug — asserting merely that the XML is well-formed would not
+  // (an earlier, weaker version of this test passed against the broken code).
+  const defaultXml = await smDefault.text();
+  const shopXml = await smShopHost.text();
+  checkTruthy("sitemap XML is well-formed", shopXml.startsWith("<?xml") && shopXml.includes("</urlset>"));
+  checkTruthy("default sitemap lists its own post", defaultXml.includes("/default-post"));
+  checkTruthy("default sitemap does NOT list the shop's post", !defaultXml.includes("/shop-post"));
+  checkTruthy("shop sitemap lists its own post", shopXml.includes("/shop-post"));
+  checkTruthy("shop sitemap does NOT list the default site's post", !shopXml.includes("/default-post"));
+
+  // A path-prefix site must resolve too, and its own path must be stripped
+  // before matching the route.
+  const smDe = await req(worker, env, "/de/sitemap.xml", {}, "localhost");
+  check("prefix site reaches its own sitemap", smDe.status, 200);
+
+  // robots.txt now reads the *site's* title, which is where the missing siteId
+  // used to be invisible.
+  const rbDefault = await req(worker, env, "/robots.txt", {}, "localhost");
+  const rbShop = await req(worker, env, "/robots.txt", {}, "shop.example.com");
+  check("robots served on default host", rbDefault.status, 200);
+  check("robots served on shop host", rbShop.status, 200);
+  checkTruthy("robots declares the sitemap", (await rbDefault.text()).includes("Sitemap: "));
+
   // -- 10. site delete protection -----------------------------------------
   console.log("\n10. Site delete protection");
   const delDefault = await req(worker, env, "/api/v1/sites/default", { method: "DELETE", headers: auth });
@@ -472,7 +524,7 @@ async function main() {
 async function importCache() {
   const esbuild = require("esbuild");
   const out = await esbuild.build({
-    entryPoints: [join(root, "src/core/cache.ts")],
+    entryPoints: [join(root, "src/shared/cache.ts")],
     bundle: true, format: "esm", target: "es2022", write: false,
     platform: "neutral", logLevel: "silent",
   });

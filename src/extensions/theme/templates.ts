@@ -8,9 +8,9 @@
  * The legacy placeholder names (`{{site.title}}`, `{{content}}`, ...) are still
  * produced by the engine's scope, so existing theme packages keep working.
  */
-import { Env } from "../types";
-import { renderBlocks } from "./frontend";
-import { renderThemePage, type ThemeRenderOptions } from "./theme-runtime";
+import { Env } from "../../shared/types";
+import { renderBlocks } from "../../platform/frontend";
+import { renderThemePage, type ThemeRenderOptions } from "./runtime-declarative";
 
 export interface RenderThemeTemplateOptions {
   locale: string;
@@ -20,7 +20,8 @@ export interface RenderThemeTemplateOptions {
   description?: string;
   content?: string;
   path: string;
-  siteId?: string;
+  /** Required — see `ThemeRenderOptions.siteId`. */
+  siteId: string;
 }
 
 /** Map the legacy `template` string onto a hierarchy context. */

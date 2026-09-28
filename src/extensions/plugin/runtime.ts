@@ -1,6 +1,6 @@
-import { Env } from "../types";
-import { randomId } from "./crypto";
-import { CAPABILITIES } from "./extension-security";
+import { Env } from "../../shared/types";
+import { randomId } from "../../shared/crypto";
+import { CAPABILITIES } from "../security";
 
 export type ExtensionContext = {
   env: Env;

@@ -1,5 +1,5 @@
-import { Env, SessionUser } from "../types";
-import { cookieValue, hashPassword, randomId, verifyPassword } from "./crypto";
+import { Env, SessionUser } from "../shared/types";
+import { cookieValue, hashPassword, randomId, verifyPassword } from "../shared/crypto";
 
 const SESSION_COOKIE = "cfpress_session";
 const SESSION_TTL = 60 * 60 * 24 * 14;

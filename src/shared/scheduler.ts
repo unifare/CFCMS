@@ -1,4 +1,4 @@
-import { Env } from "../types";
+import { Env } from "./types";
 import { now } from "./repo";
 import { bumpContentCache } from "./cache";
 
@@ -30,7 +30,9 @@ export async function processScheduled(env: Env) {
     count++;
   }
   for (const siteId of touchedSites) await bumpContentCache(env, siteId);
-  // Legacy rows written before multi-site may have no site_id.
-  if (count && touchedSites.size === 0) await bumpContentCache(env);
+  // Legacy rows written before multi-site may have no site_id. Those rows can
+  // only ever have belonged to the default site, so invalidate it explicitly
+  // rather than relying on a parameter default to make the same choice.
+  if (count && touchedSites.size === 0) await bumpContentCache(env, "default");
   return count;
 }

@@ -1,4 +1,4 @@
-import { Env, SessionUser } from "../types";
+import { Env, SessionUser } from "../shared/types";
 
 export async function can(env:Env,user:SessionUser,permission:string){
   if(user.role==="admin") return true;

@@ -14,7 +14,7 @@
  * runtime may assume `"default"` any more. This module is the single place
  * that turns a `Request` into a `siteId`.
  */
-import { Env } from "../types";
+import { Env } from "../shared/types";
 
 export const DEFAULT_SITE_ID = "default";
 

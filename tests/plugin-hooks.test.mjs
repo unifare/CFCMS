@@ -2,7 +2,7 @@
  * Plugin hook runtime test (batch 5).
  *
  * Before this batch the hook registry (`addAction`/`addFilter` in
- * `core/extensions.ts`) was an **empty shell**: the maps existed, but nothing
+ * `extensions/extensions.ts`) was an **empty shell**: the maps existed, but nothing
  * ever registered into them, so `doAction("beforeRender")` iterated an empty
  * array and `applyFilters` was imported but never called.
  *

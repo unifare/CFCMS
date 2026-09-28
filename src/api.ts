@@ -1,16 +1,16 @@
-import { Env } from "./types";
-import { bootstrapAdmin, currentUser, login, logout, requireAdmin } from "./core/auth";
-import { activity, jsonBody, now, ok } from "./core/repo";
-import { randomId } from "./core/crypto";
-import { CORE_BLOCKS } from "./core/blocks";
-import { installedPlugins, installedThemes, seedBundledExtensions, capabilityList, bootPluginRuntime, applyFilters, doAction, resetPluginRuntime, pluginRuntimeStatus } from "./core/extensions";
+import { Env } from "./shared/types";
+import { bootstrapAdmin, currentUser, login, logout, requireAdmin } from "./platform/auth";
+import { activity, jsonBody, now, ok } from "./shared/repo";
+import { randomId } from "./shared/crypto";
+import { CORE_BLOCKS } from "./rendering/blocks";
+import { installedPlugins, installedThemes, seedBundledExtensions, capabilityList, bootPluginRuntime, applyFilters, doAction, resetPluginRuntime, pluginRuntimeStatus } from "./extensions/plugin/runtime";
 import { unzipSync } from "fflate";
-import { validateManifest, safeZipPath, sha256, CAPABILITIES } from "./core/extension-security";
-import { createRevision, autosave } from "./core/revisions";
-import { requirePermission } from "./core/permissions";
-import { bumpContentCache } from "./core/cache";
-import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./core/sites";
-import { invalidateThemeWorker } from "./core/theme-worker-runtime";
+import { validateManifest, safeZipPath, sha256, CAPABILITIES } from "./extensions/security";
+import { createRevision, autosave } from "./platform/revisions";
+import { requirePermission } from "./platform/permissions";
+import { bumpContentCache } from "./shared/cache";
+import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./platform/sites";
+import { invalidateThemeWorker } from "./extensions/theme/runtime-worker";
 import {
   applyThemeCapabilities,
   clearThemeCapabilities,
@@ -21,7 +21,7 @@ import {
   listThemeBlocks,
   listFieldDefs,
   themeSettings,
-} from "./core/theme-capabilities";
+} from "./extensions/theme/capabilities";
 
 /**
  * Which site does this admin request target? Explicit `?site=` wins; otherwise
@@ -33,7 +33,7 @@ function requestSiteId(url: URL): string {
   return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(s) ? s : DEFAULT_SITE_ID;
 }
 
-async function listPosts(env: Env, url: URL, kind = "post", siteId = DEFAULT_SITE_ID) {
+async function listPosts(env: Env, url: URL, kind: string, siteId: string) {
   const page = Math.max(1, Number(url.searchParams.get("page") ?? "1"));
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? "20")));
   const offset = (page - 1) * limit;
@@ -59,7 +59,7 @@ async function savePost(
   id: string | null,
   body: any,
   kind: "post" | "page" | string,
-  siteId = DEFAULT_SITE_ID
+  siteId: string
 ) {
   await bootPluginRuntime(env);
   // Give plugins a chance to normalise the payload before anything is written.
@@ -231,7 +231,7 @@ async function savePluginSetting(env:Env,userId:string,name:string,b:any){
   return ok({ok:true});
 }
 
-async function deletePost(env: Env, userId: string, id: string, siteId = DEFAULT_SITE_ID) {
+async function deletePost(env: Env, userId: string, id: string, siteId: string) {
   await bootPluginRuntime(env);
   // Let plugins purge their own derived data (indexes, caches) first.
   try {
@@ -248,7 +248,7 @@ async function deletePost(env: Env, userId: string, id: string, siteId = DEFAULT
   return ok({ ok: true });
 }
 
-async function genericTable(env: Env, table: string, url: URL, siteId = DEFAULT_SITE_ID) {
+async function genericTable(env: Env, table: string, url: URL, siteId: string) {
   const allowed = new Set(["locales", "redirects", "rewrites", "plugins", "themes", "menus", "menu_items"]);
   if (!allowed.has(table)) return ok({ error: "Unsupported resource" }, 404);
   // Tables that carry site_id are filtered; global registries (plugins/themes)
@@ -263,12 +263,12 @@ async function genericTable(env: Env, table: string, url: URL, siteId = DEFAULT_
   return ok({ items: rows.results, site: siteId });
 }
 
-async function settings(env: Env, siteId = DEFAULT_SITE_ID) {
+async function settings(env: Env, siteId: string) {
   const rows = await env.DB.prepare("SELECT key, value, autoload FROM settings WHERE site_id=? ORDER BY key").bind(siteId).all();
   return ok({ items: rows.results, site: siteId });
 }
 
-async function saveSetting(env: Env, userId: string, body: any, siteId = "default") {
+async function saveSetting(env: Env, userId: string, body: any, siteId: string) {
   const key = String(body.key ?? "");
   if (!key) return ok({ error: "key required" }, 400);
   const value = String(body.value ?? "");
@@ -283,12 +283,12 @@ async function saveSetting(env: Env, userId: string, body: any, siteId = "defaul
   return ok({ ok: true });
 }
 
-async function mediaList(env: Env, siteId = DEFAULT_SITE_ID) {
+async function mediaList(env: Env, siteId: string) {
   const rows = await env.DB.prepare("SELECT * FROM media_files WHERE site_id=? ORDER BY created_at DESC LIMIT 200").bind(siteId).all();
   return ok({ items: rows.results, site: siteId });
 }
 
-async function mediaUpload(env: Env, userId: string, request: Request, siteId = DEFAULT_SITE_ID) {
+async function mediaUpload(env: Env, userId: string, request: Request, siteId: string) {
   const form = await request.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return ok({ error: "file required" }, 400);
@@ -601,7 +601,7 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
     if(!["admin","editor","author"].includes(role)) return ok({error:"invalid role"},400);
     const username=String(b.username||"").trim(); const password=String(b.password||"");
     if(!username||password.length<8)return ok({error:"username and password(min 8) required"},400);
-    const {hashPassword}=await import("./core/crypto"); const id="user_"+await randomId();
+    const {hashPassword}=await import("./shared/crypto"); const id="user_"+await randomId();
     await env.DB.prepare("INSERT INTO site_users(id,username,email,password_hash,role,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").bind(id,username,b.email||null,await hashPassword(password),role,"active",now(),now()).run();
     await activity(env,user.id,"create","user",id,{username,role}); return ok({id},201);
   }

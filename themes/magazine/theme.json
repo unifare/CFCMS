@@ -9,15 +9,9 @@
   ],
   "templates": [
     "index",
-    "home",
     "single",
     "page",
-    "archive",
     "404"
   ],
-  "parts": [
-    "header",
-    "footer",
-    "sidebar"
-  ]
+  "parts": []
 }

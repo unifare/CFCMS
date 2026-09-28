@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 // --- load the TS engine -----------------------------------------------------
 let engine;
 async function loadEngine() {
-  const src = readFileSync(join(root, "src/core/template-engine.ts"), "utf8");
+  const src = readFileSync(join(root, "src/rendering/template-engine.ts"), "utf8");
   let esbuild;
   try {
     esbuild = require("esbuild");

@@ -1,4 +1,4 @@
-import { Env } from "../types";
+import { Env } from "./types";
 import { randomId } from "./crypto";
 
 export async function jsonBody(request: Request): Promise<any> {

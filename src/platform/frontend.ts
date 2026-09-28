@@ -1,9 +1,16 @@
-import { Env } from "../types";
-import { parseBlocks } from "./blocks";
+import { Env } from "../shared/types";
+import { parseBlocks } from "../rendering/blocks";
 
 export function esc(v:unknown){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!))}
-export async function setting(env:Env,key:string,fallback="",siteId="default"){const r=await env.DB.prepare("SELECT value FROM settings WHERE site_id=? AND key=?").bind(siteId,key).first<any>();return r?.value??fallback}
-export async function locales(env:Env,siteId="default"){
+/**
+ * Read one `settings` row for a site.
+ *
+ * `siteId` is required. It used to default to `"default"`, which made a
+ * forgotten argument silently read the wrong site's settings — invisible on a
+ * single-site install and wrong the moment a second site exists.
+ */
+export async function setting(env:Env,key:string,fallback:string,siteId:string){const r=await env.DB.prepare("SELECT value FROM settings WHERE site_id=? AND key=?").bind(siteId,key).first<any>();return r?.value??fallback}
+export async function locales(env:Env,siteId:string){
   try{
     const r=await env.DB.prepare("SELECT * FROM locales ORDER BY is_default DESC,code").all();
     if(r.results.length)return r.results;
@@ -20,12 +27,12 @@ export async function locales(env:Env,siteId="default"){
  * which one; ordering already puts it first, but we look it up explicitly so
  * the intent survives a future change to the query's ORDER BY.
  */
-export async function defaultLocale(env:Env,siteId="default"):Promise<string>{
+export async function defaultLocale(env:Env,siteId:string):Promise<string>{
   const all=await locales(env,siteId) as any[];
   const def=all.find(l=>Number(l?.is_default)===1)??all[0];
   return String(def?.code??"en");
 }
-export async function siteInfo(env:Env,siteId="default"){return {title:await setting(env,"site.title","CFPress",siteId),description:await setting(env,"site.description","",siteId),robots:await setting(env,"seo.robots","index,follow",siteId)}}
+export async function siteInfo(env:Env,siteId:string){return {title:await setting(env,"site.title","CFPress",siteId),description:await setting(env,"site.description","",siteId),robots:await setting(env,"seo.robots","index,follow",siteId)}}
 /**
  * Load one published object by slug (or any column matched by `type`).
  *
@@ -48,18 +55,18 @@ export function readingTime(html:string, wpm=220){
   const words=text.split(/\s+/).filter(Boolean).length;
   return Math.max(1,Math.round(words/wpm))+" min read";
 }
-export async function findContent(env:Env,type:string,slug:string,locale:string,siteId="default"){
+export async function findContent(env:Env,type:string,slug:string,locale:string,siteId:string){
   const row=await env.DB.prepare(`SELECT p.*,t.locale,t.title,t.excerpt,t.content FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type=? AND p.slug=? AND t.locale=? AND p.status='published' LIMIT 1`).bind(siteId,type,slug,locale).first<any>();
   if(row){row.html=row.content?renderBlocks(String(row.content)):"";row.reading_time=readingTime(row.html);}
   return row;
 }
-export async function latestPosts(env:Env,locale:string,siteId="default"){const r=await env.DB.prepare(`SELECT p.slug,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type='post' AND p.status='published' AND t.locale=? ORDER BY p.created_at DESC LIMIT 10`).bind(siteId,locale).all();return r.results as any[]}
+export async function latestPosts(env:Env,locale:string,siteId:string){const r=await env.DB.prepare(`SELECT p.slug,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type='post' AND p.status='published' AND t.locale=? ORDER BY p.created_at DESC LIMIT 10`).bind(siteId,locale).all();return r.results as any[]}
 /**
  * Header navigation for a site. Menus are looked up by `site_id` when the
  * schema supports it, falling back to the legacy global lookup so pre-0008
  * installs keep working.
  */
-export async function menu(env:Env,locale:string,siteId="default"){
+export async function menu(env:Env,locale:string,siteId:string){
   let m:any=null;
   try{
     m=await env.DB.prepare("SELECT id FROM menus WHERE location='header' AND site_id=? LIMIT 1").bind(siteId).first<any>();

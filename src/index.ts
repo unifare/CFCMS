@@ -1,4 +1,4 @@
-import{Env}from"./types";import{handleApi}from"./api";import{findContent,latestPosts,siteInfo,locales,defaultLocale}from"./core/frontend";import{robots,sitemap}from"./core/seo";import{seedBundledExtensions,bootPluginRuntime}from"./core/extensions";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from"./core/theme-runtime";import{tryRenderWithThemeWorker,handleThemeApi}from"./core/theme-worker-runtime";import{processScheduled}from"./core/scheduler";import{resolveSite,siteListMemo,DEFAULT_SITE_ID}from"./core/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from"./core/theme-capabilities";
+import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,latestPosts,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
 
 let booted=false;
 
@@ -15,7 +15,7 @@ async function renderPage(env:Env,o:ThemeRenderOptions,request:Request){
   const viaWorker=await tryRenderWithThemeWorker(env,theme,{
     request,
     kind:String(o.kind),
-    siteId:o.siteId??DEFAULT_SITE_ID,
+    siteId:o.siteId,
     scope:{title:o.title,description:o.description,path:o.path,locale:o.locale,postType:o.postType,slug:o.slug,extra:o.extra},
   }).catch(()=>null);
   if(viaWorker)return{html:viaWorker.html,template:`worker:${theme.name}`,tried:[] as string[],status:viaWorker.status};
@@ -30,7 +30,7 @@ async function media(env:Env,u:URL){
   return new Response(o.body,{headers:h});
 }
 
-function htmlResponse(html:string,template:string,status=200,siteId=DEFAULT_SITE_ID){
+function htmlResponse(html:string,template:string,status:number,siteId:string){
   return new Response(html,{status,headers:{"Content-Type":"text/html;charset=UTF-8","Cache-Control":"public,max-age=60","X-CFPress-Template":template,"X-CFPress-Site":siteId}});
 }
 
@@ -67,13 +67,24 @@ function matchRoute(routePath:string,path:string):{params:Record<string,string>}
  */
 export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  if(!booted){booted=true;ctx.waitUntil(seedBundledExtensions(env))}
+ // Join the two halves of the extension layer.
+ //
+ // `index.ts` is the only module allowed to import both `theme/` and
+ // `plugin/`; the theme layer depends on the `HostHooks` *interface* in
+ // `extensions/contract/hooks.ts` and never on the plugin implementation. This
+ // is the single place the two are connected, which is what keeps a theme and
+ // a plugin independently installable.
+ setHostHooks({
+   doAction:(name,c,data)=>doAction(name,c,data),
+   applyFilters:(name,c,data)=>applyFilters(name,c,data),
+   renderShortcodes:(env2,html)=>renderShortcodes(env2,html),
+   boot:(env2)=>bootPluginRuntime(env2),
+ });
  const u=new URL(request.url);
  if(u.pathname.startsWith("/api/"))return handleApi(env,request);
  // Sandboxed theme Workers read data exclusively through this endpoint.
  if(u.pathname.startsWith("/__cfpress/theme-api/"))return handleThemeApi(env,request);
  if(u.pathname.startsWith("/media/"))return media(env,u);
- if(u.pathname==="/sitemap.xml")return sitemap(env,request);
- if(u.pathname==="/robots.txt")return robots(env,request);
  // The admin SPA and any other static asset belong to the asset layer. This is
  // stated explicitly rather than left to the locale parser, which previously
  // doubled as the asset bail-out — so that removing the locale prefix from the
@@ -86,6 +97,13 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  const resolved=await resolveSite(env,u,sites);
  const siteId=resolved.siteId;
  const path=resolved.path;
+
+ // SEO endpoints are per-site: they must be routed *after* site resolution,
+ // otherwise `/sitemap.xml` on a second site lists the default site's URLs.
+ // They are also more specific than the locale-prefix rules below, so they are
+ // matched here by exact path, not by parsing a locale segment.
+ if(path==="/sitemap.xml")return sitemap(env,request,siteId);
+ if(path==="/robots.txt")return robots(env,request,siteId);
 
  // Front-end paths may or may not carry a locale prefix. `/{locale}/...` is
  // explicit; anything else is resolved against the site's *default* locale.

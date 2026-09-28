@@ -1,4 +1,4 @@
-import { Env } from "../types";
+import { Env } from "./types";
 import { now } from "./repo";
 import { randomId } from "./crypto";
 
@@ -8,6 +8,11 @@ import { randomId } from "./crypto";
  * The version is a monotonically increasing integer; bumping it invalidates
  * every cached HTML key for that site at once (keys embed the version). Sites
  * are isolated: publishing on `shop` must not drop `default`'s cache.
+ *
+ * `siteId` is a **required** parameter on every function here. It used to
+ * default to `"default"`, which meant a caller that forgot it would silently
+ * read and invalidate another site's cache — a bug that is invisible until two
+ * sites exist. See `AGENTS.md` rule 7.
  */
 function versionKvKey(siteId: string) {
   return `cfpress:content-version:${siteId}`;
@@ -16,7 +21,7 @@ function versionRowId(siteId: string) {
   return `content_version_${siteId}`;
 }
 
-export async function bumpContentCache(env: Env, siteId = "default") {
+export async function bumpContentCache(env: Env, siteId: string) {
   const id = versionRowId(siteId);
   const row = await env.DB.prepare("SELECT version FROM content_cache_versions WHERE id=?")
     .bind(id)
@@ -31,7 +36,7 @@ export async function bumpContentCache(env: Env, siteId = "default") {
   return version;
 }
 
-export async function cacheVersion(env: Env, siteId = "default") {
+export async function cacheVersion(env: Env, siteId: string) {
   const v = await env.CACHE.get(versionKvKey(siteId));
   if (v) return v;
   const row = await env.DB.prepare("SELECT version FROM content_cache_versions WHERE id=?")
@@ -42,11 +47,11 @@ export async function cacheVersion(env: Env, siteId = "default") {
   return version;
 }
 
-export async function cacheKey(env: Env, path: string, siteId = "default") {
+export async function cacheKey(env: Env, path: string, siteId: string) {
   return `cfpress:html:${siteId}:${await cacheVersion(env, siteId)}:${path}`;
 }
 
-export async function purgePath(env: Env, path: string, siteId = "default") {
+export async function purgePath(env: Env, path: string, siteId: string) {
   await env.CACHE.delete(`cfpress:html:${siteId}:${await cacheVersion(env, siteId)}:${path}`);
   return randomId();
 }
@@ -55,6 +60,6 @@ export async function purgePath(env: Env, path: string, siteId = "default") {
  * Drop every cached HTML page for a site by bumping its version. Cheaper and
  * race-free compared to enumerating keys.
  */
-export async function purgeSite(env: Env, siteId = "default") {
+export async function purgeSite(env: Env, siteId: string) {
   return bumpContentCache(env, siteId);
 }

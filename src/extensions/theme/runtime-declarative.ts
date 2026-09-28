@@ -7,11 +7,11 @@
  * `template-engine.ts` — never evaluated as JavaScript, which keeps the
  * Worker's security model intact.
  */
-import { Env } from "../types";
-import { esc, setting, siteInfo, menu, locales, renderBlocks, latestPosts } from "./frontend";
-import { resolveTemplate, templateCandidates, type TemplateContext } from "./template-resolver";
-import { renderTemplateSource, TemplateError, type RenderOptions } from "./template-engine";
-import { bootPluginRuntime, applyFilters, doAction, renderShortcodes } from "./extensions";
+import { Env } from "../../shared/types";
+import { esc, setting, siteInfo, menu, locales, renderBlocks, latestPosts } from "../../platform/frontend";
+import { resolveTemplate, templateCandidates, type TemplateContext } from "../../rendering/template-resolver";
+import { renderTemplateSource, TemplateError, type RenderOptions } from "../../rendering/template-engine";
+import { NULL_HOOKS, hostHooks, type HostHooks } from "../contract/hooks";
 
 // ---------------------------------------------------------------------------
 // Theme discovery
@@ -111,7 +111,7 @@ export interface ThemeSettingDef {
  * at), which guarantees the result can really render. Only if nothing is
  * loadable do we fall back to the literal `default`.
  */
-export async function activeTheme(env: Env, siteId = "default"): Promise<ActiveTheme> {
+export async function activeTheme(env: Env, siteId: string): Promise<ActiveTheme> {
   let name = await setting(env, "theme.active", "", siteId);
   if (!name) {
     // No explicit choice for this site: find one that can actually render.
@@ -205,7 +205,7 @@ export async function runThemeQuery(
   env: Env,
   params: Record<string, string | number>,
   scope: Record<string, unknown>,
-  siteId = "default"
+  siteId: string
 ): Promise<QueryRow[]> {
   const type = params.type ? String(params.type) : "post";
   const locale = params.locale ? String(params.locale) : String(scope.locale ?? "en");
@@ -286,6 +286,13 @@ async function attachMeta(env: Env, rows: any[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export interface ThemeRenderOptions {
+  /**
+   * The site being rendered. Required, not optional: the renderer resolves the
+   * active theme, settings and cache namespace from it, so a missing value
+   * cannot be papered over with a default without rendering another site's
+   * content. `locale` is the *content* locale (L1); `siteId` is orthogonal.
+   */
+  siteId: string;
   locale: string;
   path: string;
   kind: TemplateContext["kind"];
@@ -299,7 +306,26 @@ export interface ThemeRenderOptions {
   post?: Record<string, unknown>;
   /** Pre-built scope additions (e.g. `posts` on an archive). */
   extra?: Record<string, unknown>;
-  siteId?: string;
+  /**
+   * The plugin hook dispatcher.
+   *
+   * Optional only so that tests and narrow call sites can render without
+   * setting up the plugin runtime. When absent we read the process-wide slot
+   * (`hostHooks()`), which `index.ts` fills at boot and which falls back to
+   * `NULL_HOOKS` — behaving exactly like "this site has no plugins". The theme
+   * layer never imports `plugin/`; see `contract/hooks.ts` for why.
+   */
+  hooks?: HostHooks;
+}
+
+/**
+ * Resolve the hook dispatcher for a render.
+ *
+ * Centralised so no call site has to remember the fallback, and so the
+ * "no plugins installed" case is indistinguishable from "not yet injected".
+ */
+function hooksOf(o: ThemeRenderOptions): HostHooks {
+  return o.hooks ?? hostHooks() ?? NULL_HOOKS;
 }
 
 /** Build the base scope every template can rely on. */
@@ -308,7 +334,7 @@ export async function buildScope(
   theme: ActiveTheme,
   o: ThemeRenderOptions
 ): Promise<Record<string, unknown>> {
-  const siteId = o.siteId ?? "default";
+  const siteId = o.siteId;
   const [s, items, ls] = await Promise.all([
     siteInfo(env, siteId),
     menu(env, o.locale, siteId),
@@ -322,9 +348,10 @@ export async function buildScope(
   // Plugins may contribute extra scope keys via the `beforeRender` action by
   // mutating the payload object handed to them.
   const extra: Record<string, unknown> = { ...(o.extra ?? {}) };
-  await bootPluginRuntime(env);
+  const hooks = hooksOf(o);
+  await hooks.boot(env);
   try {
-    await doAction("beforeRender", { env, siteId }, { siteId, locale: o.locale, path: o.path, kind: o.kind, scope: extra });
+    await hooks.doAction("beforeRender", { env, siteId }, { siteId, locale: o.locale, path: o.path, kind: o.kind, scope: extra });
   } catch {
     /* a failing plugin must not break rendering */
   }
@@ -414,18 +441,19 @@ export async function renderThemePage(
  * and the document falls back to whatever the previous stage produced.
  */
 async function decorateOutput(env: Env, o: ThemeRenderOptions, template: string, html: string): Promise<string> {
-  await bootPluginRuntime(env);
-  const siteId = o.siteId ?? "default";
+  const hooks = hooksOf(o);
+  await hooks.boot(env);
+  const siteId = o.siteId;
   const ctx = { env, siteId };
 
   let out = html;
   try {
-    out = await renderShortcodes(env, out);
+    out = await hooks.renderShortcodes(env, out);
   } catch {
     /* a broken shortcode leaves the raw markup in place */
   }
   try {
-    const filtered = await applyFilters("html", ctx, out);
+    const filtered = await hooks.applyFilters("html", ctx, out);
     if (typeof filtered === "string") out = filtered;
   } catch {
     /* a broken filter leaves the previous stage's output */

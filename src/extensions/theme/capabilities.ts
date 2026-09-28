@@ -6,9 +6,9 @@
  * database. When it is deactivated, its declarations are marked inactive but
  * the *data* is preserved, so switching back restores everything.
  */
-import { Env } from "../types";
-import { now } from "./repo";
-import { randomId } from "./crypto";
+import { Env } from "../../shared/types";
+import { now } from "../../shared/repo";
+import { randomId } from "../../shared/crypto";
 import type {
   ThemeManifest,
   ThemePostType,
@@ -18,7 +18,7 @@ import type {
   ThemeAdminMenu,
   ThemeBlock,
   ThemeSettingDef,
-} from "./theme-runtime";
+} from "./runtime-declarative";
 
 export interface ApplyResult {
   postTypes: number;
@@ -38,7 +38,7 @@ export async function applyThemeCapabilities(
   env: Env,
   themeName: string,
   manifest: ThemeManifest,
-  siteId = "default"
+  siteId: string
 ): Promise<ApplyResult> {
   const ts = now();
   const result: ApplyResult = {
@@ -206,7 +206,7 @@ export async function applyThemeCapabilities(
 export async function clearThemeCapabilities(
   env: Env,
   themeName: string,
-  siteId = "default"
+  siteId: string
 ): Promise<void> {
   const ts = now();
   const statements = [
@@ -236,7 +236,7 @@ export interface PostTypeRow {
   rewrite_slug: string | null;
 }
 
-export async function listPostTypes(env: Env, siteId = "default"): Promise<PostTypeRow[]> {
+export async function listPostTypes(env: Env, siteId: string): Promise<PostTypeRow[]> {
   try {
     const r = await env.DB.prepare(
       "SELECT * FROM post_types WHERE site_id=? AND active=1 ORDER BY name"
@@ -256,13 +256,13 @@ export async function listPostTypes(env: Env, siteId = "default"): Promise<PostT
 export async function findPostTypeBySlug(
   env: Env,
   slug: string,
-  siteId = "default"
+  siteId: string
 ): Promise<PostTypeRow | null> {
   const all = await listPostTypes(env, siteId);
   return all.find((pt) => (pt.rewrite_slug ?? pt.name) === slug) ?? null;
 }
 
-export async function listRoutes(env: Env, siteId = "default") {
+export async function listRoutes(env: Env, siteId: string) {
   try {
     const r = await env.DB.prepare(
       "SELECT * FROM theme_routes WHERE site_id=? ORDER BY sort_order"
@@ -282,7 +282,7 @@ export interface TaxonomyRow {
   hierarchical: number;
 }
 
-export async function listTaxonomies(env: Env, siteId = "default"): Promise<TaxonomyRow[]> {
+export async function listTaxonomies(env: Env, siteId: string): Promise<TaxonomyRow[]> {
   try {
     const r = await env.DB.prepare(
       "SELECT * FROM taxonomies WHERE site_id=? AND active=1 ORDER BY name"
@@ -298,7 +298,7 @@ export async function listTaxonomies(env: Env, siteId = "default"): Promise<Taxo
   }
 }
 
-export async function listThemeAdminMenus(env: Env, siteId = "default") {
+export async function listThemeAdminMenus(env: Env, siteId: string) {
   try {
     const r = await env.DB.prepare(
       "SELECT * FROM theme_admin_menus WHERE site_id=? ORDER BY sort_order, menu_id"
@@ -314,7 +314,7 @@ export async function listThemeAdminMenus(env: Env, siteId = "default") {
   }
 }
 
-export async function listThemeBlocks(env: Env, siteId = "default") {
+export async function listThemeBlocks(env: Env, siteId: string) {
   try {
     const r = await env.DB.prepare("SELECT * FROM theme_blocks WHERE site_id=? ORDER BY name")
       .bind(siteId)
@@ -325,7 +325,7 @@ export async function listThemeBlocks(env: Env, siteId = "default") {
   }
 }
 
-export async function listFieldDefs(env: Env, siteId = "default") {
+export async function listFieldDefs(env: Env, siteId: string) {
   try {
     const r = await env.DB.prepare(
       "SELECT * FROM field_defs WHERE site_id=? ORDER BY sort_order, meta_key"

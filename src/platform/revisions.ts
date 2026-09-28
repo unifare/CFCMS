@@ -1,6 +1,6 @@
-import {Env} from "../types";
-import {randomId} from "./crypto";
-import {now} from "./repo";
+import {Env} from "../shared/types";
+import {randomId} from "../shared/crypto";
+import {now} from "../shared/repo";
 
 export async function createRevision(env:Env, postId:string, authorId:string|null, locale:string, title:string, excerpt:string, content:string){
   const latest=await env.DB.prepare("SELECT MAX(version) AS version FROM post_revisions WHERE post_id=? AND locale=?").bind(postId,locale).first<any>();

@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 // rejects parameter properties (`constructor(private x: T)`), so transpile with
 // esbuild the same way the other harnesses do.
 async function loadEngine() {
-  const src = readFileSync(join(root, "src/core/template-engine.ts"), "utf8");
+  const src = readFileSync(join(root, "src/rendering/template-engine.ts"), "utf8");
   let esbuild;
   try { esbuild = require("esbuild"); } catch { esbuild = null; }
   if (esbuild) {
