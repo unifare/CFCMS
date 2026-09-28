@@ -1,0 +1,12 @@
+{
+  "name": "shortcodes",
+  "title": "Shortcodes",
+  "version": "1.0.0",
+  "permissions": [
+    "content.read"
+  ],
+  "shortcodes": [
+    "site_title",
+    "year"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "seo",
+  "title": "SEO",
+  "version": "1.0.0",
+  "permissions": [
+    "content.read",
+    "settings.read",
+    "settings.write"
+  ],
+  "hooks": [
+    "beforeRender",
+    "html"
+  ],
+  "settings": [
+    {
+      "key": "title_template",
+      "label": "Title template",
+      "type": "text",
+      "default": "%title% | %site%"
+    },
+    {
+      "key": "default_description",
+      "label": "Default description",
+      "type": "textarea",
+      "default": ""
+    }
+  ]
+}

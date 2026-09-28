@@ -1,0 +1,89 @@
+<a class="skip" href="#content">Skip to content</a>
+<header class="masthead">
+  <div class="wrap masthead-in">
+    <a class="brand" href="/{{locale}}">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 17c4-9 6 3 9-6s5 5 9-4"/>
+        </svg>
+      </span>
+      <span>{{site.title}}</span>
+    </a>
+
+    <nav class="mainnav" id="mainnav" aria-label="Primary">
+      <a href="/{{locale}}">Home</a>
+      {{#each menu.primary as item}}<a href="{{item.url}}">{{item.title}}</a>{{/each}}
+      <a href="/{{locale}}/writing">Writing</a>
+    </nav>
+
+    <div class="masthead-tools">
+      <button class="theme-btn" id="themeToggle" type="button"
+              aria-label="Switch colour theme" title="Switch colour theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" aria-hidden="true">
+          <path class="i-sun" d="M12 3v2M12 19v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M3 12h2M19 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+          <circle class="i-sun" cx="12" cy="12" r="4"/>
+          <path class="i-moon" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+      </button>
+      <button class="nav-toggle" id="navToggle" type="button"
+              aria-label="Toggle navigation" aria-controls="mainnav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<script>
+/* Aurora runtime. Deliberately inline and dependency-free: the template engine
+ * cannot emit external modules, and a theme must stay a single portable bundle.
+ *
+ * The dark-mode bootstrap runs *before* the browser paints the body (see the
+ * head script) so returning dark-mode readers never see a white flash; this
+ * script only wires the toggle afterwards. */
+(function () {
+  var KEY = 'aurora.theme';
+  var root = document.documentElement;
+
+  function current() {
+    var saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (e) {}
+    if (saved === 'dark' || saved === 'light') return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function apply(mode) {
+    if (mode === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
+    root.style.colorScheme = mode;
+  }
+
+  // Reflect the state the bootstrap already applied.
+  apply(current());
+
+  var btn = document.getElementById('themeToggle');
+  if (btn) btn.addEventListener('click', function () {
+    var next = root.classList.contains('dark') ? 'light' : 'dark';
+    try { localStorage.setItem(KEY, next); } catch (e) {}
+    apply(next);
+  });
+
+  // Follow the OS while the reader has not made an explicit choice.
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      var saved = null;
+      try { saved = localStorage.getItem(KEY); } catch (e) {}
+      if (!saved) apply(current());
+    });
+  } catch (e) {}
+
+  var nav = document.getElementById('navToggle');
+  var menu = document.getElementById('mainnav');
+  if (nav && menu) nav.addEventListener('click', function () {
+    var open = menu.classList.toggle('open');
+    nav.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+})();
+</script>

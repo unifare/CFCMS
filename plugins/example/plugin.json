@@ -1,0 +1,7 @@
+{
+  "name": "example",
+  "version": "1.0.0",
+  "title": "Example Plugin",
+  "permissions": ["content.read"],
+  "blocks": []
+}

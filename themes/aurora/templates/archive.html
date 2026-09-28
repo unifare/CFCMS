@@ -1,0 +1,74 @@
+{{@extends "parts/layout"}}
+{{@section "content"}}
+
+<header class="arch-head">
+  <div class="wrap">
+    <p class="eyebrow">Archive</p>
+    <h1>{{page.title}}</h1>
+    {{#if page.description}}<p class="arch-lede">{{page.description}}</p>{{/if}}
+    <span class="note"><span class="dot"></span>{{len(posts)}} entries</span>
+  </div>
+</header>
+
+<section class="wrap" id="main">
+  {{#if posts}}
+    <ol class="index-list">
+      {{#each posts as post}}
+        <li class="index-row">
+          <a href="{{post.url}}">
+            <span class="index-date">{{#if post.created_at}}{{date(post.created_at)}}{{else}}&mdash;{{/if}}</span>
+            <span class="index-title">{{post.title}}</span>
+            <span class="index-excerpt">{{#if post.excerpt}}{{truncate(post.excerpt, 120)}}{{else}}&mdash;{{/if}}</span>
+            <svg class="index-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M5 12h14M13 6l6 6-6 6"/>
+            </svg>
+          </a>
+        </li>
+      {{/each}}
+    </ol>
+  {{else}}
+    <div class="empty">
+      <h2>No entries</h2>
+      <p class="muted">Nothing has been published under this heading yet.</p>
+      <a class="btn" href="/{{locale}}">Back home</a>
+    </div>
+  {{/if}}
+</section>
+
+<style>
+.arch-head{padding:clamp(3rem,7vw,5rem) 0 2rem;
+  border-bottom:1px solid var(--line-soft);margin-bottom:2.5rem;
+  background:radial-gradient(50rem 18rem at 15% -40%,
+    color-mix(in oklab,var(--accent) 10%,transparent),transparent 70%)}
+.arch-head h1{margin:.3rem 0 .5rem}
+.arch-lede{color:var(--text-soft);max-width:52ch;margin:0 0 1rem}
+
+.index-list{list-style:none;margin:0;padding:0;
+  border-top:1px solid var(--line)}
+.index-row{border-bottom:1px solid var(--line)}
+.index-row a{display:grid;
+  grid-template-columns:7.5rem 1fr 1.2fr 1.25rem;
+  align-items:baseline;gap:1.5rem;
+  padding:1.15rem .5rem;text-decoration:none;color:inherit;
+  transition:background-color .15s,padding-left .15s}
+.index-row a:hover{background:var(--bg-sunk);padding-left:1rem;text-decoration:none}
+.index-date{font-family:var(--font-mono);font-size:.76rem;color:var(--text-faint);
+  font-variant-numeric:tabular-nums}
+.index-title{font-family:var(--font-sans);font-weight:600;font-size:1.04rem;
+  color:var(--text);letter-spacing:-.012em}
+.index-row a:hover .index-title{color:var(--accent)}
+.index-excerpt{color:var(--text-soft);font-size:.9rem;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.index-arrow{width:1rem;height:1rem;color:var(--text-faint);
+  align-self:center;transition:transform .18s,color .18s}
+.index-row a:hover .index-arrow{transform:translateX(3px);color:var(--accent)}
+@media (max-width:780px){
+  .index-row a{grid-template-columns:1fr;gap:.3rem;padding:1.15rem .25rem}
+  .index-excerpt{white-space:normal;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .index-arrow{display:none}
+}
+</style>
+
+{{/section}}

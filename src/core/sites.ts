@@ -1,0 +1,216 @@
+/**
+ * Multi-site resolution.
+ *
+ * A CFPress install can host several sites from one Worker + one database.
+ * A site is identified by an id (e.g. `default`, `shop`) and matched against
+ * an incoming request in two ways, highest priority first:
+ *
+ *   1. `path_prefix`  — the URL starts with the prefix (`/shop/...`). Used
+ *                        when one domain serves many sites under sub-paths.
+ *   2. `host`         — the request host matches (`shop.example.com`).
+ *   3. the default site (any request that matches nothing else).
+ *
+ * Every data-access function takes an explicit `siteId`; nothing in the
+ * runtime may assume `"default"` any more. This module is the single place
+ * that turns a `Request` into a `siteId`.
+ */
+import { Env } from "../types";
+
+export const DEFAULT_SITE_ID = "default";
+
+export interface SiteRecord {
+  id: string;
+  name: string;
+  host: string | null;
+  path_prefix: string | null;
+  is_default: number;
+  status: string;
+}
+
+export interface ResolvedSite {
+  siteId: string;
+  site: SiteRecord | null;
+  /** Path with the matched prefix stripped, e.g. `/shop/blog/x` -> `/blog/x`. */
+  path: string;
+  /** Which rule matched — useful for debugging and tests. */
+  matchedBy: "path_prefix" | "host" | "default";
+}
+
+/** Normalise a prefix to `/foo` (no trailing slash), or null when empty. */
+function normalisePrefix(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  if (!s || s === "/") return null;
+  const withSlash = s.startsWith("/") ? s : `/${s}`;
+  return withSlash.replace(/\/+$/, "") || null;
+}
+
+/** Case-insensitive host comparison; strips ports and a leading `www.`. */
+export function normaliseHost(v: unknown): string {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/:\d+$/, "");
+}
+
+/**
+ * Load every active site. Cached per-request by the caller (see
+ * `resolveSite`), because the router hits this on each request.
+ */
+export async function listSites(env: Env): Promise<SiteRecord[]> {
+  try {
+    const r = await env.DB.prepare(
+      "SELECT id,name,host,path_prefix,is_default,status FROM sites WHERE status='active'"
+    ).all();
+    const rows = ((r.results as any[]) ?? []).filter((s) => s && typeof s.id === "string");
+    if (rows.length) return rows as SiteRecord[];
+  } catch {
+    /* `sites` table missing (pre-0008 database) — fall through. */
+  }
+  return [
+    {
+      id: DEFAULT_SITE_ID,
+      name: "Default Site",
+      host: null,
+      path_prefix: null,
+      is_default: 1,
+      status: "active",
+    },
+  ];
+}
+
+/**
+ * Resolve the site for a request.
+ *
+ * Pass a pre-loaded `sites` list to avoid a query when the caller already
+ * has one (the router resolves once and reuses it inside one request).
+ */
+export async function resolveSite(
+  env: Env,
+  u: URL,
+  sites?: SiteRecord[]
+): Promise<ResolvedSite> {
+  const all = sites ?? (await listSites(env));
+  const path = u.pathname || "/";
+  const host = normaliseHost(u.host);
+
+  // 1. Longest matching path prefix wins, so `/shop/fr` beats `/shop`.
+  let best: SiteRecord | null = null;
+  let bestPrefix: string | null = null;
+  for (const s of all) {
+    const prefix = normalisePrefix(s.path_prefix);
+    if (!prefix) continue;
+    if (path === prefix || path.startsWith(`${prefix}/`)) {
+      if (!bestPrefix || prefix.length > bestPrefix.length) {
+        best = s;
+        bestPrefix = prefix;
+      }
+    }
+  }
+  if (best && bestPrefix) {
+    const stripped = path.slice(bestPrefix.length);
+    return {
+      siteId: best.id,
+      site: best,
+      path: stripped.startsWith("/") ? stripped : `/${stripped}`,
+      matchedBy: "path_prefix",
+    };
+  }
+
+  // 2. Host match.
+  if (host) {
+    const byHost = all.find((s) => {
+      const h = normaliseHost(s.host);
+      return h !== "" && h === host;
+    });
+    if (byHost) return { siteId: byHost.id, site: byHost, path, matchedBy: "host" };
+  }
+
+  // 3. Explicit default, else the first site.
+  const fallback = all.find((s) => s.is_default === 1) ?? all[0] ?? null;
+  return {
+    siteId: fallback?.id ?? DEFAULT_SITE_ID,
+    site: fallback,
+    path,
+    matchedBy: "default",
+  };
+}
+
+/**
+ * Lightweight per-request memo so a single request never issues the same
+ * `sites` query twice, without leaking a stale list across requests.
+ */
+const memo = new WeakMap<Env, Promise<SiteRecord[]>>();
+
+export function siteListMemo(env: Env): Promise<SiteRecord[]> {
+  let p = memo.get(env);
+  if (!p) {
+    p = listSites(env);
+    memo.set(env, p);
+  }
+  return p;
+}
+
+// ---------------------------------------------------------------------------
+// Site CRUD (admin API)
+// ---------------------------------------------------------------------------
+
+export async function createSite(
+  env: Env,
+  input: { id?: string; name: string; host?: string | null; pathPrefix?: string | null }
+): Promise<{ id: string } | { error: string }> {
+  const name = String(input.name ?? "").trim();
+  if (!name) return { error: "name required" };
+  const id = String(input.id ?? "")
+    .trim()
+    .toLowerCase();
+  const safeId = id || `site_${Math.random().toString(36).slice(2, 10)}`;
+  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(safeId)) {
+    return { error: "id must be lowercase letters, digits, - or _" };
+  }
+  const existing = await env.DB.prepare("SELECT id FROM sites WHERE id=?").bind(safeId).first<any>();
+  if (existing) return { error: "site id already exists" };
+  const prefix = normalisePrefix(input.pathPrefix);
+  const host = input.host ? normaliseHost(input.host) : null;
+  const ts = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    "INSERT INTO sites(id,name,host,path_prefix,is_default,status,created_at,updated_at) VALUES(?,?,?,?,0,'active',?,?)"
+  )
+    .bind(safeId, name, host, prefix, ts, ts)
+    .run();
+  return { id: safeId };
+}
+
+export async function updateSite(
+  env: Env,
+  id: string,
+  patch: { name?: string; host?: string | null; pathPrefix?: string | null; status?: string }
+): Promise<{ ok: true } | { error: string }> {
+  const row = await env.DB.prepare("SELECT * FROM sites WHERE id=?").bind(id).first<any>();
+  if (!row) return { error: "site not found" };
+  const name = patch.name !== undefined ? String(patch.name).trim() || row.name : row.name;
+  const host = patch.host !== undefined ? (patch.host ? normaliseHost(patch.host) : null) : row.host;
+  const prefix =
+    patch.pathPrefix !== undefined ? normalisePrefix(patch.pathPrefix) : row.path_prefix;
+  const status = patch.status ? String(patch.status) : row.status;
+  await env.DB.prepare(
+    "UPDATE sites SET name=?,host=?,path_prefix=?,status=?,updated_at=? WHERE id=?"
+  )
+    .bind(name, host, prefix, status, Math.floor(Date.now() / 1000), id)
+    .run();
+  return { ok: true };
+}
+
+/**
+ * Delete a site. The default site can never be deleted, and business data
+ * itself is left untouched (rows are keyed by site_id and merely become
+ * unreachable), matching the theme-switch policy.
+ */
+export async function deleteSite(env: Env, id: string): Promise<{ ok: true } | { error: string }> {
+  if (id === DEFAULT_SITE_ID) return { error: "the default site cannot be deleted" };
+  const row = await env.DB.prepare("SELECT is_default FROM sites WHERE id=?").bind(id).first<any>();
+  if (!row) return { error: "site not found" };
+  if (row.is_default) return { error: "the default site cannot be deleted" };
+  await env.DB.prepare("DELETE FROM sites WHERE id=?").bind(id).run();
+  return { ok: true };
+}

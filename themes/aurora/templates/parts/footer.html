@@ -1,0 +1,30 @@
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-in">
+      <div>
+        <h4>{{site.title}}</h4>
+        <p class="muted" style="margin:0;max-width:38ch;font-size:.92rem">{{site.description}}</p>
+      </div>
+      <div>
+        <h4>Browse</h4>
+        <div class="foot-links">
+          <a href="/{{locale}}">Home</a>
+          <a href="/{{locale}}/blog/hello-world">Latest writing</a>
+          {{#each menu.primary as item}}<a href="{{item.url}}">{{item.title}}</a>{{/each}}
+        </div>
+      </div>
+      <div>
+        <h4>This site</h4>
+        <div class="foot-links">
+          <span class="faint">{{theme.title}} v{{theme.version}}</span>
+          <span class="faint">Rendered on Cloudflare Workers</span>
+          <span class="faint">Locale {{locale}}</span>
+        </div>
+      </div>
+    </div>
+    <div class="foot-base">
+      <span>&copy; {{site.title}}. All rights reserved.</span>
+      <span>Built with CFPress</span>
+    </div>
+  </div>
+</footer>

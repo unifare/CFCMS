@@ -1,0 +1,31 @@
+{
+  "name": "cfpress",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply cfpress --remote",
+    "db:migrate:local": "wrangler d1 migrations apply cfpress --local",
+    "typecheck": "tsc --noEmit",
+    "test:engine": "node tests/template-engine.test.mjs",
+    "test:integration": "node tests/theme-integration.test.mjs",
+    "test:multisite": "node tests/multisite.test.mjs",
+    "test:admin": "node tests/admin-contract.test.mjs",
+    "test:plugins": "node tests/plugin-hooks.test.mjs",
+    "test:sandbox": "node tests/theme-worker.test.mjs",
+    "test:aurora": "node tests/theme-aurora.test.mjs",
+    "theme:deploy": "node scripts/deploy-theme.mjs",
+    "seed:demo": "node scripts/seed-demo-content.mjs",
+    "test": "node tests/template-engine.test.mjs && node tests/theme-integration.test.mjs && node tests/multisite.test.mjs && node tests/admin-contract.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "wrangler": "^4.20.0",
+    "@cloudflare/workers-types": "^5.20260927.1"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  }
+}

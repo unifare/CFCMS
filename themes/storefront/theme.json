@@ -1,0 +1,33 @@
+{
+  "name": "storefront",
+  "title": "Storefront",
+  "version": "1.0.0",
+  "runtime": "worker",
+  "entry": "worker.js",
+  "capabilities": ["content.read", "site.read", "menu.read"],
+  "supports": ["blocks", "menus"],
+  "templates": ["index", "home", "archive-product", "single-product"],
+  "postTypes": [
+    {
+      "name": "product",
+      "label": "Product",
+      "labels": { "singular": "Product", "plural": "Products" },
+      "supports": ["title", "editor", "excerpt"],
+      "hasArchive": true,
+      "rewrite": { "slug": "products" }
+    }
+  ],
+  "fields": [
+    { "key": "price", "label": "Price", "type": "number", "postTypes": ["product"] },
+    { "key": "sku", "label": "SKU", "type": "text", "postTypes": ["product"] }
+  ],
+  "routes": [
+    { "path": "/products/:slug", "template": "single-product", "resolve": { "type": "product", "by": "slug" } }
+  ],
+  "adminMenus": [
+    { "id": "products", "label": "Products", "icon": "box", "screen": "content-list", "args": { "type": "product" } }
+  ],
+  "settings": [
+    { "key": "tagline", "label": "Tagline", "type": "text", "default": "Quality goods, fast." }
+  ]
+}
