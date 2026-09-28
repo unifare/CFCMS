@@ -63,3 +63,14 @@ Configure D1, R2 and KV IDs in `wrangler.jsonc`, then:
 npm run db:migrate
 npm run deploy
 ```
+
+## License
+
+CFCMS is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0).
+See [LICENSE](LICENSE) for the full text.
+
+In short: you are free to use, study, modify and redistribute this software.
+The AGPL adds one obligation over the plain GPL — if you run a modified version
+as a network service (a hosted CMS, a SaaS offering), you must offer the
+corresponding source code to the users of that service. Running it unmodified
+as your own site carries no such obligation beyond keeping the notices intact.
