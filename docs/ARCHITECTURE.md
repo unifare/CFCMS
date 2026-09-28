@@ -1061,18 +1061,63 @@ cfpress/
 └── wrangler.jsonc
 ```
 
+> 上图是**最终形态**，不是当前状态。后台 SPA 现在仍在 `public/admin/` 下
+> （模块结构与上图一致，只差外层目录名），原因见 §7.2 的说明。
+
 ### 7.2 重整要点
 
 | 变化 | 现状 | 目标理由 | 状态 |
 |---|---|---|---|
 | `src/core/*` 平铺 19 文件 | 全部在 `src/core/` | 拆成 `platform/` `rendering/` `extensions/` `shared/` 四个**有依赖方向**的目录 | ✅ 已完成 |
 | 主题与插件解耦 | `theme-runtime` 直接 import 插件运行时 | 新增 `extensions/contract/hooks.ts` 做依赖倒置，红线 4 才真正成立 | ✅ 已完成 |
-| `public/admin/` → `admin/` | 4 个文件平铺 2838 行 | 与"静态资源"区分开；`js/` 下按屏幕拆文件 | ⏳ 待做 |
-| 后台 JS 拆文件 | `admin.js` 1514 行单文件 | 每个屏幕一个文件，改一个屏幕不必读全部 | ⏳ 待做 |
+| 后台 JS 拆文件 | `admin.js` 1514 行单文件 | 每个屏幕一个文件，改一个屏幕不必读全部 | ✅ 已完成 |
+| `public/admin/` → `admin/` | 仍在 `public/admin/`（4 文件 → 22 模块） | 与"静态资源"区分开 | ⏳ **推迟**（见下） |
 | 主题加 `assets/` | CSS/JS 散在模板里 | 主题资源有归属 | ⏳ 待做（批次 2/4） |
 | 主题加 `langs/` | 无 | 多语言必需 | ⏳ 待做（批次 2） |
 | 测试分 `contract/` `integration/` | 全平铺 | 契约 vs 集成，失败时知道查哪 | ⏳ 待做 |
 | 新增 `scripts/make-*.mjs` | 无 | 脚手架（§5.5） | ⏳ 待做（批次 4） |
+
+> **为什么 `public/admin/` 没有搬到仓库根的 `admin/`**：`wrangler.jsonc` 的
+> `assets.directory` 只接受**一个**目录，而 `/admin/*` 这个 URL 空间必须保留
+> （`src/index.ts` 把 `/admin` 与 `/admin/` 前缀交给 `env.ASSETS.fetch()`，
+> `robots.txt` 也依赖它）。把目录搬到仓库根就意味着要么再起一个静态目录、
+> 要么把 `public/` 整个重构——两者都与"后台 JS 拆分"这件正交的事无关。
+> 因此本轮只做拆分、不动位置；目录搬迁等 `public/` 的资源归属一并规划时再做。
+> §7.1 的目标树里画的 `admin/` 是**最终形态**，不是本轮承诺。
+
+#### 后台 SPA 的模块结构（已落地）
+
+```
+public/admin/
+├── index.html            入口（无需改动：本来就是 type="module" 引 admin.js）
+├── admin.css  favicon.svg
+├── admin.js              入口：只有装配与 window.* 注册（< 120 行）
+├── ui.js  icons.js       UI kit 与图标（本轮未拆）
+└── js/
+    ├── state.js          共享 state + API 帮手（**叶子模块**，不 import 任何东西）
+    ├── nav.js            导航模型 / 侧栏 / header（纯 markup 构造，不调用 render）
+    ├── shell.js          render 循环 + 页面骨架 + 导航动作 + 屏幕注册表
+    ├── auth.js           登录屏 / 登录 / 登出
+    └── screens/
+        ├── index.js      页名 → 屏幕 的注册表（唯一 import 全部屏幕的模块）
+        ├── dashboard.js  content-list.js  editor.js  media.js
+        ├── resources.js  urls.js  settings.js  seo.js
+        ├── sites.js  users.js  search.js  menus.js  widgets.js
+        ├── themes.js  plugins.js  extension-install.js  theme-menu.js
+```
+
+**两条结构约束（`tests/admin-spa.test.mjs` 机器强制）**：
+
+1. **模块图无环，且没有孤儿模块。** 关键在于 `shell.js` **不 import 任何屏幕**——
+   屏幕通过 `setScreenTable(SCREENS)` 自注册，登录屏通过 `setLoginScreen()` 注入。
+   否则 `shell → screens → shell` 立刻成环。同理，`extension-install.js` 独立出来
+   是为了不让"主题屏"依赖"插件屏"。
+2. **`window.*` 是外部契约。** 渲染出来的 markup 用内联 `onclick="name(...)"`，
+   浏览器把它解析在 `window` 上、而不是模块作用域。少注册一个不会有编译错误、
+   不会有 console 报错、不会有失败请求——**按钮就是点了没反应**。所以入口用一个
+   `WINDOW_HANDLERS` 映射把 17 个处理器集中登记，测试同时检查
+   "markup 里调用的名字都登记过" 与 "拆分前的 17 个一个都没少"。
+
 
 ### 7.3 依赖方向规则（架构测试的判据）
 
@@ -1162,13 +1207,14 @@ index.ts  ←  唯一知道所有层的地方
 | **目录重整（src/）** | ✅ 已完成 | `src/core/*` → `shared/` `platform/` `rendering/` `extensions/`，见下表 |
 | **依赖倒置（theme↔plugin）** | ✅ 已完成 | 新增 `extensions/contract/hooks.ts`，红线 4 从"纸面"变为"真实成立" |
 | **运行时清单校验** | ✅ 已完成 | §5.3 全部规则实现进 `validateManifest`；`tests/manifest-validation.test.mjs` 33 条断言逐条证明"拒绝" |
-| 后台 JS 拆分（`admin/js/screens/`） | ⏳ 待做 | 见 §7.2；纯前端重构，与分层解耦，可独立进行 |
+| **后台 JS 拆分** | ✅ 已完成 | `admin.js` 1514 行 → 入口 < 120 行 + `js/` 下 4 个基础模块与 18 个屏幕模块；新增 `tests/admin-spa.test.mjs`（15 条）看住模块图与 `window.*` 契约，见 §7.2 |
 
 **批次 1 验收状态（2026-09-28 实测）**
 
 ```
 architecture        10 passed, 0 failed
 manifest-validation 33 passed, 0 failed
+admin-spa           15 passed, 0 failed   ← 本轮新增
 template-engine     47 passed, 0 failed
 theme-integration   46 passed, 0 failed
 multisite           74 passed, 0 failed
@@ -1179,8 +1225,13 @@ theme-aurora         0 failure(s)
 npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 ```
 
-9 个套件已全部接入 `npm test` 与 `tests/run-all.mjs`（`manifest-validation` 排在 `architecture` 之后，
-因为它同样不需要数据库，且守的是"用户上传的东西"）。
+10 个套件已全部接入 `npm test` 与 `tests/run-all.mjs`（`admin-spa` 紧跟
+`manifest-validation`，理由相同：不需要数据库，守的是"结构"而不是"行为"）。
+
+后台 SPA 另有一次**真实浏览器**验收（`wrangler dev` + Chromium）：
+登录 → 侧栏真实点击 → 主题下拉 → 侧栏折叠 → **16 个页面 × 明暗两套** → 用户菜单登出，
+断言 h1 非空、导航项存在、正文长度、壳层存在、无 "Something went wrong" 面板，
+且 console 零错误、零 5xx。唯一出现的 401 是登录前的 `/api/v1/auth/me`，属**设计内**。
 
 > **`run-all.mjs` 在本机沙箱里会整体报 SKIP（`EBUSY`）** —— 这是 Windows 沙箱锁 node 二元文件的已知现象，
 > 不是测试失败。runner 刻意把"跑不起来"与"跑失败"分开报告（见 `run-all.mjs` 的注释）。
@@ -1214,6 +1265,19 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 | `shared/` 里加 `import ... from "../platform/..."` | ✅ FAIL，指出"reaches platform/" |
 | 移除 sitemap 的站点过滤 | ✅ FAIL，两条断言分别指出"default 列表混入 shop 的文章" |
 | 主题声明 `blocks[].name = "theme/property-card"` | ✅ REJECTED —— 加运行时校验后由 `validateManifest` 直接拦截安装 |
+| **（后台 SPA）从 `WINDOW_HANDLERS` 删掉 `logout`** | ✅ FAIL —— 两条断言分别指出"no longer published: logout"与"not a function on window" |
+| **（后台 SPA）给 `shell.js` 加一条 `import … screens/dashboard.js`** | ✅ FAIL —— 报出完整环：`shell.js → screens/dashboard.js → shell.js` |
+| **（后台 SPA）内联 `onclick` 指向未注册的处理器** | ✅ FAIL —— "markup calls these but nothing publishes them: notAHandler" |
+| **（后台 SPA）新增一个没人 import 的模块** | ✅ FAIL —— "orphans (written but never imported)" |
+| **（后台 SPA）屏幕体内引用未导入的标识符** | ✅ FAIL —— "rendered the error panel"（**这条第一版漏了**，见下） |
+| **（后台 SPA）屏幕什么都不写进 `#content`** | ✅ FAIL —— "rendered nothing" |
+
+> ⚠️ 后台 SPA 那组里的**第 5 条**，第一版是假绿。原因是 `render()` 自己
+> `try/catch` 住屏幕的异常并换成 "Something went wrong" 面板——于是
+> **"`render()` 没抛错"并不等于"屏幕是好的"**，注入一个未定义的标识符后测试依然全绿。
+> 改法是断言**真正写进 DOM 的东西**（不能含错误面板、不能为空），而不是断言"没抛错"。
+> 教训与 §8 的 9b 段同源：**断言要盯住注入缺陷后必然会变的那个值**，
+> 而"没有异常"往往是个恒定不变的值。
 
 **这次清理中真实发现并修复的问题**（都是"文档/测试说已守住，实际没守住"）：
 

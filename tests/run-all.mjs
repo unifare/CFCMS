@@ -22,6 +22,10 @@ const suites = [
   // database, and it guards what a *user uploads* — the shipped themes are
   // already covered by the architecture rules above.
   ["manifest validation", "manifest-validation.test.mjs"],
+  // The admin SPA split is checked here too: like the two above it needs no
+  // database, and it guards *structure* (module graph, window.* contract) —
+  // a broken split would make the admin UI silently unusable.
+  ["admin spa structure", "admin-spa.test.mjs"],
   ["template engine (unit)", "template-engine.test.mjs"],
   ["theme integration (e2e)", "theme-integration.test.mjs"],
   ["multi-site", "multisite.test.mjs"],

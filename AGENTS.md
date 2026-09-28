@@ -138,6 +138,46 @@ await hooks.applyFilters("html", ctx, out);
 
 ---
 
+## 后台 SPA（`public/admin/`）
+
+后台是**零构建**的原生 ESM，分层顺序是
+`admin.css`（令牌→组件）→ `icons.js` → `ui.js` → `admin.js` → `js/**`。
+
+```
+admin.js               入口：只做装配与 window.* 注册（< 120 行）
+js/state.js            共享 state + API 帮手（叶子模块，不 import 任何东西）
+js/nav.js              导航模型 / 侧栏 / header（纯 markup 构造）
+js/shell.js            render 循环 + 页面骨架 + 导航动作 + 屏幕注册表
+js/auth.js             登录屏 / 登录 / 登出
+js/screens/index.js    页名 → 屏幕 注册表（唯一 import 全部屏幕的模块）
+js/screens/<name>.js   一屏一模块
+```
+
+| # | 规则 |
+|---|---|
+| 20 | `js/shell.js` **不得 import 任何屏幕**（屏幕经 `setScreenTable()` 自注册），否则立即成环 |
+| 21 | 屏幕之间**不得互相 import**；共用逻辑抽独立模块（如 `extension-install.js`） |
+| 22 | 每个被 markup 调用的处理器**必须登记进入口的 `WINDOW_HANDLERS`** |
+| 23 | 不得引入打包器；不得删 `index.html` `<head>` 里的绘制前主题脚本 |
+
+**理由（规则 20–21）**：屏幕要调 `render()`，`render()` 要调屏幕——直接互相
+import 就是环。环在部分浏览器能跑、部分不能，且让"改一个屏幕"重新变成
+"必须理解全部屏幕"。自注册把这条边反转成单向。
+
+**理由（规则 22）**：markup 用内联 `onclick="name(...)"`，浏览器把它解析在
+`window` 上、**不在模块作用域**。少登记一个**不会有任何报错**——
+不编译、不报 console、不发失败请求，按钮就是点了没反应。这是最贵的一类回归。
+
+规则 20–23 由 `tests/admin-spa.test.mjs` 强制（模块图无环 + 无孤儿模块 +
+`window.*` 契约 + 每个屏幕真渲染一次）。**改后台结构时那道套件必须跟着改。**
+
+> ⚠️ 该套件有一处**已修过的假绿**：它最初断言"`render()` 没有抛错"，
+> 而 `render()` 自己 catch 住屏幕异常并换成 "Something went wrong" 面板，
+> 于是注入一个未定义标识符后测试依然全绿。现在断言的是**写进 DOM 的内容**
+> （非空、不含错误面板）。**别把它改回"断言没抛错"。**
+
+---
+
 ## 允许做的事
 
 - ✅ 加新的 `screen` 类型（同时更新 `ALLOWED_ADMIN_SCREENS` 与 `docs/ARCHITECTURE.md` §3.5）
@@ -163,7 +203,8 @@ await hooks.applyFilters("html", ctx, out);
 | 事项 | 现状 | 原因 |
 |---|---|---|
 | `theme_admin_menus` 与插件菜单 | 尚未合并为 `admin_menu_registry` | 批次 3（已决定：迁移时 drop 旧表） |
-| 后台 JS | `public/admin/admin.js` 仍是 1514 行单文件 | 按屏幕拆分属独立的前端重构，与分层解耦 |
+| 后台 SPA 的目录位置 | 模块结构已按 §7.2 拆好，但仍在 `public/admin/` 而非仓库根的 `admin/` | `wrangler.jsonc` 的 `assets.directory` 只接受一个目录，而 `/admin/*` 必须保留；搬迁需与 `public/` 的资源归属一并规划 |
+| `public/admin/ui.js` | 仍是 303 行单文件（UI kit 未再细分） | 与屏幕拆分正交；真要拆应等后台多语言（L2）落地时一起做 |
 | `extensions/contract/` | 目前只有 `hooks.ts`；`manifest.ts`/`validation.ts`/`capabilities.ts` 未拆 | 批次 3 |
 
 这些**不是"可以随意违反规则"的许可证**——它们是**已登记的技术债**，
