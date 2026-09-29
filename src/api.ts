@@ -29,6 +29,7 @@ import {
 import {
   availableUiLocales,
   corePackLocales,
+  corePackUiLocales,
   disableSiteLocale,
   enableSiteLocale,
   isLocaleCode,
@@ -394,6 +395,8 @@ const MENU_CUSTOM_KEY = "admin.menu.custom";
 
 /** Locale keys inside a `label` override object. */
 const LABEL_LOCALE_RE = /^[A-Za-z0-9-]{2,10}$/;
+/** Upper bound of per-label languages (the admin offers far fewer today). */
+const LABEL_MAX_LOCALES = 8;
 /** Sidebar item keys: core ids, `cpt:<name>`, `menu:<menu_id>`. */
 const ITEM_KEY_RE = /^[A-Za-z0-9:_-]{1,120}$/;
 /** Group ids are the SPA's built-in group keys (kebab-case). */
@@ -403,7 +406,7 @@ function normaliseMenuCustomLabel(v: unknown, what: string): Record<string, stri
   if (v === undefined || v === null) return null;
   if (typeof v !== "object" || Array.isArray(v)) throw new Error(`${what}: label must be an object of locale -> string`);
   const out: Record<string, string> = {};
-  for (const [loc, val] of Object.entries(v as Record<string, unknown>).slice(0, 4)) {
+  for (const [loc, val] of Object.entries(v as Record<string, unknown>).slice(0, LABEL_MAX_LOCALES)) {
     if (!LABEL_LOCALE_RE.test(loc)) throw new Error(`${what}: bad locale in label: ${loc}`);
     if (typeof val !== "string" || !val.trim()) throw new Error(`${what}: label for ${loc} must be a non-empty string`);
     if (val.length > 120) throw new Error(`${what}: label for ${loc} is longer than 120 characters`);
@@ -784,7 +787,7 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
           defaultLocale: await siteDefaultLocale(env, siteId),
         });
     const packs = await loadUiPacks(env, siteId, locale);
-    return ok({ locale, available, layers: packs.length, messages: mergePacks(packs) });
+    return ok({ locale, available, ui_locales: corePackUiLocales(), layers: packs.length, messages: mergePacks(packs) });
   }
   // Database override layer (§2.4 layer ④).
   if (path === "i18n/overrides") {

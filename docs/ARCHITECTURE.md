@@ -263,6 +263,7 @@ plugin.{slug}.*   插件文案              plugin.seo.meta.title
 > **✅ L2 已在后台 SPA 消费（批次 5）。** 落地形状：
 >
 > - **核心语言包**是 TS 常量（`src/platform/i18n/core-pack.ts`），en 与 zh-CN 各约 90 个 key——不依赖 R2，全新安装即有完整后台文案。
+> - **可切换的界面语言列表，唯一事实源在服务端**：`CORE_PACKS` + `CORE_PACK_NAMES`（同一个文件，加语言 = 加一个包 + 一行名字，零客户端改动）。列表经 `i18n/messages` 响应的 `ui_locales` 下发，SPA 的 `i18n.js` 用 `setUiLanguages()` 派生（en 恒排第一；客户端数组只是启动默认值）——语言切换菜单、账户屏与菜单编辑器的多语言标签输入都渲染自这一个列表（AGENTS.md 规则 40）。
 > - **SPA 侧**只有一个叶子模块 `public/admin/js/i18n.js`：`t(key, fallback)`（字典值 → 英文 fallback → key 本身，**永不空白**）、`loadMessages()`（`GET /api/v1/i18n/messages`，一次拿全合并字典）、`setUiLocale(loc)`（`POST /api/v1/i18n/ui-locale` 持久化到 `site_users.ui_lang` + 重新拉字典）。字典缓存在 localStorage，**登录屏**在能发认证请求之前就用上次的语言渲染。
 > - **界面语言按用户持久化**（`site_users.ui_lang`，批次 2 的列），所以**换浏览器也保持**——这也是浏览器验收脚本必须在登录后显式重置语言的原因（见 HANDOVER 坑位 23）。
 > - **菜单标签的翻译消费点在服务端**：`GET /api/v1/admin-menus` 用 `resolveUiLocale` + `loadUiPacks` + `mergePacks` 解析字典，行的 `label_key` 命中字典就替换 `label`，未命中保留原文；响应带 `ui_locale`。SPA 切语言 = `setUiLocale → loadContext() → render()`，**不做任何前端二次翻译**——同一个答案只有一处定义。`label_key` 的前缀校验见 §3.5 与 AGENTS.md 规则 13d。

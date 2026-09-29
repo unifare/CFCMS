@@ -411,6 +411,7 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 | 37 | 插件清单**不得声明 `tables[]`**（校验器直接拒绝，不是忽略），也**不得使用 `table-list` / `table-edit`** screen |
 | 38 | 菜单显示分**两层**：① **站点级定制**（改名/排序/跨组移动/对所有人隐藏）存 `settings` 的 `admin.menu.custom`（每站一份 JSON），PUT/DELETE 需 `settings.manage`，GET 任何登录用户可读；② **每用户隐藏**存 `site_users.menu_prefs`（UI 层）。两者都**只影响侧边栏渲染**——capability 过滤仍在各端点，藏菜单不授/撤任何权限。`dashboard` 永远显示（逃生门） |
 | 39 | 站点菜单定制的**唯一应用点是 `nav.js` 的 `applyMenuCustom()`**（纯函数；侧栏与编辑器共用，别写第二份应用逻辑）。改名覆盖叠加在服务端 label_key 翻译**之上**（解析：override[locale] → override.en → 内置文案）；排序是**稳定排序**（显式 order 升序在前，未排序的按内置顺序殿后）；**移动到不存在的分组=忽略**（项留在原地，绝不丢弃）；结构性变更（排序/移动）必须**物化整组显式 order**，否则隐式/显式混排没法读。标签输入**change（失焦）即保存**，Enter 提交——`fill()` 类工具只派发 `input` 不派发 `change`，自动化测试 fill 后必须 blur |
+| 40 | 后台**界面语言列表的唯一事实源是服务端**：`CORE_PACKS` + `CORE_PACK_NAMES`（同在 `core-pack.ts`，加语言=加包+一行名字，**零客户端改动**）。列表经 `i18n/messages` 响应的 `ui_locales` 下发，`i18n.js` 的 `setUiLanguages()` 派生（en 恒排第一）——**不得在客户端硬编码新语言**。菜单编辑器的多语言标签输入、语言切换菜单、账户屏都渲染自同一列表。校验上限：菜单 label 每项最多 `LABEL_MAX_LOCALES`(8) 种语言 |
 
 **理由（规则 34）**：插件只有一个**安装级** `enabled` 标志，主题是**按站点**激活的。
 所以插件菜单写一次 `site_id='*'`、读时用 `OR` 匹配；按站点扇出会需要"新建站点时补菜单"

@@ -1,26 +1,23 @@
 /**
- * Screen: Menu configuration — two clearly separated layers.
+ * Screen: Menu configuration — ONE editor, every action on the row.
  *
- * 1. Site menu (top): a real menu editor for the whole site — rename items and
- *    groups per UI language (en / zh-CN today, any locale the dictionary has),
- *    reorder items (drag the handle or use the arrows), move an item to
- *    another group, reorder groups, and hide an item for everyone. Stored as
- *    one per-site JSON blob (`admin.menu.custom` in the settings table) and
- *    applied by nav.js `applyMenuCustom` — the same definition the sidebar
- *    consumes. Requires `settings.manage`; without it the panel renders
- *    read-only (and the server enforces the permission regardless).
- * 2. My display preferences (bottom): the per-user hide/show toggles. UI-level
- *    only, unchanged from the previous iteration.
+ * Each item row carries all of it: ↑/↓ reorder, an eye toggle to hide/show
+ * the item site-wide, and a pencil (or clicking the name) to open the inline
+ * strip with per-language labels, the group selector and a per-item reset.
+ * Groups get the same treatment on their header row. No prose on the page —
+ * the controls are the documentation. Requires `settings.manage`; without it
+ * the screen renders read-only with a single hint line (the server enforces
+ * the permission regardless).
  *
- * Every change saves immediately (one PUT per change). The section being
- * edited stays open across the re-render (`openKey` / `openGroup`), so
- * entering an English and a Chinese label does not require reopening.
+ * Changes save immediately (one PUT per change). The strip being edited stays
+ * open across the re-render (`openKey` / `openGroup`), so entering an English
+ * and a Chinese label does not require reopening. Structural changes
+ * (reorder / move between groups) materialize explicit `order` integers for
+ * the whole model — see `applyMenuCustom` in nav.js, the single consumer.
  *
- * Structural changes (reorder / move between groups) materialize explicit
- * `order` integers for every group and item — mixed implicit/explicit
- * ordering then cannot be misread, while items the editor never touched
- * (a freshly installed plugin's menu, a new CPT) keep their built-in
- * sequence after the ordered ones, per `applyMenuCustom`'s stable sort.
+ * The per-user "my display preferences" panel is gone: hiding is one control
+ * (the eye) in one place. The per-user prefs API and its effect on the
+ * sidebar remain unchanged.
  */
 import { api, state } from "../state.js";
 import { pageHead, render } from "../shell.js";
@@ -65,20 +62,7 @@ async function saveCustom() {
     rebuild(); // re-apply from the server-normalized copy
     await render();
   } catch (err) {
-    await alertDialog({ title: t("core.menuConfig.title", "Menu configuration"), description: err.message });
-  }
-}
-
-async function savePrefs() {
-  try {
-    await api("admin-menus/prefs", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hidden: [...state.hiddenMenus] }),
-    });
-    await render();
-  } catch (err) {
-    await alertDialog({ title: t("core.menuConfig.title", "Menu configuration"), description: err.message });
+    await alertDialog({ title: t("core.menuConfig.title", "Menu"), description: err.message });
   }
 }
 
@@ -115,65 +99,84 @@ function moveGroup(id, dir) {
   saveCustom();
 }
 
-function itemRow(it, g, canManage) {
-  const locked = it.key === "dashboard"; // escape hatch: never hidden, never moved
-  const idx = g.items.indexOf(it);
-  const badge = it.siteHidden ? ` <span class="muted text-sm">(${esc(t("core.menuConfig.siteHidden", "Hide for everyone"))})</span>` : "";
-  const arrows = canManage && !locked
-    ? `<button class="icon-btn" data-item-move="up" data-row-key="${attr(it.key)}" ${idx === 0 ? "disabled" : ""} aria-label="Up">${icon("arrow-up")}</button>
-       <button class="icon-btn" data-item-move="down" data-row-key="${attr(it.key)}" ${idx === g.items.length - 1 ? "disabled" : ""} aria-label="Down">${icon("arrow-down")}</button>`
-    : "";
-  const edit = canManage && !locked
-    ? `<button class="icon-btn" data-item-edit="${attr(it.key)}" aria-label="Edit">${icon("pencil")}</button>`
-    : "";
-  const drag = canManage && !locked ? `<span class="muted" draggable="true" style="cursor:grab;user-select:none">≡</span>` : `<span class="muted" style="width:.9rem"></span>`;
-  const editor = openKey === it.key && canManage ? itemEditor(it, g) : "";
-  return `<div data-row-key="${attr(it.key)}" style="margin-bottom:.35rem">
-    <div draggable="${canManage && !locked}" style="display:flex;align-items:center;gap:.5rem;padding:.35rem .5rem;border:1px solid var(--border);border-radius:.5rem;background:var(--card)">
-      ${drag}
-      <span class="nav-icon" style="display:inline-flex;width:1.2rem">${icon(it.icon)}</span>
-      <span style="flex:1">${esc(it.title)}${badge}</span>
-      <span class="muted text-sm">${esc(it.key)}</span>
-      ${arrows}${edit}
-    </div>
-    ${editor}
-  </div>`;
+/** Eye toggle: site-wide hidden. Un-hiding removes the flag instead of
+ *  storing `hidden: false`, so a fully-reset item disappears from the blob. */
+function toggleHidden(key) {
+  const o = { ...(draft.items[key] || {}) };
+  if (o.hidden === true) delete o.hidden;
+  else o.hidden = true;
+  if (Object.keys(o).length) draft.items[key] = o;
+  else delete draft.items[key];
+  saveCustom();
+}
+
+/** One compact label input per UI language, tagged with the language name. */
+function labelInputs(kind, id, o, placeholder) {
+  return UI_LANGUAGES.map(([code, name]) => {
+    const dataAttr = kind === "item"
+      ? `data-item-label="${attr(code)}" data-row-key="${attr(id)}"`
+      : `data-group-label="${attr(code)}" data-group-id="${attr(id)}"`;
+    const value = typeof (o.label || {})[code] === "string" ? o.label[code] : "";
+    return `<div style="display:flex;gap:.5rem;align-items:center;flex:1;min-width:12rem">
+      <span class="muted text-sm" style="flex:0 0 3.6rem">${esc(name)}</span>
+      <input ${dataAttr} value="${attr(value)}" placeholder="${attr(placeholder)}" style="flex:1">
+    </div>`;
+  }).join("");
 }
 
 function itemEditor(it, g) {
   const o = draft.items[it.key] || {};
-  const label = o.label || {};
-  const langInputs = UI_LANGUAGES.map(([code, name]) => `
-    <div class="field" style="margin-bottom:.5rem">
-      <label>${esc(name)} · ${esc(t("core.menuConfig.label", "Label"))}</label>
-      <input data-item-label="${attr(code)}" data-row-key="${attr(it.key)}" value="${attr(typeof label[code] === "string" ? label[code] : "")}" placeholder="${attr(it.title)}">
-    </div>`).join("");
   const options = applied
-    .map((gr) => `<option value="${attr(gr.id)}" ${gr.id === g.id ? "selected" : ""}>${esc(gr.label)} (${esc(gr.id)})</option>`)
+    .map((gr) => `<option value="${attr(gr.id)}" ${gr.id === g.id ? "selected" : ""}>${esc(gr.label)}</option>`)
     .join("");
-  return `<div style="border:1px dashed var(--border);border-radius:.5rem;padding:.75rem;margin:.25rem 0 .5rem 1.9rem">
-    ${langInputs}
-    <div class="field" style="margin-bottom:.5rem">
-      <label>${esc(t("core.menuConfig.group", "Move to group"))}</label>
-      <select data-item-group data-row-key="${attr(it.key)}">${options}</select>
+  return `<div style="border:1px dashed var(--border);border-radius:.5rem;padding:.6rem .75rem;margin:.25rem 0 .5rem 1.9rem;display:grid;gap:.5rem">
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">${labelInputs("item", it.key, o, it.title)}</div>
+    <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+      <select data-item-group data-row-key="${attr(it.key)}" aria-label="${attr(t("core.menuConfig.group", "Group"))}">${options}</select>
+      <button class="btn" data-item-reset="${attr(it.key)}">${icon("refresh")}${esc(t("core.menuConfig.resetItem", "Reset"))}</button>
+      <span class="muted text-sm" style="margin-left:auto">${esc(it.key)}</span>
     </div>
-    <label style="display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem">
-      <input type="checkbox" data-item-hidden data-row-key="${attr(it.key)}" ${o.hidden ? "checked" : ""}>
-      <span>${esc(t("core.menuConfig.siteHidden", "Hide for everyone"))}</span>
-    </label>
-    <button class="btn" data-item-reset="${attr(it.key)}">${icon("refresh")}${esc(t("core.menuConfig.resetItem", "Reset"))}</button>
+  </div>`;
+}
+
+function itemRow(it, g, canManage) {
+  const locked = it.key === "dashboard"; // escape hatch: never hidden, never moved
+  const editable = canManage && !locked;
+  const idx = g.items.indexOf(it);
+  const hidden = it.siteHidden === true;
+  const drag = editable
+    ? `<span class="muted" draggable="true" style="cursor:grab;user-select:none">≡</span>`
+    : `<span class="muted" style="width:.9rem"></span>`;
+  const title = editable
+    ? `<button data-item-edit="${attr(it.key)}" style="flex:1;text-align:left;background:none;border:none;cursor:pointer;color:inherit;padding:.15rem 0;font:inherit${hidden ? ";opacity:.55;text-decoration:line-through" : ""}">${esc(it.title)}</button>`
+    : `<span style="flex:1${hidden ? ";opacity:.55;text-decoration:line-through" : ""}">${esc(it.title)}</span>`;
+  const arrows = editable
+    ? `<button class="icon-btn" data-item-move="up" data-row-key="${attr(it.key)}" ${idx === 0 ? "disabled" : ""} aria-label="Up">${icon("arrow-up")}</button>
+       <button class="icon-btn" data-item-move="down" data-row-key="${attr(it.key)}" ${idx === g.items.length - 1 ? "disabled" : ""} aria-label="Down">${icon("arrow-down")}</button>`
+    : "";
+  const eye = editable
+    ? `<button class="icon-btn" data-item-eye="${attr(it.key)}" title="${attr(hidden ? t("core.menuConfig.siteVisible", "Shown to everyone") : t("core.menuConfig.siteHidden", "Hidden for everyone"))}">${icon(hidden ? "eye-off" : "eye")}</button>`
+    : "";
+  const pencil = editable
+    ? `<button class="icon-btn" data-item-edit="${attr(it.key)}" aria-label="Edit">${icon("pencil")}</button>`
+    : "";
+  const editor = openKey === it.key && editable ? itemEditor(it, g) : "";
+  return `<div data-row-key="${attr(it.key)}" style="margin-bottom:.35rem">
+    <div draggable="${editable}" style="display:flex;align-items:center;gap:.5rem;padding:.35rem .5rem;border:1px solid var(--border);border-radius:.5rem;background:var(--card)">
+      ${drag}
+      <span class="nav-icon" style="display:inline-flex;width:1.2rem">${icon(it.icon)}</span>
+      ${title}
+      ${arrows}${eye}${pencil}
+    </div>
+    ${editor}
   </div>`;
 }
 
 function groupPanel(g, gi, canManage) {
   const oc = draft.groups[g.id] || {};
   const labelEditor = openGroup === g.id && canManage
-    ? `<div style="border:1px dashed var(--border);border-radius:.5rem;padding:.75rem;margin-top:.5rem">
-        ${UI_LANGUAGES.map(([code, name]) => `
-          <div class="field" style="margin-bottom:.5rem">
-            <label>${esc(name)} · ${esc(t("core.menuConfig.label", "Label"))}</label>
-            <input data-group-label="${attr(code)}" data-group-id="${attr(g.id)}" value="${attr(typeof (oc.label || {})[code] === "string" ? oc.label[code] : "")}" placeholder="${attr(g.label)}">
-          </div>`).join("")}
+    ? `<div style="border:1px dashed var(--border);border-radius:.5rem;padding:.6rem .75rem;margin-top:.5rem;display:flex;gap:.5rem;flex-wrap:wrap">
+        ${labelInputs("group", g.id, oc, g.label)}
       </div>`
     : "";
   const arrows = canManage
@@ -183,12 +186,15 @@ function groupPanel(g, gi, canManage) {
   const name = canManage
     ? `<button data-group-edit="${attr(g.id)}" style="font-weight:600;background:none;border:none;cursor:pointer;color:inherit;padding:0">${esc(g.label)}</button>`
     : `<span style="font-weight:600">${esc(g.label)}</span>`;
+  const pencil = canManage
+    ? `<button class="icon-btn" data-group-edit="${attr(g.id)}" aria-label="Edit">${icon("pencil")}</button>`
+    : "";
   return `<div class="panel" style="margin-bottom:1rem">
     <div style="display:flex;align-items:center;gap:.35rem">
       ${arrows}
       ${name}
-      <button data-group-edit="${attr(g.id)}" class="icon-btn" aria-label="Edit">${icon("pencil")}</button>
-      <span class="muted text-sm" style="flex:1">${esc(g.id)} · ${g.items.length}</span>
+      ${pencil}
+      <span class="muted text-sm" style="flex:1;text-align:right">${g.items.length}</span>
     </div>
     ${labelEditor}
     <div style="margin-top:.5rem">${g.items.map((it) => itemRow(it, g, canManage)).join("")}</div>
@@ -200,55 +206,13 @@ export default async function menuConfig(c) {
   draft = JSON.parse(JSON.stringify(state.menuCustom || { items: {}, groups: {} }));
   rebuild();
 
-  const sitePanel = `
-    <div class="panel" style="margin-bottom:1rem">
-      <div style="font-weight:600;font-size:1rem">${esc(t("core.menuConfig.siteEditor", "Site menu"))}</div>
-      <div class="muted text-sm" style="margin:.25rem 0 .75rem">${esc(t("core.menuConfig.siteEditorSub", "Renames, ordering, grouping and hiding below apply to every admin of this site. Permissions are unchanged."))}</div>
-      ${canManage ? `<div class="muted text-sm" style="margin-bottom:.75rem">${esc(t("core.menuConfig.dragHint", "Drag the handle or use the arrows to reorder. Click a name to edit it."))}</div>` : `<div class="muted text-sm" style="margin-bottom:.75rem">${esc(t("core.menuConfig.readonlyHint", "You can look but not edit: changing the site menu requires the settings.manage permission."))}</div>`}
-    </div>
-    ${applied.map((g, gi) => groupPanel(g, gi, canManage)).join("")}`;
-
-  const prefsGroups = navPrefsModel();
-  const myPanel = `
-    <div class="panel">
-      <div style="font-weight:600;font-size:1rem">${esc(t("core.menuConfig.myPrefs", "My display preferences"))}</div>
-      <div class="muted text-sm" style="margin:.25rem 0 .75rem">${esc(t("core.menuConfig.myPrefsSub", "Only affects what you see — the site menu above is shared."))}</div>
-      <div style="display:flex;gap:.5rem;margin-bottom:.75rem">
-        <button class="btn" data-action="menus-show-all">${esc(t("core.menuConfig.showAll", "Show all"))}</button>
-        <button class="btn" data-action="menus-hide-all">${esc(t("core.menuConfig.hideAll", "Hide all"))}</button>
-      </div>
-      ${prefsGroups}
-    </div>`;
-
   c.innerHTML = `${pageHead({
-    title: t("core.menuConfig.title", "Menu configuration"),
-    sub: t("core.menuConfig.sub", "Choose which items appear in your sidebar. This only affects what you see — permissions stay exactly as they are."),
+    title: t("core.menuConfig.title", "Menu"),
     actions: canManage ? `<button class="btn" data-action="menus-reset-all">${icon("refresh")}${esc(t("core.menuConfig.resetAll", "Reset to defaults"))}</button>` : "",
-    crumbs: [{ label: t("core.menuConfig.title", "Menu configuration") }],
+    crumbs: [{ label: t("core.menuConfig.title", "Menu") }],
   })}
-  ${sitePanel}
-  ${myPanel}`;
-}
-
-/** The per-user toggle list: every item, with what is hidden for *me*. */
-function navPrefsModel() {
-  return applyMenuCustom(baseGroups(), state.menuCustom, locale())
-    .map((g) => {
-      const rows = g.items.map((it) => {
-        const locked = it.key === "dashboard";
-        const visible = locked || (!it.siteHidden && !state.hiddenMenus.has(it.key));
-        return `<label style="display:flex;align-items:center;gap:.6rem;padding:.35rem 0;cursor:pointer">
-          <input type="checkbox" data-menu-toggle="${esc(it.key)}" ${visible ? "checked" : ""} ${locked || it.siteHidden ? "disabled" : ""}>
-          <span class="nav-icon" style="display:inline-flex;width:1.2rem">${icon(it.icon)}</span>
-          <span style="flex:1">${esc(it.title)}${it.siteHidden ? ` <span class="muted text-sm">(${esc(t("core.menuConfig.siteHidden", "Hide for everyone"))})</span>` : ""}</span>
-          <span class="muted text-sm">${esc(it.key)}</span>
-        </label>`;
-      }).join("");
-      return `<div style="border-top:1px solid var(--border);padding-top:.5rem;margin-top:.25rem">
-        <div style="font-weight:600;margin-bottom:.25rem">${esc(g.label)}</div>${rows}
-      </div>`;
-    })
-    .join("");
+  ${canManage ? "" : `<div class="muted text-sm" style="margin-bottom:.75rem">${esc(t("core.menuConfig.readonlyHint", "Read-only — editing the site menu needs the settings.manage permission."))}</div>`}
+  ${applied.map((g, gi) => groupPanel(g, gi, canManage)).join("")}`;
 }
 
 // -- events (document-level, registered once; the screen re-renders freely) --
@@ -256,14 +220,14 @@ function navPrefsModel() {
 let dragKey = null;
 
 document.addEventListener("click", async (e) => {
-  const btn = e.target.closest("[data-action],[data-item-edit],[data-item-move],[data-item-reset],[data-group-edit],[data-group-move]");
+  const btn = e.target.closest("[data-action],[data-item-edit],[data-item-move],[data-item-eye],[data-item-reset],[data-group-edit],[data-group-move]");
   if (!btn) return;
   const ds = btn.dataset;
 
   if (ds.action === "menus-reset-all") {
     const yes = await confirmDialog({
       title: t("core.menuConfig.resetAll", "Reset to defaults"),
-      description: t("core.menuConfig.resetConfirm", "Reset the menu to defaults? All custom names, ordering and hiding will be cleared."),
+      description: t("core.menuConfig.resetConfirm", "Clear all custom names, ordering and hiding?"),
       confirmLabel: t("core.menuConfig.resetAll", "Reset to defaults"),
     });
     if (!yes) return;
@@ -274,24 +238,12 @@ document.addEventListener("click", async (e) => {
       await render();
       toast(t("core.msg.saved", "Saved."));
     } catch (err) {
-      await alertDialog({ title: t("core.menuConfig.title", "Menu configuration"), description: err.message });
+      await alertDialog({ title: t("core.menuConfig.title", "Menu"), description: err.message });
     }
     return;
   }
-  if (ds.action === "menus-show-all") {
-    state.hiddenMenus.clear();
-    await savePrefs();
-    toast(t("core.msg.saved", "Saved."));
-    return;
-  }
-  if (ds.action === "menus-hide-all") {
-    // Same rule as the sidebar: dashboard stays.
-    const all = applyMenuCustom(baseGroups(), state.menuCustom, locale())
-      .flatMap((g) => g.items.map((it) => it.key))
-      .filter((k) => k !== "dashboard");
-    state.hiddenMenus = new Set(all);
-    await savePrefs();
-    toast(t("core.msg.saved", "Saved."));
+  if (ds.itemEye !== undefined && ds.itemEye !== "") {
+    toggleHidden(ds.itemEye);
     return;
   }
   if (ds.itemEdit !== undefined && ds.itemEdit !== "") {
@@ -324,14 +276,7 @@ document.addEventListener("click", async (e) => {
 document.addEventListener("change", async (e) => {
   const el = e.target;
   if (!el || !el.matches) return;
-
-  if (el.matches("[data-menu-toggle]")) {
-    const key = el.dataset.menuToggle;
-    if (el.checked) state.hiddenMenus.delete(key);
-    else state.hiddenMenus.add(key);
-    await savePrefs();
-    return;
-  }
+  if (!el.matches("[data-item-label],[data-item-group],[data-group-label]")) return;
   if (!draft) return;
   const rowKey = el.dataset.rowKey;
 
@@ -350,11 +295,6 @@ document.addEventListener("change", async (e) => {
   if (el.matches("[data-item-group]") && rowKey) {
     draft.items[rowKey] = { ...(draft.items[rowKey] || {}), group: el.value };
     materializeAll();
-    await saveCustom();
-    return;
-  }
-  if (el.matches("[data-item-hidden]") && rowKey) {
-    draft.items[rowKey] = { ...(draft.items[rowKey] || {}), hidden: el.checked };
     await saveCustom();
     return;
   }

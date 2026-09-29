@@ -23,14 +23,38 @@ let locale = null;
 const LS_KEY = "cfpress.admin.messages";
 
 /**
- * The interface languages the admin offers in its switcher. Mirrors
- * `CORE_PACKS` server-side: a UI language without a bundled core pack would
- * render mostly as keys, so it must not be offered until one exists.
+ * The interface languages the admin offers in its switcher. NOT a hardcoded
+ * list: the server owns this fact (`CORE_PACKS` + `CORE_PACK_NAMES` in
+ * core-pack.ts) and ships it on every `i18n/messages` response as
+ * `ui_locales`; `loadMessages` applies it below. The array here is only the
+ * boot default for the pre-fetch frames (and the offline case) — it mirrors
+ * what the server ships today so a cached login screen renders translated.
+ * Adding ja/fr = add a core pack + a name entry server-side; nothing in the
+ * SPA changes (switcher, account select and the menu editor's label inputs
+ * all render from this list at render time).
  */
-export const UI_LANGUAGES = [
+export let UI_LANGUAGES = [
   ["en", "English"],
   ["zh-CN", "简体中文"],
 ];
+
+/** Replace the switcher list from a server payload: `[{code,name}]`.
+ *  Invalid or empty payloads are ignored (keep whatever we had). */
+export function setUiLanguages(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  const next = [];
+  const seen = new Set();
+  for (const it of list) {
+    const code = typeof it?.code === "string" ? it.code.trim() : "";
+    const name = typeof it?.name === "string" ? it.name.trim() : "";
+    if (code && name && !seen.has(code)) { next.push([code, name]); seen.add(code); }
+  }
+  if (!next.length) return;
+  // English is the fallback language — keep it first so the switcher always
+  // offers a fully translated escape hatch.
+  next.sort((a, b) => (a[0] === "en" ? -1 : b[0] === "en" ? 1 : 0));
+  UI_LANGUAGES = next;
+}
 
 /** Look up a dictionary key. `fallback` is the English source string; when
  *  both are missing the key itself is shown (never an empty node). */
@@ -73,6 +97,7 @@ export async function loadMessages() {
     const d = await fetch("/api/v1/i18n/messages").then((r) => r.json());
     if (d && d.messages && typeof d.messages === "object") {
       setMessages(d.messages, d.locale);
+      if (Array.isArray(d.ui_locales)) setUiLanguages(d.ui_locales);
       return true;
     }
   } catch { /* offline / 401 — keep whatever we had */ }

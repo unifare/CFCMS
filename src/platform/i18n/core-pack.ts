@@ -88,24 +88,14 @@ const EN: Pack = {
   "core.account.usernameHint": "3–32 characters: letters, digits, dot, dash, underscore.",
 
   // -- menu configuration -------------------------------------------------
-  "core.menuConfig.title": "Menu configuration",
-  "core.menuConfig.sub": "Choose which items appear in your sidebar. This only affects what you see — permissions stay exactly as they are.",
-  "core.menuConfig.showAll": "Show all",
-  "core.menuConfig.hideAll": "Hide all",
-  "core.menuConfig.visible": "Visible",
-  "core.menuConfig.hidden": "Hidden",
-  "core.menuConfig.siteEditor": "Site menu",
-  "core.menuConfig.siteEditorSub": "Renames, ordering, grouping and hiding below apply to every admin of this site. Permissions are unchanged.",
-  "core.menuConfig.myPrefs": "My display preferences",
-  "core.menuConfig.myPrefsSub": "Only affects what you see — the site menu above is shared.",
-  "core.menuConfig.label": "Label",
-  "core.menuConfig.group": "Move to group",
-  "core.menuConfig.siteHidden": "Hide for everyone",
+  "core.menuConfig.title": "Menu",
+  "core.menuConfig.group": "Group",
+  "core.menuConfig.siteHidden": "Hidden for everyone",
+  "core.menuConfig.siteVisible": "Shown to everyone",
   "core.menuConfig.resetItem": "Reset",
   "core.menuConfig.resetAll": "Reset to defaults",
-  "core.menuConfig.resetConfirm": "Reset the menu to defaults? All custom names, ordering and hiding will be cleared.",
-  "core.menuConfig.dragHint": "Drag the handle or use the arrows to reorder. Click a name to edit it.",
-  "core.menuConfig.readonlyHint": "You can look but not edit: changing the site menu requires the settings.manage permission.",
+  "core.menuConfig.resetConfirm": "Clear all custom names, ordering and hiding?",
+  "core.menuConfig.readonlyHint": "Read-only — editing the site menu needs the settings.manage permission.",
 
   // -- content ------------------------------------------------------------
   "core.content.title": "Title",
@@ -217,24 +207,14 @@ const ZH_CN: Pack = {
   "core.account.username": "用户名",
   "core.account.usernameHint": "3–32 个字符：字母、数字、点、横线、下划线。",
 
-  "core.menuConfig.title": "菜单配置",
-  "core.menuConfig.sub": "选择侧边栏显示哪些菜单项。只影响你自己的显示，不改变任何权限。",
-  "core.menuConfig.showAll": "全部显示",
-  "core.menuConfig.hideAll": "全部隐藏",
-  "core.menuConfig.visible": "显示",
-  "core.menuConfig.hidden": "隐藏",
-  "core.menuConfig.siteEditor": "站点菜单",
-  "core.menuConfig.siteEditorSub": "以下改名、排序、分组与隐藏对本站点的所有管理员生效。权限不受影响。",
-  "core.menuConfig.myPrefs": "我的显示偏好",
-  "core.menuConfig.myPrefsSub": "只影响你自己看到的侧栏——上方的站点菜单是共享的。",
-  "core.menuConfig.label": "名称",
-  "core.menuConfig.group": "移动到分组",
-  "core.menuConfig.siteHidden": "对所有人隐藏",
-  "core.menuConfig.resetItem": "重置",
-  "core.menuConfig.resetAll": "恢复默认",
-  "core.menuConfig.resetConfirm": "恢复默认菜单？所有自定义名称、排序与隐藏都会清除。",
-  "core.menuConfig.dragHint": "拖动 ≡ 或用箭头调整顺序；点击名称可编辑。",
-  "core.menuConfig.readonlyHint": "当前账号无 settings.manage 权限，站点菜单为只读。",
+  "core.menuConfig.title": "菜单",
+  "core.menuConfig.group": "分组",
+  "core.menuConfig.siteHidden": "已对所有人隐藏",
+  "core.menuConfig.siteVisible": "对所有人显示",
+  "core.menuConfig.resetItem": "恢复默认",
+  "core.menuConfig.resetAll": "全部恢复默认",
+  "core.menuConfig.resetConfirm": "清除所有自定义名称、排序与隐藏？",
+  "core.menuConfig.readonlyHint": "只读：编辑站点菜单需要 settings.manage 权限。",
 
   "core.content.title": "标题",
   "core.content.slug": "别名",
@@ -282,7 +262,24 @@ export const CORE_PACKS: Record<string, Pack> = {
   "zh-CN": ZH_CN,
 };
 
+/**
+ * Native display names for the bundled core packs — a switcher shows a
+ * language's own name, not its code. Deliberately adjacent to CORE_PACKS:
+ * adding a UI language means adding a pack + one line here, both in this
+ * file. The admin SPA derives its language list from the server response
+ * (`ui_locales` on `i18n/messages`), so NO client change is needed.
+ */
+export const CORE_PACK_NAMES: Record<string, string> = {
+  en: "English",
+  "zh-CN": "简体中文",
+};
+
 /** The locales a platform pack ships for. Used by the admin language picker. */
 export function corePackLocales(): string[] {
   return Object.keys(CORE_PACKS);
+}
+
+/** Switcher entries for the admin UI: code + native name, one per core pack. */
+export function corePackUiLocales(): { code: string; name: string }[] {
+  return Object.keys(CORE_PACKS).map((code) => ({ code, name: CORE_PACK_NAMES[code] ?? code }));
 }
