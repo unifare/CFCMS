@@ -392,6 +392,17 @@ curl -sD- -o /dev/null http://127.0.0.1:8787/en | grep -i cfpress-template
    后台静态资源直接托管、改完即生效；**主题在 R2 里，必须重新部署**。
    两者刷新语义不同，别混淆。
 
+5. **主题路由突然全 404（`/shop`、`/journal` 等），而 `/` 与 `/en` 还活着 ——
+   `theme_routes` 表被清空了。** 前台路由**不是**每次从 manifest 解析，
+   而是读**持久化的 `theme_routes` 表**（激活时从 manifest 先清后插写入）。
+   任何在共享 D1 上激活别的主题的流程（包括测试套件激活自己的测试主题）
+   都会把真主题的路由行删掉；若收尾只恢复 `settings.theme.active`，
+   路由就悬空了。**症状极具迷惑性**：404 页也算「卡片数 0」，
+   `grep -c` 会把它误读成「列表是空的」；而 `/` 撞上内置 home fallback
+   返回 200，掩盖了路由丢失。修法是**重新激活主题**（重放声明），
+   根治是套件开头快照、结尾恢复（theme_routes / admin_menu_registry /
+   site_locales / locales / theme.active 五样一起）。
+
 ## 写样式时注意
 
 主题最终被**内联进一个 HTML 响应**（引擎没有资源管线），所以：
