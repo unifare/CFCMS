@@ -9,7 +9,7 @@
  * That works, but it silently makes plugins a **hard dependency of every
  * theme**, and it creates a two-way coupling between two things that are
  * supposed to be independently installable — which is exactly what
- * `tests/architecture.test.mjs` forbids ("theme/ and plugin/ do not import each
+ * `tests/suites/architecture.test.mjs` forbids ("theme/ and plugin/ do not import each
  * other").
  *
  * So the dependency is inverted:
@@ -42,7 +42,7 @@ import type { Env } from "../../shared/types";
  * and then do nothing at all — the runtime filtered unknown names away and
  * nothing anywhere said so. The typo is now an install error.
  *
- * `tests/architecture.test.mjs` pins this list against `HOOK_IMPLS`, so the
+ * `tests/suites/architecture.test.mjs` pins this list against `HOOK_IMPLS`, so the
  * contract and the implementation cannot drift apart.
  */
 export const DECLARABLE_HOOKS = [

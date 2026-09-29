@@ -120,7 +120,7 @@ const webhook: ChannelImpl = async (_env, siteId, pluginName, config, message) =
  *
  * Must stay in step with `HOST_CHANNEL_CODES` in the contract: the validator
  * accepts a plugin declaring a code from that list, and this is where the code
- * is looked up at send time. `tests/architecture.test.mjs` would catch a
+ * is looked up at send time. `tests/suites/architecture.test.mjs` would catch a
  * declaration that validates but cannot be delivered — that is the "declared
  * but never read" defect family, and the guard exists because it has happened
  * here before.

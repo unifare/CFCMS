@@ -9,7 +9,7 @@
  * `env`.
  *
  * Everything in this file exists because of what the feasibility probes
- * actually showed (see `docs/THEME-ARCHITECTURE-PLAN.md` §6.0):
+ * actually showed (see `docs/design/THEME-ARCHITECTURE-PLAN.md` §6.0):
  *
  *   1. `loader.load()` **does not throw on bad syntax** — the failure surfaces
  *      on the first `fetch`. So we *warm* every freshly loaded module by making

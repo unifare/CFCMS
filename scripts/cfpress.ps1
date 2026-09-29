@@ -60,7 +60,7 @@ param(
 #
 # Windows PowerShell 5.1 wraps anything a native command writes to stderr in a
 # NativeCommandError record, and with `Stop` that record becomes a *terminating*
-# error. So `node tests/x.test.mjs 2>&1` — where node prints a harmless
+# error. So `node tests/suites/x.test.mjs 2>&1` — where node prints a harmless
 # `ExperimentalWarning: SQLite is an experimental feature` to stderr, and every
 # suite in this repo does — aborts the launcher before the suite can report
 # anything. The symptom is a launcher that dies mid-run with a stray node
@@ -219,7 +219,7 @@ function Invoke-Dev {
 }
 
 function Invoke-ThemeDeploy {
-    param([string]$Theme = 'themes/default')
+    param([string]$Theme = 'site/themes/default')
     Assert-Node
     if (-not (Test-Path $Theme)) { Die "theme directory not found: $Theme" }
     Write-Head "deploy theme: $Theme"
@@ -251,25 +251,25 @@ function Invoke-Seed {
 # file name comes from this table rather than from a convention that does not
 # hold for all of them.
 $Script:Suites = [ordered]@{
-    'architecture'       = 'tests/architecture.test.mjs'
-    '_schema-scope'      = 'tests/_schema-scope.mjs'
-    'manifest-validation' = 'tests/manifest-validation.test.mjs'
-    'admin-menus'        = 'tests/admin-menus.test.mjs'
-    'admin-spa'          = 'tests/admin-spa.test.mjs'
-    'template-engine'    = 'tests/template-engine.test.mjs'
-    'scaffold'           = 'tests/scaffold.test.mjs'
-    'theme-integration'  = 'tests/theme-integration.test.mjs'
-    'theme-fixture'      = 'tests/theme-fixture.test.mjs'
-    'multisite'          = 'tests/multisite.test.mjs'
-    'i18n'               = 'tests/i18n.test.mjs'
-    'admin-contract'     = 'tests/admin-contract.test.mjs'
-    'account'            = 'tests/account.test.mjs'
-    'menu-custom'        = 'tests/menu-custom.test.mjs'
-    'plugin-hooks'       = 'tests/plugin-hooks.test.mjs'
-    'plugin-channels'    = 'tests/plugin-channels.test.mjs'
-    'plugin-pages'       = 'tests/plugin-pages.test.mjs'
-    'theme-worker'       = 'tests/theme-worker.test.mjs'
-    'launcher-parity'    = 'tests/launcher-parity.test.mjs'
+    'architecture'       = 'tests/suites/architecture.test.mjs'
+    '_schema-scope'      = 'tests/tools/_schema-scope.mjs'
+    'manifest-validation' = 'tests/suites/manifest-validation.test.mjs'
+    'admin-menus'        = 'tests/suites/admin-menus.test.mjs'
+    'admin-spa'          = 'tests/suites/admin-spa.test.mjs'
+    'template-engine'    = 'tests/suites/template-engine.test.mjs'
+    'scaffold'           = 'tests/suites/scaffold.test.mjs'
+    'theme-integration'  = 'tests/suites/theme-integration.test.mjs'
+    'theme-fixture'      = 'tests/suites/theme-fixture.test.mjs'
+    'multisite'          = 'tests/suites/multisite.test.mjs'
+    'i18n'               = 'tests/suites/i18n.test.mjs'
+    'admin-contract'     = 'tests/suites/admin-contract.test.mjs'
+    'account'            = 'tests/suites/account.test.mjs'
+    'menu-custom'        = 'tests/suites/menu-custom.test.mjs'
+    'plugin-hooks'       = 'tests/suites/plugin-hooks.test.mjs'
+    'plugin-channels'    = 'tests/suites/plugin-channels.test.mjs'
+    'plugin-pages'       = 'tests/suites/plugin-pages.test.mjs'
+    'theme-worker'       = 'tests/suites/theme-worker.test.mjs'
+    'launcher-parity'    = 'tests/suites/launcher-parity.test.mjs'
 }
 
 function Invoke-OneSuite {
@@ -361,10 +361,10 @@ function Invoke-Test {
 function Invoke-Audit {
     Assert-Node
     Write-Head 'tenant scope declarations vs the real database'
-    & node tests/_schema-scope.mjs
+    & node tests/tools/_schema-scope.mjs
     $a = $LASTEXITCODE
     Write-Head 'query-level tenant audit (report-only)'
-    & node tests/_tenant-query-audit.mjs
+    & node tests/tools/_tenant-query-audit.mjs
     $b = $LASTEXITCODE
     if ($a -eq 0 -and $b -eq 0) { return 0 } else { return 1 }
 }
@@ -454,9 +454,9 @@ function Invoke-Doctor {
         else { Write-Line '  config     no REPLACE_WITH_ placeholders' }
     } else { Write-Warn2 "config     $ConfigFile MISSING" }
 
-    $n = @(Get-ChildItem 'migrations\*.sql' -ErrorAction SilentlyContinue).Count
+    $n = @(Get-ChildItem 'site\migrations\*.sql' -ErrorAction SilentlyContinue).Count
     Write-Line "  migrations $n file(s)"
-    $s = @(Get-ChildItem 'tests\*.test.mjs' -ErrorAction SilentlyContinue).Count
+    $s = @(Get-ChildItem 'tests\suites\*.test.mjs' -ErrorAction SilentlyContinue).Count
     Write-Line "  suites     $s test suite(s)"
 
     if (Test-Command 'git') {
@@ -591,8 +591,8 @@ function Start-MenuLoop {
             '^1$' { $null = Invoke-Dev }
             '^2$' { $null = Invoke-MigrateLocal }
             '^3$' {
-                $t = Read-MenuInput '  theme dir [themes/default]: '
-                if (-not $t) { $t = 'themes/default' }
+                $t = Read-MenuInput '  theme dir [site/themes/default]: '
+                if (-not $t) { $t = 'site/themes/default' }
                 $null = Invoke-ThemeDeploy $t
             }
             '^4$' { $null = Invoke-Test }

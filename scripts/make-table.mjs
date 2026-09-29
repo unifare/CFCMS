@@ -58,7 +58,7 @@ Usage: npm run make:table -- <theme> <table> [options]
  * A copy is how "the generator accepts `site_id` but the platform rejects it"
  * happens — and the author then sees an install failure naming a column they
  * never typed. The list is a flat array of string literals, so reading it is
- * one regex; `tests/scaffold.test.mjs` proves the generated manifest passes the
+ * one regex; `tests/suites/scaffold.test.mjs` proves the generated manifest passes the
  * *real* validator, so any drift in the regexes below surfaces there too.
  */
 function reservedColumns() {
@@ -166,7 +166,7 @@ export function main(argv, io = console) {
 
     const themeName = assertName(args._[0], "theme");
     const tableName = String(args._[1]);
-    const outRoot = String(args.out || join(ROOT, "themes"));
+    const outRoot = String(args.out || join(ROOT, "site", "themes"));
     const themeDir = join(outRoot, themeName);
 
     const { tableDecl, menuDecl } = tableDeclarations({

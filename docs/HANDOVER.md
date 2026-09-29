@@ -5,7 +5,7 @@
 > 再上一轮 `48edc41` 多语言四层）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
 >
-> ⚠️ 本轮的批次过程文档在 `docs/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
+> ⚠️ 本轮的批次过程文档在 `docs/history/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
 
 ---
 
@@ -47,13 +47,13 @@ fb2b012  Add eshop sample theme, its test suite, and the three dev docs (batch 4
 bcc856c  Channel contract + plugin page contract + rules 48–51 (steps 3+4)
 9487b40  Channel runtime: webhook impl + dedup ledger + PluginApi.notify (step 5)
 9fd19db  Admin renderer: plugin-page blocks + channel settings form (step 6)  ← 上一基线
-本轮      plugins/notify sample plugin + tests/plugin-pages.test.mjs + reverse verification (steps 7+8)
+本轮      plugins/notify sample plugin + tests/suites/plugin-pages.test.mjs + reverse verification (steps 7+8)
 ```
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
 
 `d6e2239`：把 `public/admin/admin.js` 从 1514 行单文件拆成入口 + 4 个基础模块 +
-18 个屏幕模块，新增 `tests/admin-spa.test.mjs`。纯前端重构，`src/` 一行未动。
+18 个屏幕模块，新增 `tests/suites/admin-spa.test.mjs`。纯前端重构，`src/` 一行未动。
 
 `48edc41`：**批次 2 —— 多语言四层（L0/L1/L2/L3）全部落地**，并把原属批次 3 的
 「主题自有表」部分（DDL 生成 + 注册表 + facade + 沙箱端点）一起做了。
@@ -61,7 +61,7 @@ bcc856c  Channel contract + plugin page contract + rules 48–51 (steps 3+4)
 
 `fb2b012`（+`33f6369`，批次 4）：**脚手架三件套 + `contract/` 拆分 + 路由消费契约 +
 eshop 范例主题 + 三份开发文档**。生成器全部可被 import（本机沙箱无法 spawn 子进程），
-`tests/scaffold.test.mjs` 68 条用真实校验器与真实模板引擎跑生成物。发现并修掉
+`tests/suites/scaffold.test.mjs` 68 条用真实校验器与真实模板引擎跑生成物。发现并修掉
 "声明先于运行时"缺陷族的两例（`routes[].resolve.table`、`routes[].template`）。
 
 本轮：**批次 5 —— 后台界面语言 + 账户自助 + 菜单配置**。后台 SPA 全面接入 L2 四层
@@ -111,7 +111,7 @@ scripts/                      脚手架（生成器可被 import —— 本机�
 └── make-table.mjs            tableDeclarations() + main(argv, io)
 ```
 
-**四条红线（`tests/architecture.test.mjs` 机器强制，13 组检查）：**
+**四条红线（`tests/suites/architecture.test.mjs` 机器强制，13 组检查）：**
 1. `shared/` 不 import 任何业务层
 2. `platform/` 不 import `extensions/`
 3. `rendering/` 不 import `extensions/`
@@ -165,7 +165,7 @@ scripts/                      脚手架（生成器可被 import —— 本机�
 | 后台「Languages」屏（L0 站点语言 + L2 界面语言 + 四层关系说明） | ✅ |
 | 主题自有表 DDL 生成 + `theme_table_defs` 注册表 + facade + 沙箱 `table/*` 端点 | ✅ **原属批次 3，提前做了** |
 | 清单内联语言包校验（插件没有 `langs/` 目录可读，只能内联声明） | ✅ 规划外新增 |
-| 新套件 `tests/i18n.test.mjs`（62 条）+ `tests/_i18n-browser.cjs`（22 条，真实 Chromium） | ✅ |
+| 新套件 `tests/suites/i18n.test.mjs`（62 条）+ `tests/tools/_i18n-browser.cjs`（22 条，真实 Chromium） | ✅ |
 | 修掉三个只在真实交互下暴露的缺陷（见 §8 坑位 11–13） | ✅ |
 
 **验收要点全部有测试对着**：只启用一种语言时主题自有表**不建** `_i18n` 表；
@@ -186,8 +186,8 @@ scripts/                      脚手架（生成器可被 import —— 本机�
 | `theme-menu.js` 改为统一分发器（`content-list` / `table-*` / `theme-settings` / `plugin-settings`） | ✅ |
 | 插件清单支持 `adminMenus`（`seo` 插件新增 SEO Settings 菜单） | ✅ |
 | 清单校验抽出共享 `validateAdminMenus`；插件 `tables[]` **明确拒绝** | ✅ |
-| 新套件 `tests/admin-menus.test.mjs`（43 条）+ 架构测试新增 3 项检查（共 13） | ✅ |
-| 真实浏览器验收 `tests/_admin-menus-browser.cjs`（31 条，连跑两次全绿） | ✅ |
+| 新套件 `tests/suites/admin-menus.test.mjs`（43 条）+ 架构测试新增 3 项检查（共 13） | ✅ |
+| 真实浏览器验收 `tests/tools/_admin-menus-browser.cjs`（31 条，连跑两次全绿） | ✅ |
 | 修掉"新增/列表同名"缺陷（真实浏览器才暴露，见 §8 坑位 17） | ✅ |
 
 **五条验收标准全部有测试对着**：① 生成式列表/表单，主题零后台代码；
@@ -205,9 +205,9 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 |---|---|
 | `extensions/contract/` 拆出 `manifest.ts`/`validation.ts`/`capabilities.ts` | ✅ |
 | `scripts/make-theme.mjs` / `make-plugin.mjs` / `make-table.mjs` | ✅ |
-| `tests/scaffold.test.mjs`（68 条，真实校验器 + 真实模板引擎） | ✅ 已进 `npm test` |
+| `tests/suites/scaffold.test.mjs`（68 条，真实校验器 + 真实模板引擎） | ✅ 已进 `npm test` |
 | 修复「声明被校验但运行时没人读」第三、四例（`resolve.table` / `routes[].template`） | ✅ |
-| `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md` | ✅（对着源码核对过，详见 ARCHITECTURE §4.4） |
+| `docs/guides/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md` | ✅（对着源码核对过，详见 ARCHITECTURE §4.4） |
 | `themes/eshop/` 示例主题 + `tests/theme-eshop.test.mjs`（41 条） | ✅ 已进 `npm test`，七个注入场景逐条反向验证（`tests/_eshop-inject.mjs`） |
 | **插件自有表** `plugin_{plugin}_{table}` | ⬜ 已登记：需**重建 `theme_table_defs`**（SQLite 不能 `ALTER` 主键/UNIQUE，而它现在只有 `theme_name` 一列） |
 
@@ -218,7 +218,7 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
    布局渲染空 `<main>`——**HTTP 200、无异常**。现在用**文件事实**（`@extends` 了就是子模板，
    子模板永不提供插槽）把它变成结构性错误。
    ⚠️ 这个缺陷**真实存在于生成的骨架里**（四个子模板全漏了 `{{/section}}`），
-   是 `tests/scaffold.test.mjs` 渲染时才发现的。
+   是 `tests/suites/scaffold.test.mjs` 渲染时才发现的。
 2. **`@extends` 链的 section 合并顺序**。原写法「保留第一次写入，只特判 `i === 0`」在
    **三层**继承时让**最不派生**的根赢；改成从根向子遍历、后来者覆盖。仓库里目前没有
    嵌套布局，所以一直没暴露——主题作者一试就会拿到祖父的副本。
@@ -251,9 +251,9 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 | per-user 菜单配置：`site_users.menu_prefs`（0013）+ `GET/PUT admin-menus/prefs` + `screens/menu-config.js` | ✅ 规则 38：只影响侧边栏，不授/撤权限；`dashboard` 永远显示 |
 | **站点菜单编辑器**（用户追加需求）：逐语言改名（en/zh-CN）、项排序（箭头+拖拽）、**跨组移动**、分组改名与排序、对所有人隐藏、恢复默认 | ✅ `admin.menu.custom` settings blob + `GET/PUT/DELETE admin-menus/custom`（写需 `settings.manage`，GET 回 `can_manage`） |
 | 应用点收敛：`nav.js` 纯函数 `applyMenuCustom()`（侧栏与编辑器共用） | ✅ 规则 39：改名叠加在服务端翻译之上；稳定排序；**不存在分组=忽略**（反向验证抓到过“项消失”真缺陷）；结构性变更物化整组 order |
-| 新套件 `tests/menu-custom.test.mjs`（40 条：API 契约 + 权限分层 + 校验 400s + 按站隔离 + **纯函数逻辑**） | ✅ 已进 `npm test`（16 套件 682 条） |
+| 新套件 `tests/suites/menu-custom.test.mjs`（40 条：API 契约 + 权限分层 + 校验 400s + 按站隔离 + **纯函数逻辑**） | ✅ 已进 `npm test`（16 套件 682 条） |
 | 浏览器验收 v6 扩到 **47 条**：编辑器 11 条（改名 en/zh、组改名、组序、项序、跨组、站点隐藏、zh 回退、恢复默认） | ✅ 全绿 |
-| 新套件 `tests/account.test.mjs`（27 条，含 **label_key 翻译端到端**：zh-CN →「商品」、en → "Things"、无翻译回退原文） | ✅ 已进 `npm test`（15 套件） |
+| 新套件 `tests/suites/account.test.mjs`（27 条，含 **label_key 翻译端到端**：zh-CN →「商品」、en → "Things"、无翻译回退原文） | ✅ 已进 `npm test`（15 套件） |
 | 真浏览器验收 `.wrangler/eshop-verify.cjs` v5（38 条：前台 18 + 界面语言往返 + 服务端翻译菜单 + 菜单隐藏/恢复 + 账户三道闸门） | ✅ 全绿 |
 | 主页接管收尾（批次 4 遗留验证）：`routes[]` 声明 `path: "/"` → 前台首页交给主题；home 闭包移到主题路由循环之后作 fallback | ✅ `/`、`/en`、`/zh-CN` 均渲染商品档案 |
 | 反向验证：改密/改名守卫下沉 `platform/auth.ts` 后注入（绕过当前密码校验） | ✅ 注入 → 2 红，还原 → 27 绿 |
@@ -266,7 +266,7 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 
 ### 批次 6–9 —— 多语言加固 / 规则 41 —— ✅ 已完成
 
-详见 `docs/ARCHITECTURE.md` §8 路线图与 `docs/REVIEW-2026-09-29.md`（批次 6 审查报告）。
+详见 `docs/ARCHITECTURE.md` §8 路线图与 `docs/history/REVIEW-2026-09-29.md`（批次 6 审查报告）。
 要点：**批次 6** 审查「多语言事实会不会在后续开发里丢失」，4 高危（`tableDelete` 跨站/删全语言、
 theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`）+ 3 中危全部修完，
 新增 `resolveContentLocale()`（内容语言回退阶梯唯一定义）；**批次 7** 落地规则 41
@@ -277,7 +277,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
 
 批次 10 把插件系统从「菜单 + hooks」扩成完整三支柱：**自有表（owner-agnostic）→
 通知渠道（declare → host delivers）→ 声明式后台页面（declare → host renders）**。
-设计全文在 `docs/PLUGIN-ARCHITECTURE.md`；八步交付顺序，每步独立可验证、每条新守卫都反向验证。
+设计全文在 `docs/design/PLUGIN-ARCHITECTURE.md`；八步交付顺序，每步独立可验证、每条新守卫都反向验证。
 
 | 步骤 | 内容 | 状态 |
 |---|---|---|
@@ -287,22 +287,22 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
 | 5 | 渠道运行时：webhook 实现 + claim-before-send 去重台账 + `PluginApi.notify` | ✅ `9487b40` |
 | 6 | 后台渲染器：`plugin-page` 块渲染 + 渠道设置表单 | ✅ `9fd19db` |
 | 7 | **`plugins/notify/` 示例插件**：`webhook` 渠道 + 三块 `adminPages` + `notify-settings` 菜单 | ✅ 本轮 |
-| 8 | **`tests/plugin-pages.test.mjs`（56 条）+ `tests/_plugin-pages-inject.mjs`（10 场景反向验证）** | ✅ 本轮 |
+| 8 | **`tests/suites/plugin-pages.test.mjs`（56 条）+ `tests/tools/_plugin-pages-inject.mjs`（10 场景反向验证）** | ✅ 本轮 |
 
 **本轮（步骤 7+8）落实的四件事**：
 
-1. **`plugins/notify/plugin.json` 真实存在**（`tests/admin-menus.test.mjs` 从磁盘读它）。
+1. **`plugins/notify/plugin.json` 真实存在**（`tests/suites/admin-menus.test.mjs` 从磁盘读它）。
    声明 `webhook` 渠道（`configSchema` 四字段）+ 一个 `deliveries` 页面（`stats`×2 /
    `table` / `form` 四种块）+ `notify-settings` 与 `notify-deliveries` 两个菜单 +
    `title_template`/`default_description` 设置。真实校验器接受。
 2. **补上「插件自有表」最后一段未接线**：`syncOwnerTables` 早就支持 `"plugin"`，
    但**从没有人调用它**。经 `PluginTableSync` 提供者注入（规则 3 不允许 `plugin/` import
    `theme/`）按站点扇出——`plugin-pages` 套件证明启用插件会**真的建出物理表**并写注册表。
-3. **`tests/plugin-pages.test.mjs`（56 条）** 覆盖：未声明页面 id 被拒（规则 50）/
+3. **`tests/suites/plugin-pages.test.mjs`（56 条）** 覆盖：未声明页面 id 被拒（规则 50）/
    块类型闭集合（规则 49）/ `form` 块写入落到**真实物理行**（不是 201）/ `stats` 聚合数字正确
    （含 `sum` 空集为 `null` 而非 0）/ 禁用插件菜单与页面从注册表消失 / 按站点租户边界 /
    **§9 渲染器真渲染**（读回 markup）。
-4. **`tests/_plugin-pages-inject.mjs`（10 场景）** 每个守卫注入一个真实缺陷、
+4. **`tests/tools/_plugin-pages-inject.mjs`（10 场景）** 每个守卫注入一个真实缺陷、
    断言**具名断言**变红、还原、哈希一致。全部 0 problem。
 
 **本轮新抓的两个「声明了但没人读」缺陷（200 + 内容错）**：
@@ -354,8 +354,8 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 另有一个**不在 `npm test` 链里**的反向验证工具（`_tenant-query-audit.mjs`，跑得可当普通 suite）：
 
 ```bash
-node tests/_schema-scope.mjs           # 迁移流 → 临时 SQLite，逐表核对声明与真实列
-node tests/_tenant-query-audit.mjs     # 列出所有「碰租户表但不带 site_id」的语句；每条需书面裁决
+node tests/tools/_schema-scope.mjs           # 迁移流 → 临时 SQLite，逐表核对声明与真实列
+node tests/tools/_tenant-query-audit.mjs     # 列出所有「碰租户表但不带 site_id」的语句；每条需书面裁决
 ```
 
 ⚠️ `_tenant-query-audit.mjs` 的 `REVIEWED` 表**键是 `file:line`**——任何在上方的编辑都会
@@ -366,15 +366,15 @@ node tests/_tenant-query-audit.mjs     # 列出所有「碰租户表但不带 si
 插件系统的反向验证工具（手工跑，不进 `npm test`）：
 
 ```bash
-node tests/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 → 断言具名断言变红 → 还原 → 哈希一致
+node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 → 断言具名断言变红 → 还原 → 哈希一致
 ```
 
 
 第二个反向验证工具，守**规则 41（所有数据都有多语言能力）**：
 
 ```bash
-node tests/_i18n-field-inject.mjs      # 6 个场景，注入→断言按名字变红→还原→再断言干净
-node tests/_i18n-data-inventory.mjs    # 清点所有承载数据的声明类，列出还没有语言维度的
+node tests/tools/_i18n-field-inject.mjs      # 6 个场景，注入→断言按名字变红→还原→再断言干净
+node tests/tools/_i18n-data-inventory.mjs    # 清点所有承载数据的声明类，列出还没有语言维度的
 ```
 
 ⚠️ **多套件共享同一个本地 D1**：断言必须按 owner 收窄（`theme_name` / 站点），
@@ -386,8 +386,8 @@ node tests/_i18n-data-inventory.mjs    # 清点所有承载数据的声明类，
 
 ```bash
 npx wrangler dev --port 47913 --ip 127.0.0.1     # 另开一个 shell
-node tests/_i18n-browser.cjs                     # 多语言：22 条断言
-node tests/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言（本轮新增）
+node tests/tools/_i18n-browser.cjs                     # 多语言：22 条断言
+node tests/tools/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言（本轮新增）
 node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 新功能：47 条断言
 ```
 
@@ -411,9 +411,9 @@ node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 �
 ⚠️ **`node tests/run-all.mjs` 在本机沙箱会整体报 SKIP（EBUSY）**——Windows 沙箱锁 node 二元文件，
 不是测试失败。**逐个直接跑才可靠。**
 
-⚠️ **断言强度教训**（`tests/multisite.test.mjs` 第 9b 段曾假绿）：断言必须盯住
+⚠️ **断言强度教训**（`tests/suites/multisite.test.mjs` 第 9b 段曾假绿）：断言必须盯住
 "注入缺陷后必然会变的那一个值"。断言"XML 格式正确"这类东西等于没断言。
-**上一轮又踩了一次同源的坑**：`tests/admin-spa.test.mjs` 第一版断言"`render()` 没抛错"，
+**上一轮又踩了一次同源的坑**：`tests/suites/admin-spa.test.mjs` 第一版断言"`render()` 没抛错"，
 而 `render()` 自己 catch 住屏幕异常并换成 "Something went wrong" 面板 —— 于是注入一个
 未定义标识符后测试依然全绿。现在断言的是**写进 DOM 的内容**（非空、不含错误面板）。
 
@@ -501,7 +501,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 
 全部集中在入口的 `WINDOW_HANDLERS` 映射里，一眼可见。
 
-### 配套测试 `tests/admin-spa.test.mjs`（15 条）
+### 配套测试 `tests/suites/admin-spa.test.mjs`（15 条）
 
 1. 相对 import 全部可解析；模块图无环（DFS，报出完整环路径）；无孤儿模块
 2. `window.*`：入口有 `WINDOW_HANDLERS` 映射；17 个一个不少；markup 里调用的名字全部登记过
@@ -521,11 +521,11 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 - 用户菜单登出（走 `data-action` 委托）回到登录页
 - console 零错误、零 5xx。唯一 401 是登录前的 `/api/v1/auth/me`，**设计内**
 
-**上一轮（多语言）**：`tests/_i18n-browser.cjs`，22 条断言，见 §6。
+**上一轮（多语言）**：`tests/tools/_i18n-browser.cjs`，22 条断言，见 §6。
 它把「语言开关 → 编辑器语言版本条 → 建翻译 → 删翻译」这条链在真浏览器里走通，
 并证明**界面上真的多了一块、又真的少回去**——而不是只证明接口返回了 200。
 
-**本轮（菜单 + 生成式屏幕）**：`tests/_admin-menus-browser.cjs`，31 条断言，见 §6。
+**本轮（菜单 + 生成式屏幕）**：`tests/tools/_admin-menus-browser.cjs`，31 条断言，见 §6。
 它证明的是**"声明 → 后台"这条路真的通了**：插件菜单出现并能打开设置页、
 主题声明的表真的生成了列表列与表单控件、值真的存进去且刷新后还在。
 **这一套抓到了单元测试看不见的产品缺陷**（"新增/列表同名"，见坑位 17）——
@@ -643,19 +643,19 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | 文档 | 内容 |
 |---|---|
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
-| `docs/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
-| `docs/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
+| `docs/design/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
+| `docs/history/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
 | `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、明确不做的事） |
-| `tests/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表） |
-| `tests/admin-menus.test.mjs` | 菜单注册表契约（归属隔离 / 安装级可见 / 停用只删自己 / 切主题切回） |
-| `tests/i18n.test.mjs` | 多语言四层契约（§5.4① 八条 + 翻译组 + 主题自有表 + 9b 段 `lang_group` 回归） |
-| `tests/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
-| `tests/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
-| `tests/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |
-| `tests/account.test.mjs` | 账户自助与菜单偏好契约（当前密码闸门 / 稳定错误码 / prefs 隔离 / label_key 翻译端到端） |
-| `tests/plugin-pages.test.mjs` | 插件声明式后台页面契约（规则 49/50 + `form` 写入落真表 + `stats` 聚合 + 禁用清理 + **渲染器真渲染**） |
-| `tests/_plugin-pages-inject.mjs` | 上者的反向验证工具（10 场景，注入→具名断言变红→还原→哈希一致） |
-| `tests/_tenant-query-audit.mjs` | 租户查询审计（列出所有碰租户表但不带 `site_id` 的语句，逐条书面裁决；键是 `file:line`） |
+| `tests/suites/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表） |
+| `tests/suites/admin-menus.test.mjs` | 菜单注册表契约（归属隔离 / 安装级可见 / 停用只删自己 / 切主题切回） |
+| `tests/suites/i18n.test.mjs` | 多语言四层契约（§5.4① 八条 + 翻译组 + 主题自有表 + 9b 段 `lang_group` 回归） |
+| `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
+| `tests/tools/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
+| `tests/suites/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |
+| `tests/suites/account.test.mjs` | 账户自助与菜单偏好契约（当前密码闸门 / 稳定错误码 / prefs 隔离 / label_key 翻译端到端） |
+| `tests/suites/plugin-pages.test.mjs` | 插件声明式后台页面契约（规则 49/50 + `form` 写入落真表 + `stats` 聚合 + 禁用清理 + **渲染器真渲染**） |
+| `tests/tools/_plugin-pages-inject.mjs` | 上者的反向验证工具（10 场景，注入→具名断言变红→还原→哈希一致） |
+| `tests/tools/_tenant-query-audit.mjs` | 租户查询审计（列出所有碰租户表但不带 `site_id` 的语句，逐条书面裁决；键是 `file:line`） |
 | `.wrangler/eshop-verify.cjs` | 全链路真浏览器验收（语言状态自愈，需 `wrangler dev`） |
 | `docs/HANDOVER.md` | 本文 |
 | `.workbuddy-ai/memory/` | 工作日志（按天）+ `MEMORY.md`（长期记忆）——本机文件，不入库 |

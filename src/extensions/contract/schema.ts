@@ -17,7 +17,7 @@
  * file is built to make impossible.
  *
  * So the classification is *declared here, once*, and then **checked against
- * the real database** by `tests/architecture.test.mjs` (via a live
+ * the real database** by `tests/suites/architecture.test.mjs` (via a live
  * `PRAGMA table_info` walk). A table that is tenant-scoped must really have
  * `site_id`; a table that is not must be on the exempt list *with a reason*.
  * Adding a table without classifying it fails the suite.

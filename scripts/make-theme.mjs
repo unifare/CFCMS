@@ -13,7 +13,7 @@
  *
  * So the generator emits a theme that is already correct, and the author edits
  * *content*. Everything the skeleton ships is checked by
- * `tests/scaffold.test.mjs` against the real validator and the real template
+ * `tests/suites/scaffold.test.mjs` against the real validator and the real template
  * engine, so "the skeleton is valid" is not a claim, it is a test.
  *
  * ## What it deliberately does NOT ship
@@ -214,7 +214,7 @@ const packZh = (n, t) => ({
 /**
  * The whole theme, as data.
  *
- * Separated from the CLI so `tests/scaffold.test.mjs` can assert on the emitted
+ * Separated from the CLI so `tests/suites/scaffold.test.mjs` can assert on the emitted
  * content without running a process — this environment cannot spawn one at all.
  * The manifest and the file tree are the part that can be *wrong*; writing them
  * to disk is the part that cannot.
@@ -272,7 +272,7 @@ export function main(argv, io = console) {
 
     const name = assertName(args._[0], "theme");
     const title = String(args.title || titleCase(name));
-    const outRoot = String(args.out || join(ROOT, "themes"));
+    const outRoot = String(args.out || join(ROOT, "site", "themes"));
     const dir = join(outRoot, name);
 
     const { files } = themeFiles({ name, title });

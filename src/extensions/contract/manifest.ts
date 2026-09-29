@@ -10,7 +10,7 @@
  *
  * `validation.ts` asks "is this particular manifest acceptable?" and produces a
  * message. This file says what exists at all. Keeping them apart matters because
- * the vocabularies have **other readers**: `tests/architecture.test.mjs` reads
+ * the vocabularies have **other readers**: `tests/suites/architecture.test.mjs` reads
  * this file to check that every *shipped* theme and plugin only uses screens
  * that exist, and the admin SPA needs the same set to decide whether it has a
  * renderer. When the list lived inside the validator, the only way to check a
@@ -64,7 +64,7 @@ export const ALLOWED_TABLE_FIELD_TYPES = ["text", "longtext", "number", "boolean
  *
  * The split is total: every entry in `ALLOWED_TABLE_FIELD_TYPES` is in exactly
  * one of this list and `LANGUAGE_NEUTRAL_FIELD_TYPES` (asserted by
- * `tests/architecture.test.mjs`, so adding a seventh type cannot silently skip
+ * `tests/suites/architecture.test.mjs`, so adding a seventh type cannot silently skip
  * the decision).
  */
 export const PROSE_FIELD_TYPES = ["text", "longtext"] as const;
@@ -152,7 +152,7 @@ export function isFixedAdminScreen(screen: string): boolean {
  *
  * Every type here must have a renderer in `public/admin/js/plugin-page.js`; a
  * type with no renderer produces a blank section that looks like a failed load.
- * `tests/architecture.test.mjs` checks the two lists against each other.
+ * `tests/suites/architecture.test.mjs` checks the two lists against each other.
  *
  *   `table` — rows of one of the plugin's own tables, as a list
  *   `stats` — one aggregate over that table (count, grouped)

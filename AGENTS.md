@@ -3,7 +3,7 @@
 这份文件是给 AI（以及人类）改这个仓库时的**强制约束**。完整设计理由见
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。这里只列会**导致测试失败**的规则。
 
-> 有疑问时：规则本身由 `tests/architecture.test.mjs` 强制执行。
+> 有疑问时：规则本身由 `tests/suites/architecture.test.mjs` 强制执行。
 > 改规则必须同时改测试，否则规则不存在。
 
 ---
@@ -20,29 +20,29 @@
 
 3. 再跑一次全部套件与 `npx tsc --noEmit`，都必须绿。
 4. 如果改了扩展的声明能力（主题清单 / 插件清单的字段），同步更新
-   `tests/architecture.test.mjs` 与 `docs/ARCHITECTURE.md`。
+   `tests/suites/architecture.test.mjs` 与 `docs/ARCHITECTURE.md`。
 5. 如果改了多语言（`src/platform/i18n/`、翻译组、主题自有表），跑
-   `node tests/i18n.test.mjs`，并同步 `docs/ARCHITECTURE.md` §2.7 / §5.4①。
+   `node tests/suites/i18n.test.mjs`，并同步 `docs/ARCHITECTURE.md` §2.7 / §5.4①。
    **如果动了字段分类表（`PROSE_FIELD_TYPES` / `LANGUAGE_NEUTRAL_FIELD_TYPES`）
-   或规则 41 的任一强制点，必须跑 `node tests/_i18n-field-inject.mjs`** ——
+   或规则 41 的任一强制点，必须跑 `node tests/tools/_i18n-field-inject.mjs`** ——
    它注入 6 个缺陷、断言每个都真的变红（含"断言注入确实生效"与"还原也验证"）。
-6. 如果改了后台界面，跑 `node tests/admin-spa.test.mjs`，并跑一次真实浏览器验收
-   `node tests/_i18n-browser.cjs` / `node tests/_admin-menus-browser.cjs`
+6. 如果改了后台界面，跑 `node tests/suites/admin-spa.test.mjs`，并跑一次真实浏览器验收
+   `node tests/tools/_i18n-browser.cjs` / `node tests/tools/_admin-menus-browser.cjs`
    （需要另开 `npx wrangler dev --port 47913 --ip 127.0.0.1`）。
 7. 如果改了 `src/rendering/template-engine.ts`、`src/extensions/contract/*`、
-   或 `scripts/make-*.mjs`，跑 `node tests/scaffold.test.mjs`。它用**真实校验器**与
+   或 `scripts/make-*.mjs`，跑 `node tests/suites/scaffold.test.mjs`。它用**真实校验器**与
    **真实模板引擎**跑生成的骨架——**生成器的缺陷只有渲染一遍才会现形**（见下方规则 4）。
 7b. **如果加了数据库表、改了表的租户/语言归属、或改了 `contract/schema.ts`**，跑
-   `node tests/_schema-scope.mjs`（已进 `npm test`）。它把迁移流应用到**临时 SQLite**
+   `node tests/tools/_schema-scope.mjs`（已进 `npm test`）。它把迁移流应用到**临时 SQLite**
    并驱动**真实 `syncThemeTables()`**，逐表检验声明与真实列一致。
-   同时跑一次 `node tests/_tenant-query-audit.mjs`：新语句会打印为 `NEW`，
+   同时跑一次 `node tests/tools/_tenant-query-audit.mjs`：新语句会打印为 `NEW`，
    **必须补一条书面裁决**（为什么不带 `site_id` 是安全的）。
 7c. **如果改了 `contract/events.ts` 或插件的 `subscribes[]`**，跑
-   `node tests/manifest-validation.test.mjs` 与 `node tests/architecture.test.mjs`
+   `node tests/suites/manifest-validation.test.mjs` 与 `node tests/suites/architecture.test.mjs`
    （后者守 `DOMAIN_EVENTS` 的完整性、唯一性、payload 版本兜底，以及
    "事件名不得混进 hook 列表"）。
 7d. **如果动了 `scripts/cfpress.sh` 或 `scripts/cfpress.ps1`（加动作、改菜单编号、
-   改套件表）**，跑 `node tests/launcher-parity.test.mjs`。它要求两份文件
+   改套件表）**，跑 `node tests/suites/launcher-parity.test.mjs`。它要求两份文件
    **动作名、菜单编号、套件表、退出码**完全对齐，并且套件表要覆盖
    `package.json` 的 `test` 链（增删套件时两边都要改，它会告诉你漏了哪边）。
    ⚠️ 改 `cfpress.ps1` 后**必须确认 BOM 还在**（`head -c 3 scripts/cfpress.ps1 | xxd`
@@ -52,18 +52,26 @@
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
    本仓库已经发生过**十二种**（见下方「守卫失效记录」与「同一意图的两种写法」）；
    十二条压缩成**六层**之后的判据见 `docs/ARCHITECTURE.md` §12「共同盲区」。
-   工具：`node tests/_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 文档路径，12 个场景）、
-   `node tests/_launcher-inject.mjs`（启动器两侧对齐 / BOM / stderr 提示 / EOF 退出，15 个场景）、
-   `node tests/_eshop-inject.mjs`、`node tests/_i18n-field-inject.mjs`、`node tests/_plugin-pages-inject.mjs`（10 个场景）。
-   ⚠️ 这四个工具**用 Worker 线程在进程内跑套件**——本沙箱 `spawnSync` 一律 `EBUSY`，
+   工具（都在 `tests/tools/`，全部用 Worker 线程、内容哈希、`assertPristine`）：
+   `_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 围栏块路径 / 正文命令路径，**13 个场景**）、
+   `_launcher-inject.mjs`（启动器两侧对齐 / BOM / stderr 提示 / EOF 退出 / 孤儿套件，**16 个场景**）、
+   `_i18n-field-inject.mjs`（字段分类，**6 个场景**）、
+   `_plugin-pages-inject.mjs`（声明式后台页面，**10 个场景**）、
+   `_fixture-inject.mjs` / `_fixture-inject-verify.mjs`（主题夹具不变量）。
+   ⚠️ 这些工具**用 Worker 线程在进程内跑套件**——本沙箱 `spawnSync` 一律 `EBUSY`，
    用子进程会把"跑不起来"伪装成"没变红"。
    ⚠️ **这一步是纯人肉纪律，因此它本身就是本仓库最大的单点风险**：跳过它不会报警
    （守卫恰恰是那个不会报警的东西）。凡新增具名断言，**必须**在某个 `_*-inject.mjs`
    里补一个对应场景；靠"记得跑"是不成立的（详见 §12 最后一节）。
 
-**当前源码布局**（已重整完毕，新代码必须放对位置）：
+**当前仓库布局**（已重整完毕，新代码必须放对位置）：
 
 ```
+site/                      ★ 被装载的内容（主题 / 插件 / 迁移流）
+├── themes/                已发布主题（default fixture）
+├── plugins/               已发布插件（notify）
+└── migrations/            有序 D1 迁移流（wrangler.jsonc 的 migrations_dir 指向它）
+
 src/
 ├── index.ts              前台路由      ← 唯一可以知道所有层的地方
 ├── api.ts                管理 API
@@ -84,9 +92,24 @@ src/
     ├── security.ts       只剩 safeZipPath / sha256（校验已移入 contract/）
     ├── theme/            runtime-declarative runtime-worker capabilities
     │                     templates tables table-facade packs
-    └── plugin/           runtime packs menus
+    └── plugin/           runtime packs menus channels
 
-scripts/                  脚手架（生成器必须可被 import，见 tests/scaffold.test.mjs）
+public/admin/             零构建后台 SPA（静态资源，wrangler assets 根）
+
+tests/
+├── run-all.mjs           全跑入口（薄层，注意本沙箱 spawnSync 会 EBUSY）
+├── suites/               ★ 行为与架构套件（*.test.mjs）—— `npm test` 跑这些
+├── tools/                ★ 注入器 / 诊断 / 迁移应用器（_*.mjs、_*.cjs）—— 手工跑
+└── fixtures/             套件共享的 harness 代码（_extension-rules.mjs）
+
+docs/                     见 docs/README.md 的索引
+├── ARCHITECTURE.md       ★ 完整设计理由（§12 是假绿全表）
+├── HANDOVER.md           ★ 接手必读
+├── guides/               THEME-DEV / PLUGIN-DEV / I18N
+├── design/               架构决策与其研究
+└── history/              过往复查与已退役批次的记录
+
+scripts/                  脚手架（生成器必须可被 import，见 tests/suites/scaffold.test.mjs）
 ├── _scaffold.mjs         共用：parseArgs / writeTree / CliError / isMain
 ├── make-theme.mjs        themeFiles() 纯函数 + main(argv, io)
 ├── make-plugin.mjs       pluginFiles() 纯函数 + main(argv, io)
@@ -95,8 +118,13 @@ scripts/                  脚手架（生成器必须可被 import，见 tests/s
 └── cfpress.ps1           ★ 同上，Windows PowerShell 5.1 版
 ```
 
+**`site/` 与 `src/` 的分界**：`src/` 是**代码**，`site/` 是**被装载的内容**。
+主题、插件、迁移流都从这里读；仓库根只留代码与配置（`README` `AGENTS`
+`LICENSE` `package.json` `tsconfig.json` `wrangler.jsonc`）。
+`theme-previews/` 是**被 gitignore 的截图产物**，不属于结构的一部分。
+
 **启动器两份文件是一个契约**：`cfpress.sh` 与 `cfpress.ps1` 承诺"同一套动作、同一套
-菜单编号、同一套退出码"。`tests/launcher-parity.test.mjs` **解析**两份文件的
+菜单编号、同一套退出码"。`tests/suites/launcher-parity.test.mjs` **解析**两份文件的
 `case`/`switch` 分支与套件表再比对——不是 grep 子串。改任一侧都要改另一侧，
 否则套件变红。（为什么必须解析结构：见下方「十二种假绿」。）
 
@@ -114,7 +142,7 @@ stderr 包成 `NativeCommandError`，`Stop` 让它变**终止性**错误；本�
 "没有控制台"和"用户按了回车"。
 
 **套件表连"磁盘上多出来的套件"也要对齐（`launcher-parity.test.mjs` 第 5b 节）**：
-批次 10 新增 `tests/plugin-channels.test.mjs` 时，它**同时缺席四个注册表**
+批次 10 新增 `tests/suites/plugin-channels.test.mjs` 时，它**同时缺席四个注册表**
 （`package.json` 的 `test` 链、`tests/run-all.mjs`、`cfpress.sh`、`cfpress.ps1`）——
 而那时三条既有断言全绿，因为每一条都只检查"表里的东西在另一份表里"。
 **两个方向都对齐，唯独没人问"磁盘上的东西在不在表里"。** 5b 节补上了这个方向：
@@ -128,15 +156,15 @@ stderr 包成 `NativeCommandError`，`Stop` 让它变**终止性**错误；本�
 判据只扫**围栏代码块内**的 `tests/*.mjs`：散文里合法地保留已退役的名字（解释"为什么删它"），
 围栏块才是无歧义的"跑这个"。**这条守卫自己证明了非空转**——它第一次运行就红了。
 
-**`contract/manifest.ts` 为什么单独存在**：`tests/architecture.test.mjs` 需要**读**这些
+**`contract/manifest.ts` 为什么单独存在**：`tests/suites/architecture.test.mjs` 需要**读**这些
 词汇表（后台屏幕白名单、字段类型、保留列）。词汇表住在校验器内部时，唯一的检查办法
 是**抄一份**，而抄本永远先过期。两个地方需要同一个答案时，共享定义，而不是共享结论。
-同一理由把 `tests/_extension-rules.mjs` 抽了出来，供 `architecture.test.mjs` 与
+同一理由把 `tests/fixtures/_extension-rules.mjs` 抽了出来，供 `architecture.test.mjs` 与
 `scaffold.test.mjs` 共用。
 
 **脚手架必须可被 import**：本机沙箱**无法 spawn 任何子进程**（node 二元文件被锁，
 `spawnSync` 一律 `EBUSY`，与 `tests/run-all.mjs` 报 SKIP 同因）。所以三个生成器都写成
-`main(argv, io)` + 纯内容构造函数 + `isMain()` 守卫，`tests/scaffold.test.mjs` 直接调用。
+`main(argv, io)` + 纯内容构造函数 + `isMain()` 守卫，`tests/suites/scaffold.test.mjs` 直接调用。
 只能以命令形式运行的生成器，等于**输出永远没被检查过的**生成器。
 
 `platform/admin-menus.ts` 放在 `platform/` 而不是任一扩展里，理由是**两种扩展都要写它，
@@ -175,7 +203,7 @@ await hooks.applyFilters("html", ctx, out);
 **行为与"本站没装插件"完全一致，所以调用点不需要 null 判断**。
 
 > 违反这条的典型症状：功能全对、测试全绿，但插件变成了每个主题的硬依赖，
-> 删掉插件主题就编译不过。`tests/architecture.test.mjs` 现在会拦住它。
+> 删掉插件主题就编译不过。`tests/suites/architecture.test.mjs` 现在会拦住它。
 
 ## 数据访问（§10 规则 4、9）
 
@@ -200,7 +228,7 @@ await hooks.applyFilters("html", ctx, out);
 
 ## 守卫失效记录（READ THIS）
 
-`tests/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。
+`tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。
 **全库累计十二种**——`docs/ARCHITECTURE.md` §12 是完整表，这里列前三种：
 
 | 检查 | 曾经的写法 | 为什么失效 | 现状 |
@@ -228,7 +256,7 @@ await hooks.applyFilters("html", ctx, out);
 
 ### 第五种假绿：断言描述的是上一轮的产物（清理失败被吞掉）
 
-批次 4 在 `tests/scaffold.test.mjs` 上踩到，**不在被测代码里，也不在 fixture 里，
+批次 4 在 `tests/suites/scaffold.test.mjs` 上踩到，**不在被测代码里，也不在 fixture 里，
 而在"测试到底在看哪个文件"上**：
 
 > 套件开头 `rmSync(SCRATCH, { recursive: true, force: true })`。Windows 上这一步会因
@@ -273,7 +301,7 @@ await hooks.applyFilters("html", ctx, out);
 | **字节数守卫看不见等长替换** | `"/shop/"` → `"/blog/"` 长度完全相同，守卫打印"什么都没改"，而注入**其实生效了** —— 防假阴的工具自己产出假阴 | 比**内容哈希**，不比长度 |
 | **快照取自脏树** | `git checkout -- <path>` **修不了 git 从没见过的文件**（新主题是 untracked），还原静默失败 → 场景逐层叠加；更糟的是脏状态被**拍进快照**，"还原"忠实还原了损坏，套件连续七轮红在**没有任何场景引入过**的缺陷上 | 不用 `git checkout`：快照前 `assertPristine()`，还原后**再** `assertPristine()`。**还原也要被验证** |
 
-参考实现：`tests/_eshop-inject.mjs`（7 个场景，每个都断言"确实注入了"→"红在哪一条"→"还原成功"）。
+参考实现：`tests/tools/_launcher-inject.mjs`（16 个场景，每个都断言"确实注入了"→"红在哪一条"→"还原成功"）。
 它**不进 `npm test`** —— 它是工具，跟 `_i18n-browser.cjs` 同一性质。
 
 ### 第七种假绿：守卫守的是「写法」，不是「语义」
@@ -317,7 +345,7 @@ check("no domain event is declared twice", dupes, []);   // ← 不可能失败
 > 结果两条条件写成 `.filter(...)` 的假绿调用溜过去了。**守卫的守卫也要覆盖每种写法**
 > ——这正是第七种的教训，隔一节又犯了一次。
 
-### 反向验证工具自身的三条铁律（`tests/_skeleton-inject.mjs`、`_launcher-inject.mjs`）
+### 反向验证工具自身的三条铁律（`tests/tools/_skeleton-inject.mjs`、`_launcher-inject.mjs`）
 
 本轮把全部场景跑通了（现已 12 个），途中工具自己假绿过三次：
 
@@ -373,7 +401,7 @@ check("no domain event is declared twice", dupes, []);   // ← 不可能失败
 
 ### 第十一种假绿：守卫数的是**被注释掉的 token**（文本层，已预测）
 
-退役 `themes/aurora` 时把它的通用不变量折进 `tests/theme-fixture.test.mjs`，
+退役 `themes/aurora` 时把它的通用不变量折进 `tests/suites/theme-fixture.test.mjs`，
 顺手给 fixture 补了 `home.html`。反向验证的注入动作是"删掉真实的 `{{/section}}`"，
 但注入版本里**注释中保留了一个 `{{/section}}` 作为诱饵**——守卫是纯文本计数：
 
@@ -441,9 +469,9 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 | 41 | **所有数据都必须有多语言能力，不是可选项**。表字段按承载内容分两类，分类表是 `contract/manifest.ts` 的 `PROSE_FIELD_TYPES` / `LANGUAGE_NEUTRAL_FIELD_TYPES`，`isProseFieldType()` 是唯一谓词：散文（`text`/`longtext`）**必须**在 `translatable`，语言中立（`number`/`boolean`/`date`/`datetime`）**必须不在**。两个方向都在安装边界、架构测试、脚手架默认值三处强制 |
 | 42 | 主题/插件表**必须显式声明语言结构** `tables[].language{strategy,translatable,fallback,requiredLocales}`。`strategy` ∈ `none`/`sidecar`（`versioned` 声明了但**未实现 → 校验器拒绝，不是忽略**）。`strategy:"none"` 而表里有散文 = **断言为假，拒绝**；`language.translatable` 与扁平 `translatable` 不一致 = **两个权威，拒绝**；`fallback`/`requiredLocales` 里的非法 locale 码拒绝 |
 | 43 | 平台 schema 的租户/语言归属**只有一份声明**：`contract/schema.ts` 的 `PLATFORM_SCHEMA`。`TENANT_TABLES` / `PLATFORM_TABLES` / `DERIVED_TENANT_TABLES` / `LOCALE_COLUMN_TABLES` **全部派生自它，不得手写**。每一条必须写 `note`（≥10 字）说明理由，派生租户（`derivedTenant`）必须写明 FK 路径（`post_id → posts.site_id`） |
-| 44 | schema 声明**必须被真实数据库检验**（`tests/_schema-scope.mjs`，进了 `npm test`）：数据库里的表没被分类 = 红；租户表没有 `site_id` = 红；平台表**有** `site_id` = 红；`_i18n` 边车**有** `site_id` = 红。它跑在**临时 SQLite**（迁移流）上而非 `.wrangler/`，并**驱动真实的 `syncThemeTables()`** 造出生成表——否则那些断言全是空转 |
+| 44 | schema 声明**必须被真实数据库检验**（`tests/tools/_schema-scope.mjs`，进了 `npm test`）：数据库里的表没被分类 = 红；租户表没有 `site_id` = 红；平台表**有** `site_id` = 红；`_i18n` 边车**有** `site_id` = 红。它跑在**临时 SQLite**（迁移流）上而非 `.wrangler/`，并**驱动真实的 `syncThemeTables()`** 造出生成表——否则那些断言全是空转 |
 | 45 | 领域事件是**独立于 hook 的契约**（`contract/events.ts`）：**事件是事实**（过去式 + `payloadVersion` + 必带 `siteId`，分语言的事实带 `locale`），**hook 是通道**。`DOMAIN_EVENTS` 与 `DECLARABLE_HOOKS` **不得互相掺入**（hooks 里出现事件名 = 红）。插件的 `subscribes[]` 在**安装边界**对照 `DOMAIN_EVENTS` 校验——**订阅一个不存在的事件名是 400，不是"永远不触发的 hook"** |
-| 46 | 表有租户字段 **≠** 查询用了它。`tests/_tenant-query-audit.mjs` 列出所有触碰租户表却不带 `site_id` 的语句；**每一处都必须有书面裁决**（`REVIEWED` 表）。没有裁决的新语句打印为 `NEW`。它是报告工具，**不进 `npm test`** |
+| 46 | 表有租户字段 **≠** 查询用了它。`tests/tools/_tenant-query-audit.mjs` 列出所有触碰租户表却不带 `site_id` 的语句；**每一处都必须有书面裁决**（`REVIEWED` 表）。没有裁决的新语句打印为 `NEW`。它是报告工具，**不进 `npm test`** |
 | 47 | 平台表（`theme_installs` 等）上的跨站聚合是**设计不是泄漏**：`active` 的含义就是"有站点在用它"。判断是否泄漏看**声明**（`schema.ts` 的 `tenant`），**不看表名前缀**——`theme_installs` 匹配 `theme_*` 但它是平台表 |
 
 规则 42 的后果：`strategy` 不是文档装饰。写 `"versioned"` 会**装不进去**而不是静默降级——
@@ -469,7 +497,7 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 规则 13b 的后果：只写 `WHERE p.lang_group = ?` 会**排除掉组名所指的那一行自己**
 （它的 `lang_group` 是 NULL），于是组看起来是空的，编辑器报告语言缺失并诱导用户
 **再建一个已经存在的语言的副本**——不报错，只是悄悄多出一份内容。
-守卫在 `tests/i18n.test.mjs` 第 9b 段，两处调用点都反向验证过。
+守卫在 `tests/suites/i18n.test.mjs` 第 9b 段，两处调用点都反向验证过。
 
 规则 13c 的后果：`state.locales` 是缓存，语言开关是它的事实源。改了开关不刷新缓存，
 `loadVersions()` 会以为站点是单语言的，于是**整个语言版本条不渲染**——
@@ -487,24 +515,24 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 | 层 | 位置 | 作用 |
 |---|---|---|
 | 安装边界 | `contract/validation.ts` | 第三方 zip 装不进来——架构测试**永远看不到**还没落盘的扩展 |
-| 架构测试 | `tests/architecture.test.mjs` | 已发布主题当场变红，报错指名 `file:table:field` |
+| 架构测试 | `tests/suites/architecture.test.mjs` | 已发布主题当场变红，报错指名 `file:table:field` |
 | 脚手架 | `scripts/make-table.mjs` | 新主题天生合规——生成器不守规则，规则第一天就漏 |
 
 **为什么 B 方向（语言中立不得声明）不是多余的**：把 `price` 标成可翻译
 等于**每种语言一个价格**——数据模型错误，但不会崩。**「不报错」和「正确」是两件事。**
 
 **为什么分类表本身也要被守**：规则 41 若只跑已发布主题，新增第七种字段类型时会
-全绿通过（集合里没人用它）。`tests/architecture.test.mjs` 因此额外断言：
+全绿通过（集合里没人用它）。`tests/suites/architecture.test.mjs` 因此额外断言：
 两表不重叠 / 每个允许类型都被分类 / 无幽灵类型 / **扫到的表数 > 0**。
-最后一条是关键——把 `themes/` 改名会让「所有主题都合规」**恒真**。
+最后一条是关键——把 `site/themes/` 改名会让「所有主题都合规」**恒真**。
 **对空集合的检查是空转**（本仓库第三种假绿）。
 
 **标识符不是散文**：SKU、券码、外部 id 必须用 `number`/中性类型，不要用 `text`。
-用 `text` 等于宣称「这段文字值得翻译」。`tests/i18n.test.mjs` 的夹具原本就把 `sku`
+用 `text` 等于宣称「这段文字值得翻译」。`tests/suites/i18n.test.mjs` 的夹具原本就把 `sku`
 写成 `text` 却在注释里说它跨语言共享——**规则抓出了这个自相矛盾的建模**。
 
-反向验证：`node tests/_i18n-field-inject.mjs`（6 场景，工具不进 `npm test`）。
-清点剩余数据承载类：`node tests/_i18n-data-inventory.mjs`。
+反向验证：`node tests/tools/_i18n-field-inject.mjs`（6 场景，工具不进 `npm test`）。
+清点剩余数据承载类：`node tests/tools/_i18n-data-inventory.mjs`。
 
 > **`settings[]` 为什么不加语言维度**：`theme_settings` 键为 `(theme_name, key)`，
 > 且**前台没有任何读取路径**（`grep` 过 `rendering/`、`runtime-*.ts`、`public/admin/`，
@@ -532,7 +560,7 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 
 **规则 20 为什么存在**：`uploadExtension` 把插件包当 zip 原样存进 R2、**从不解包**，
 所以插件没有 `langs/` 目录可读，只能把语言包内联在清单里。主题有目录
-（`themes/<name>/langs/<locale>.json`，运行时从 R2 读）。两条路径，同一套前缀规则。
+（`site/themes/<name>/langs/<locale>.json`，运行时从 R2 读）。两条路径，同一套前缀规则。
 
 **规则 21–24 的共同教训**：这四条对应的四个字段，曾经都是「**声明被校验了、但运行时没人读**」。
 校验器认它、架构测试认它，前台却按 `kind` 猜模板、按 `postType` 猜内容，
@@ -546,7 +574,7 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 
 **校验失败必须抛出、必须让安装失败**，不能警告后继续。写法是 `validateManifest` 抛
 `Error`，`src/api.ts` 的 `uploadExtension()` 捕获后返回 400。一个装不上的主题
-胜过半个能跑的主题。规则 14–24 每一条都在 `tests/manifest-validation.test.mjs` 里
+胜过半个能跑的主题。规则 14–24 每一条都在 `tests/suites/manifest-validation.test.mjs` 里
 有对应的"注入缺陷 → 断言必须抛错"用例；改校验逻辑时那道套件必须跟着改。
 
 ---
@@ -554,7 +582,7 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 ## 模板语言：写主题前必须知道的五条
 
 **这五条都会让整页渲染抛错、或静默走错分支，而且没有编译期提示。**
-`scripts/make-theme.mjs` 生成的骨架把这五条都演示了一遍，`tests/scaffold.test.mjs`
+`scripts/make-theme.mjs` 生成的骨架把这五条都演示了一遍，`tests/suites/scaffold.test.mjs`
 用**真实引擎**把它们逐条钉住。
 
 | # | 规则 | 写错的症状 |
@@ -584,7 +612,7 @@ helper 只有 9 个：`len` / `default` / `lower` / `upper` / `truncate` / `join
 `Template @extends "…" but leaves section(s) unclosed: …`。
 判据是文件事实（`extendsName` 是解析结果），不是文本匹配——这正是本仓库反复强调的做法。
 
-> 批次 4 的骨架**真的漏了这四个 `{{/section}}`**，`tests/scaffold.test.mjs` 才发现的。
+> 批次 4 的骨架**真的漏了这四个 `{{/section}}`**，`tests/suites/scaffold.test.mjs` 才发现的。
 > 症状就是上面那行：200、无异常、空白页。**只有真正渲染一遍才会暴露。**
 
 ---
@@ -623,7 +651,7 @@ import 就是环。环在部分浏览器能跑、部分不能，且让"改一个
 > 新代码优先用 `data-action` + document 级委托，这样根本不产生新的
 > `WINDOW_HANDLERS` 条目（`screens/languages.js` 就是这么做的）。
 
-规则 21–24 由 `tests/admin-spa.test.mjs` 强制（模块图无环 + 无孤儿模块 +
+规则 21–24 由 `tests/suites/admin-spa.test.mjs` 强制（模块图无环 + 无孤儿模块 +
 `window.*` 契约 + 每个屏幕真渲染一次）。**改后台结构时那道套件必须跟着改。**
 
 > ⚠️ 该套件有一处**已修过的假绿**：它最初断言"`render()` 没有抛错"，
@@ -724,7 +752,7 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 | 48 | 插件 manifest **不得含可执行代码**。`hooks` 是**名字**（`DECLARABLE_HOOKS` 的子集），实现永远在宿主的 `HOOK_IMPLS` 里——校验器拒绝任何越界的 hook 名 |
 | 49 | `adminPages[].blocks[].type` 是**闭集合**（`ALLOWED_PAGE_BLOCKS = [table, stats, form]`）。每加一种类型必须同时改三处：契约列表、`public/admin/js/plugin-page.js` 的 `RENDERED_BLOCK_TYPES`、渲染器 switch——**架构测试按集合比对**，漏一处是 FAIL 而不是 200 的空面板。`stats` 的 `aggregate` 同样是闭集合（`ALLOWED_AGGREGATES`），且 `sum` 必须给 `field` |
 | 50 | 菜单 `screen: "plugin-page:<id>"` **必须指向该插件真实声明的 `adminPages[].id`**（安装期校验，`validateAdminMenus` 的第 5 参 `declaredPages`）。运行期由 SPA 的 `findPage` 按 `enabled` 过滤——"禁用"意味着页面不可达，不是页面被删 |
-| 51 | 渠道 `code` ∈ `HOST_CHANNEL_CODES`（当前只有 `webhook`）；`configSchema[].type` ∈ `ALLOWED_CHANNEL_FIELD_TYPES`。两侧都由 `tests/architecture.test.mjs` 与 SPA 导出的 `RENDERED_CHANNEL_FIELD_TYPES` / `RENDERED_AGGREGATES` **双向核对**——声明了却没人实现正是这条要抓的分歧 |
+| 51 | 渠道 `code` ∈ `HOST_CHANNEL_CODES`（当前只有 `webhook`）；`configSchema[].type` ∈ `ALLOWED_CHANNEL_FIELD_TYPES`。两侧都由 `tests/suites/architecture.test.mjs` 与 SPA 导出的 `RENDERED_CHANNEL_FIELD_TYPES` / `RENDERED_AGGREGATES` **双向核对**——声明了却没人实现正是这条要抓的分歧 |
 
 **为什么是"导出列表对比"而不是"解析 switch"**：守卫解析源码文本（正则扫 `case "table":`）
 是**猜结构**，写同一意图的另一种写法就能骗过它——这正是「同一意图的两种写法」那条坑。
@@ -751,7 +779,7 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 ## 允许做的事
 
 - ✅ 加新的 `screen` 类型（同时更新 `ALLOWED_ADMIN_SCREENS`、`docs/ARCHITECTURE.md` §3.5，
-  以及 `tests/architecture.test.mjs` 里**钉住**的那个集合——三者必须一致）
+  以及 `tests/suites/architecture.test.mjs` 里**钉住**的那个集合——三者必须一致）
 - ✅ 加新的 capability（同时更新 `CAPABILITIES` 与 §4.3）
 - ✅ 加新的 `DECLARABLE_HOOKS`（同时更新 §4.2）
 - ✅ 加新的后台菜单 screen 实现（`public/admin/js/screens/`，须在 `screens/index.js` 注册）
@@ -781,8 +809,7 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 |---|---|---|
 | 后台 SPA 的目录位置 | 模块结构已按 §7.2 拆好，但仍在 `public/admin/` 而非仓库根的 `admin/` | `wrangler.jsonc` 的 `assets.directory` 只接受一个目录，而 `/admin/*` 必须保留；搬迁需与 `public/` 的资源归属一并规划 |
 | `public/admin/ui.js` | 仍是 303 行单文件（UI kit 未再细分） | 与屏幕拆分正交；真要拆应等后台多语言（L2）落地时一起做 |
-| `extensions/contract/` | 目前只有 `hooks.ts`；`manifest.ts`/`validation.ts`/`capabilities.ts` 未拆 | 批次 4（纯结构重构，无行为变化） |
-| 插件自有表 | 插件**不能**声明 `tables[]`（校验器拒绝） | `theme_table_defs` 只有 `theme_name` 列，支持插件必须**重建该表**（SQLite 不能 `ALTER` 主键/UNIQUE）；批次 4 |
+| `theme-previews/` 仍在仓库根 | 被 `.gitignore` 排除的截图产物目录 | 是验收工具的**输出**，不是源码；位置随工具走，不入结构规划 |
 
 这些**不是"可以随意违反规则"的许可证**——它们是**已登记的技术债**，
 每一项都有明确的归属批次。新增类似问题时，登记到这里，不要静默放行。

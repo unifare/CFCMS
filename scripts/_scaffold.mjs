@@ -21,7 +21,7 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * child process at all (the sandbox locks the node binary, the same reason
  * `tests/run-all.mjs` reports SKIP here), so a generator that can only be
  * exercised by running it as a command is a generator whose output is untested.
- * `tests/scaffold.test.mjs` therefore imports `main()` and the content builders
+ * `tests/suites/scaffold.test.mjs` therefore imports `main()` and the content builders
  * directly.
  */
 export class CliError extends Error {}

@@ -14,49 +14,49 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 
 const suites = [
-  ["migrations", "_apply-migrations.mjs"],
+  ["migrations", "tools/_apply-migrations.mjs"],
   // Architecture first: it is fast, needs no database, and a failure here means
   // the shape of the code is wrong — which makes every later failure suspect.
-  ["architecture rules", "architecture.test.mjs"],
+  ["architecture rules", "suites/architecture.test.mjs"],
   // Schema scope: like the architecture rules it needs no shared database (it
   // builds a throwaway SQLite from the migration stream), and it answers the
   // question the rules only assert — "does every real table have a tenant and
   // a language answer?" Run it right after the rules so a shape error and a
   // scope error are reported next to each other.
-  ["schema scope (tenant+lang)", "_schema-scope.mjs"],
+  ["schema scope (tenant+lang)", "tools/_schema-scope.mjs"],
   // Manifest validation is next: like the architecture suite it needs no
   // database, and it guards what a *user uploads* — the shipped themes are
   // already covered by the architecture rules above.
-  ["manifest validation", "manifest-validation.test.mjs"],
+  ["manifest validation", "suites/manifest-validation.test.mjs"],
   // The admin SPA split is checked here too: like the two above it needs no
   // database, and it guards *structure* (module graph, window.* contract) —
   // a broken split would make the admin UI silently unusable.
-  ["admin spa structure", "admin-spa.test.mjs"],
-  ["template engine (unit)", "template-engine.test.mjs"],
-  ["theme integration (e2e)", "theme-integration.test.mjs"],
-  ["multi-site", "multisite.test.mjs"],
+  ["admin spa structure", "suites/admin-spa.test.mjs"],
+  ["template engine (unit)", "suites/template-engine.test.mjs"],
+  ["theme integration (e2e)", "suites/theme-integration.test.mjs"],
+  ["multi-site", "suites/multisite.test.mjs"],
   // Multi-language runs after multi-site: both write per-site locale switches
   // and the i18n suite asserts on a site it configures itself.
-  ["multi-language (L0-L3)", "i18n.test.mjs"],
-  ["admin contract", "admin-contract.test.mjs"],
-  ["plugin hooks", "plugin-hooks.test.mjs"],
+  ["multi-language (L0-L3)", "suites/i18n.test.mjs"],
+  ["admin contract", "suites/admin-contract.test.mjs"],
+  ["plugin hooks", "suites/plugin-hooks.test.mjs"],
   // The channel runtime: webhook delivery + the claim-before-send dedup ledger.
   // It was missing from all four registries (npm test, this list, and both
   // launchers) while still existing and passing — see the coverage guard in
   // `launcher-parity.test.mjs`.
-  ["plugin channels (notify)", "plugin-channels.test.mjs"],
+  ["plugin channels (notify)", "suites/plugin-channels.test.mjs"],
   // Plugin-declared admin pages run right after plugin hooks: both drive the
   // real Worker against a plugin install, and this one adds the page renderer —
   // the only suite that reads markup back out of a response.
-  ["plugin pages (declare -> render)", "plugin-pages.test.mjs"],
-  ["theme sandbox (L3)", "theme-worker.test.mjs"],
-  ["fixture theme", "theme-fixture.test.mjs"],
+  ["plugin pages (declare -> render)", "suites/plugin-pages.test.mjs"],
+  ["theme sandbox (L3)", "suites/theme-worker.test.mjs"],
+  ["fixture theme", "suites/theme-fixture.test.mjs"],
   // The launcher parity check is pure text analysis over scripts/cfpress.sh and
   // scripts/cfpress.ps1 — no Worker, no database. It guards the promise those
   // two files make to each other ("one set of actions"), which decays silently
   // otherwise: a missing action only surfaces when someone on the other OS
   // needs it.
-  ["launcher parity (sh <-> ps1)", "launcher-parity.test.mjs"],
+  ["launcher parity (sh <-> ps1)", "suites/launcher-parity.test.mjs"],
 ];
 
 const results = [];

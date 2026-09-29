@@ -22,7 +22,7 @@
  * ## The second line of defence
  *
  * Two of these rules are also enforced against the *shipped* extensions by
- * `tests/architecture.test.mjs` (screen names, and route/tables agreement).
+ * `tests/suites/architecture.test.mjs` (screen names, and route/tables agreement).
  * That is not duplication: the test guards what is in this repository, this
  * guards anything installed at runtime from a third-party zip.
  */

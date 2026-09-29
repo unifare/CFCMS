@@ -32,7 +32,7 @@
  * sets for the same reason `ALLOWED_TABLE_FIELD_TYPES` is: the admin form is
  * *generated* from the declaration, so a type with no control renders an empty
  * input and looks like broken data. Add a type here and you must add its
- * control — `tests/architecture.test.mjs` matches the two lists up.
+ * control — `tests/suites/architecture.test.mjs` matches the two lists up.
  */
 
 /**

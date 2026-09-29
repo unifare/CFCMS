@@ -5,7 +5,7 @@
 > 本文回答四个问题：**多语言怎么做、主题如何变成业务包、插件边界在哪、怎么防止"功能实现了但是垃圾代码"**。
 >
 > 配套文件：[`AGENTS.md`](../AGENTS.md)（压缩成硬规则，供 AI 直接遵守）、
-> [`tests/architecture.test.mjs`](../tests/architecture.test.mjs)（规则的机器执行）。
+> [`tests/suites/architecture.test.mjs`](../tests/suites/architecture.test.mjs)（规则的机器执行）。
 
 ---
 
@@ -458,7 +458,7 @@ await host.table('product').save({ slug, price: 299, name, description }, locale
 | M7 | 内容翻译组 CRUD API + 后台语言版本条 | `src/api.ts`（`i18n/translations`）、`public/admin/js/screens/editor.js` | ✅ |
 | M8 | 主题 `tables[]` 声明解析 + 建表 | `src/extensions/theme/tables.ts`，由 `capabilities.ts` 调用 | ✅ |
 | M9 | 主题表 facade + 沙箱 API 端点 | `src/extensions/theme/table-facade.ts`、`src/extensions/theme/runtime-worker.ts` | ✅ |
-| M10 | 语言包 key 前缀架构测试 | `tests/architecture.test.mjs` 的 `checkLangPacks` + `themes/aurora/langs/` | ✅ |
+| M10 | 语言包 key 前缀架构测试 | `tests/suites/architecture.test.mjs` 的 `checkLangPacks` + `themes/aurora/langs/` | ✅ |
 | M11 | 语言包内联声明（主题/插件都在清单里带 `langs`） | `src/extensions/security.ts` 的 `validateInlineLangs` | ✅ 规划外新增 |
 | M12 | 主题表注册表（切主题后仍能找到自己的表） | `theme_table_defs` 表，见 §6.3 | ✅ 规划外新增 |
 
@@ -617,7 +617,7 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
 
 #### 3.2.2 前台路由：声明必须被消费（`routes[]`）
 
-`routes[]` 的字段**曾经校验得比用得严**：`resolve.table` 在安装时被检查是否已声明、`template` 被架构测试断言必须是 `templates[]` 的一员，而运行时两个都没读 —— 路由只看 `kind`/`postType` 推模板，只把查询结果绑成固定的 `posts`。三种情况的症状完全一样：**页面渲染成功、HTTP 200、内容是错的**。现在每个字段都有明确消费点，且每一个都在 `tests/theme-integration.test.mjs` 第 5c 段有活断言（把路由改回旧写法会让那一段 12 条断言变红）。
+`routes[]` 的字段**曾经校验得比用得严**：`resolve.table` 在安装时被检查是否已声明、`template` 被架构测试断言必须是 `templates[]` 的一员，而运行时两个都没读 —— 路由只看 `kind`/`postType` 推模板，只把查询结果绑成固定的 `posts`。三种情况的症状完全一样：**页面渲染成功、HTTP 200、内容是错的**。现在每个字段都有明确消费点，且每一个都在 `tests/suites/theme-integration.test.mjs` 第 5c 段有活断言（把路由改回旧写法会让那一段 12 条断言变红）。
 
 | 字段 | 语义 | 不写 / 不读会怎样 |
 |---|---|---|
@@ -704,11 +704,11 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
 
 **权限统一由平台施加**：每个菜单项声明 `capability`（如 `content.read`）。菜单可见性、API 访问都由平台在这一处检查。**主题不写鉴权代码**——对照 nodecms 的 `themes/eShop/admin-routes.js` 自己 `jwt.verify` + 自己查 `user.role !== 'admin'`，那种写法必然有主题写漏。
 
-**页面键（SPA 侧）**：`table:` 系列用**三个互不重叠的前缀**——`table:<table>` 是列表，`table-new:<table>` 是新建表单，`table-edit:<table>:<slug>` 是编辑某一行。曾经用"一个前缀 + 可选段"（`table:<table>[:<slug>]`），结果"列表"和"新建"在缺省 slug 时**是同一个页面名**：点"新增"跳回它自己所在的列表，什么也没发生。这个缺陷只有真实浏览器验收才暴露得出来（`tests/_admin-menus-browser.cjs`）。
+**页面键（SPA 侧）**：`table:` 系列用**三个互不重叠的前缀**——`table:<table>` 是列表，`table-new:<table>` 是新建表单，`table-edit:<table>:<slug>` 是编辑某一行。曾经用"一个前缀 + 可选段"（`table:<table>[:<slug>]`），结果"列表"和"新建"在缺省 slug 时**是同一个页面名**：点"新增"跳回它自己所在的列表，什么也没发生。这个缺陷只有真实浏览器验收才暴露得出来（`tests/tools/_admin-menus-browser.cjs`）。
 
 **菜单标签多语言（批次 5，迁移 `0013` 的 `label_key` 列）**：`adminMenus[]` 可以声明 `label_key`（如 `"theme.eshop.menu.products"`），**必须**匹配 owner 前缀 `theme.{name}.` / `plugin.{name}.`（`validateAdminMenus` 用 ownerName 构造正则，越界 key 让**安装失败**而不是静默不翻译——与规则 11 同一个理由）。消费点只有一个：`GET /api/v1/admin-menus` 命中合并字典就替换 `label`（§2.4）。范例 `themes/eshop/theme.json` 的三个菜单**复用既有语言包 key**（`theme.eshop.menu.*`）而不是发明第二套——两个地方需要同一个答案时共享定义。
 
-**站点菜单编辑器（批次 5）**：管理员可以对整个站点的后台菜单做**站点级定制**——逐语言改名（en/zh-CN）、菜单项排序（箭头/拖拽）、**跨组移动**、分组改名与排序、对所有人隐藏。存为 `settings` 表里每站一份 JSON（key `admin.menu.custom`），`GET/PUT/DELETE admin-menus/custom` 三端点（写需 `settings.manage`；GET 顺带回 `can_manage`）。**唯一应用点是 `nav.js` 的纯函数 `applyMenuCustom()`**——侧栏与编辑器共用同一份定义（与 `groupOf()` 同一条纪律）。解析顺序：override[locale] → override.en → 内置/服务端翻译文案。分组 id 是 `nav.js` 内置的七个（`general`/`content`/`from-theme`/`extensions`/`appearance`/`system`/`tools`）；**移动到不存在的分组会被忽略**（项绝不消失）。排序语义：显式 order 升序在前，未排序的按内置顺序殿后（稳定排序）——编辑器的结构性变更会**物化整组显式 order**。与每用户隐藏（`menu_prefs`）叠加：有效隐藏 = 站点级 hidden ∪ 用户自己的隐藏。契约在 `tests/menu-custom.test.mjs`（40 条，含纯函数逻辑与「不存在分组」注入）。
+**站点菜单编辑器（批次 5）**：管理员可以对整个站点的后台菜单做**站点级定制**——逐语言改名（en/zh-CN）、菜单项排序（箭头/拖拽）、**跨组移动**、分组改名与排序、对所有人隐藏。存为 `settings` 表里每站一份 JSON（key `admin.menu.custom`），`GET/PUT/DELETE admin-menus/custom` 三端点（写需 `settings.manage`；GET 顺带回 `can_manage`）。**唯一应用点是 `nav.js` 的纯函数 `applyMenuCustom()`**——侧栏与编辑器共用同一份定义（与 `groupOf()` 同一条纪律）。解析顺序：override[locale] → override.en → 内置/服务端翻译文案。分组 id 是 `nav.js` 内置的七个（`general`/`content`/`from-theme`/`extensions`/`appearance`/`system`/`tools`）；**移动到不存在的分组会被忽略**（项绝不消失）。排序语义：显式 order 升序在前，未排序的按内置顺序殿后（稳定排序）——编辑器的结构性变更会**物化整组显式 order**。与每用户隐藏（`menu_prefs`）叠加：有效隐藏 = 站点级 hidden ∪ 用户自己的隐藏。契约在 `tests/suites/menu-custom.test.mjs`（40 条，含纯函数逻辑与「不存在分组」注入）。
 
 ---
 
@@ -824,7 +824,7 @@ CREATE TABLE admin_menu_registry (
 
 后台 API 按 `capability` 过滤后返回给 SPA，SPA 只管渲染。**排序规则**：core 菜单按固定顺序，主题菜单紧跟内容组，插件菜单归入"扩展"组。
 
-`theme_admin_menus` 旧表**迁移后废弃**（原方案里"或保留为视图"这条路没走）——两张表存同一件事是 bug 温床。0012 把行搬进新表后 `DROP TABLE`，`tests/_apply-migrations.mjs` 会断言它不再存在。
+`theme_admin_menus` 旧表**迁移后废弃**（原方案里"或保留为视图"这条路没走）——两张表存同一件事是 bug 温床。0012 把行搬进新表后 `DROP TABLE`，`tests/tools/_apply-migrations.mjs` 会断言它不再存在。
 
 > **✅ 已落地（批次 3）。** 实现分散在三处，各自的职责不要混：
 >
@@ -838,7 +838,7 @@ CREATE TABLE admin_menu_registry (
 >
 > **三个实现期才暴露的坑，都写进了守卫：**
 >
-> 1. **行主键必须内嵌 owner。** 自然键是四元组，但主键只能是一个值。旧方案 `scopedId("tam", site, menuId)` **不含 owner**，两个主题各声明一个 `main` 菜单就会撞主键——第二个主题静默覆盖第一个。现在 `menuRowId()` 内嵌四元组，并追加一个四元组的短哈希：`acme-shop` 与 `acme_shop` 会 slug 成同一个串，只靠可读部分仍会撞（`tests/admin-menus.test.mjs` 第 2 段钉住这一点）。
+> 1. **行主键必须内嵌 owner。** 自然键是四元组，但主键只能是一个值。旧方案 `scopedId("tam", site, menuId)` **不含 owner**，两个主题各声明一个 `main` 菜单就会撞主键——第二个主题静默覆盖第一个。现在 `menuRowId()` 内嵌四元组，并追加一个四元组的短哈希：`acme-shop` 与 `acme_shop` 会 slug 成同一个串，只靠可读部分仍会撞（`tests/suites/admin-menus.test.mjs` 第 2 段钉住这一点）。
 > 2. **插件菜单是"全站"的，主题菜单是"单站"的。** 主题按站点激活，所以它的菜单按站点存；插件只有一个安装级 `enabled` 开关，没有按站点的镜像。若在启用时给每个站点写一行，就必须再挂一个"建站时补写"的钩子——**漏掉那个钩子，新站点会静默地没有插件菜单**。所以插件行写 `site_id = '*'`（`ALL_SITES`），读取时 `site_id=? OR site_id='*'`。一次写入，对尚未存在的站点也正确。
 > 3. **读菜单要有 owner 的名字，而唯一正确的来源是 `settings` 的 `theme.active`。** 用 `theme_installs.active` 会在多站点上选错主题（§6.1 的老坑）。
 >
@@ -932,7 +932,7 @@ export async function findContent(
 
 两个扩展都定义 `nav.home` 时，谁生效取决于加载顺序，而且**没有正确的修复位置**——
 所以前缀不是风格要求，是让 key 全局唯一、且冲突时能一眼看出该改谁。校验必须拦住它：
-`tests/manifest-validation.test.mjs` 第 11 段里每条规则都有
+`tests/suites/manifest-validation.test.mjs` 第 11 段里每条规则都有
 「注入缺陷 → 断言必须抛错」的用例（现 54 条断言，其中 8 条专为批次 3 的菜单规则新增）。
 
 **校验失败必须让安装失败，不能警告后继续。** 一个装不上的主题胜过半个能跑的主题。
@@ -942,10 +942,10 @@ export async function findContent(
 **现状**：12 个套件，且是**驱动真实 Worker 源码 + 真实本地 D1**，这个基础很好。
 判据是 **0 failures**，不要把断言数写死当验收标准——数字会随套件增减。
 
-> 批次 3 新增 `tests/admin-menus.test.mjs`（43 条断言）：注册表 schema、`menuRowId` 防碰撞、
+> 批次 3 新增 `tests/suites/admin-menus.test.mjs`（43 条断言）：注册表 schema、`menuRowId` 防碰撞、
 > 归属隔离、排序、能力过滤、主题注册、插件注册、**停用插件只删它自己的菜单**、
 > **安装级插件菜单对新站点立即可见**、主题切走/切回。另有两个真实浏览器脚本
-> （`tests/_i18n-browser.cjs`、`tests/_admin-menus-browser.cjs`）。
+> （`tests/tools/_i18n-browser.cjs`、`tests/tools/_admin-menus-browser.cjs`）。
 
 要补的测试类型：
 
@@ -964,12 +964,12 @@ export async function findContent(
 
 最后两条尤其重要——它们**直接验证"translatable 划分是否正确工作"**。这是本设计最核心的语义。
 
-**已落地**：`tests/i18n.test.mjs`（62 条断言，0 failures，可重复）。八条全覆盖，其中承重的
+**已落地**：`tests/suites/i18n.test.mjs`（62 条断言，0 failures，可重复）。八条全覆盖，其中承重的
 两条是「`price` 跨语言同值」和「`name` 跨语言不同值」——一个商店在英文站少收 20% 就是这两条
 没守住的样子。用例里的 fixture 主题 `eshoptheme` 声明了一张表 `product`，
 `translatable: ["name","description"]`，字段 `price/sku/name/description`。
 
-浏览器侧的验收（真实 Chromium 打真实 `wrangler dev`）在 `tests/_i18n-browser.cjs`：22 条断言，
+浏览器侧的验收（真实 Chromium 打真实 `wrangler dev`）在 `tests/tools/_i18n-browser.cjs`：22 条断言，
 覆盖登录 → 语言开关 → 编辑器语言版本条 → 建翻译 → 删翻译 → 停用语言，并断言零 console 错误、
 零失败请求、零 5xx。它**自己清理自己**（建出来的版本当场删掉、语言停用回原样），所以可以重复跑。
 
@@ -986,7 +986,7 @@ function groupOf(row) { return String(row?.lang_group ?? "").trim() || String(ro
 只写 `WHERE p.lang_group = ?` 会把**组名所指的那一行自己**排除掉（它的 `lang_group` 是 NULL），
 于是这个组看起来是空的：编辑器报告该语言缺失，并诱导用户**再建一个已经存在的语言的副本**。
 迁移前写入的数据、任何不写这一列的外部导入，都会踩到这里。
-`tests/i18n.test.mjs` 第 9b 段专门守它（两处调用点都反向验证过：注入旧写法 → 断言确实变红）。
+`tests/suites/i18n.test.mjs` 第 9b 段专门守它（两处调用点都反向验证过：注入旧写法 → 断言确实变红）。
 
 **教训（第三次同类）**：「同一意图的另一种写法」是这类 bug 的固定来源。凡是一个概念有两处
 表达（JS 表达式 ↔ SQL 表达式、字符串 ↔ 常量、路径 ↔ 字符串匹配），就必须让两处**共用同一个
@@ -997,7 +997,7 @@ function groupOf(row) { return String(row?.lang_group ?? "").trim() || String(ro
 这是挡 B 类"越界与重复"的机器。
 
 ```js
-// tests/architecture.test.mjs
+// tests/suites/architecture.test.mjs
 
 test('核心层不依赖主题层', () => {
   // src/core/*.ts 不得 import 任何 themes/ 目录下的东西
@@ -1033,7 +1033,7 @@ test('每个 cap 检查成对出现', () => {
 
 **这些测试的价值在于它们是"无情的"**。AI 写新代码时，如果越界，测试立刻红。它不需要"理解架构"，只需要"运行测试"。
 
-**已落地**：`tests/architecture.test.mjs` 现有 13 项检查。批次 3 新增 3 项：
+**已落地**：`tests/suites/architecture.test.mjs` 现有 13 项检查。批次 3 新增 3 项：
 
 1. **`ALLOWED_ADMIN_SCREENS` 被钉住**（集合相等，不是"包含"）——加屏幕必须同时改测试，
    否则"这个 screen 存不存在"就没有唯一答案。
@@ -1374,7 +1374,7 @@ public/admin/
         ├── themes.js  plugins.js  extension-install.js  theme-menu.js
 ```
 
-**两条结构约束（`tests/admin-spa.test.mjs` 机器强制）**：
+**两条结构约束（`tests/suites/admin-spa.test.mjs` 机器强制）**：
 
 1. **模块图无环，且没有孤儿模块。** 关键在于 `shell.js` **不 import 任何屏幕**——
    屏幕通过 `setScreenTable(SCREENS)` 自注册，登录屏通过 `setLoginScreen()` 注入。
@@ -1401,7 +1401,7 @@ extensions/  ←  可用 platform 与 rendering，但**主题与插件之间互�
 index.ts  ←  唯一知道所有层的地方
 ```
 
-**四条红线**（全部已被 `tests/architecture.test.mjs` 机器强制）：
+**四条红线**（全部已被 `tests/suites/architecture.test.mjs` 机器强制）：
 
 1. `shared/` 不 import 上层任何东西
 2. `platform/` 不 import `extensions/`
@@ -1449,7 +1449,7 @@ index.ts  ←  唯一知道所有层的地方
 
 **做什么**
 1. 按 §7.1 移动文件（纯移动，不改逻辑）
-2. 写 `tests/architecture.test.mjs`（§5.4②的 7 条）
+2. 写 `tests/suites/architecture.test.mjs`（§5.4②的 7 条）
 3. 加强 `validateManifest`（§5.3）
 4. 去掉 `siteId` 默认值（§5.2）
 
@@ -1465,7 +1465,7 @@ index.ts  ←  唯一知道所有层的地方
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| 架构测试（11 组检查） | ✅ 已建 | `tests/architecture.test.mjs`，已接入 `npm test` 与 `run-all.mjs`（批次 3 后为 13 组） |
+| 架构测试（11 组检查） | ✅ 已建 | `tests/suites/architecture.test.mjs`，已接入 `npm test` 与 `run-all.mjs`（批次 3 后为 13 组） |
 | 反向验证（测试确实会失败） | ✅ 已验证 | 7 项注入测试均如期失败（见下） |
 | 主题清单漂移修复 | ✅ 已修 | `themes/default`、`themes/magazine` 声明与实际文件对齐 |
 | 硬规则文档 | ✅ 已建 | [`AGENTS.md`](../AGENTS.md) |
@@ -1474,8 +1474,8 @@ index.ts  ←  唯一知道所有层的地方
 | **其余 6 处常量默认值** | ✅ 已修 | `siteId = DEFAULT_SITE_ID`，旧正则漏掉的那批 |
 | **目录重整（src/）** | ✅ 已完成 | `src/core/*` → `shared/` `platform/` `rendering/` `extensions/`，见下表 |
 | **依赖倒置（theme↔plugin）** | ✅ 已完成 | 新增 `extensions/contract/hooks.ts`，红线 4 从"纸面"变为"真实成立" |
-| **运行时清单校验** | ✅ 已完成 | §5.3 全部规则实现进 `validateManifest`；`tests/manifest-validation.test.mjs` 33 条断言逐条证明"拒绝"（批次 3 后为 54 条） |
-| **后台 JS 拆分** | ✅ 已完成 | `admin.js` 1514 行 → 入口 < 120 行 + `js/` 下 4 个基础模块与 18 个屏幕模块；新增 `tests/admin-spa.test.mjs`（15 条）看住模块图与 `window.*` 契约，见 §7.2 |
+| **运行时清单校验** | ✅ 已完成 | §5.3 全部规则实现进 `validateManifest`；`tests/suites/manifest-validation.test.mjs` 33 条断言逐条证明"拒绝"（批次 3 后为 54 条） |
+| **后台 JS 拆分** | ✅ 已完成 | `admin.js` 1514 行 → 入口 < 120 行 + `js/` 下 4 个基础模块与 18 个屏幕模块；新增 `tests/suites/admin-spa.test.mjs`（15 条）看住模块图与 `window.*` 契约，见 §7.2 |
 
 **批次 1 验收状态（2026-09-28 实测）**
 
@@ -1589,7 +1589,7 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 - 同一产品的中英文标题可分别编辑、分别访问 → 第 4/6 段
 - `price` 在两种语言下值相同（验证 translatable 划分）→ 第 4 段
 - 后台界面语言与内容语言独立可设 → 第 7 段
-- 真实浏览器里上述界面真的能点 → `tests/_i18n-browser.cjs`（22 条）
+- 真实浏览器里上述界面真的能点 → `tests/tools/_i18n-browser.cjs`（22 条）
 
 **这一步真实发现并修复的缺陷**（都是"只在真机/真实交互下才暴露"的那一类）：
 
@@ -1644,8 +1644,8 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
   `themes/eshop/` + `tests/theme-eshop.test.mjs`（41 条），见 §4.3。
   ⚠️ **两者都在批次 10 步骤 1 随旧主题一起删除了**（`tests/theme-eshop.test.mjs` 与
   `tests/_eshop-inject.mjs` 已不存在；`themes/` 现只剩 `default` 与 `fixture`）。
-  本文 §4.3 保留过程记录，但**其中的命令不要再执行**——用 `tests/theme-fixture.test.mjs`
-  与 `tests/theme-integration.test.mjs` 替代。本批次当时用
+  本文 §4.3 保留过程记录，但**其中的命令不要再执行**——用 `tests/suites/theme-fixture.test.mjs`
+  与 `tests/suites/theme-integration.test.mjs` 替代。本批次当时用
   `menusdemo` 夹具（测试内）与 `menusbrowser`（浏览器验收内）验证了同一组能力。
 
 **验收证据（2026-09-28 实测）**
@@ -1666,7 +1666,7 @@ theme-aurora          0 failure(s)
 npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 ```
 
-外加一次**真实浏览器**端到端验收（`tests/_admin-menus-browser.cjs`，31 条断言，连跑两次均绿）：
+外加一次**真实浏览器**端到端验收（`tests/tools/_admin-menus-browser.cjs`，31 条断言，连跑两次均绿）：
 启用插件 → 侧栏长出 "Extensions" 组 → 菜单打开插件自己的设置页 → 改值并**重新加载后仍在**
 → 上传并激活带 `tables[]` 的主题 → 侧栏 "From theme" 组出现 → 打开生成列表（列来自声明）
 → 新增行（表单控件来自 `fields[].type`）→ 保存 → 列表出现该行 → 从列表删除 → 复原初始状态
@@ -1698,14 +1698,14 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 
 **做什么**
 1. ✅ `scripts/make-theme.mjs` / `make-plugin.mjs` / `make-table.mjs`（§4.2）
-2. ✅ `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md`（§4.4）
+2. ✅ `docs/guides/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md`（§4.4）
 3. ✅ 示例主题 `eshop`（作为声明能力的活文档）（§4.3）
 4. ✅ `extensions/contract/` 拆分（批次 3 登记的技术债）（§4.1）
 5. ⏳ 插件自有表（批次 3 登记的技术债）——**仍未做**，见 §9 决定 3
 
 **验收**
 - ✅ `npm run make:theme -- demo` 生成的骨架：`tsc` 过、架构测试过、能激活、能渲染
-  （由 `tests/scaffold.test.mjs` 68 条断言机器证明，而非人工试一遍）
+  （由 `tests/suites/scaffold.test.mjs` 68 条断言机器证明，而非人工试一遍）
 - ✅ 范例主题 `eshop` 过真实校验器 / 架构规则 / 模板引擎，且**七个注入场景逐条验证会红**
 
 #### 4.1 已完成：`extensions/contract/` 拆分 + 路由消费契约收口
@@ -1714,7 +1714,7 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 
 | 文件 | 内容 | 为什么单独存在 |
 |---|---|---|
-| `contract/manifest.ts` | 词汇表（屏幕 / 字段类型 / 保留列 / 名字正则）+ 声明模型接口 | **`tests/architecture.test.mjs` 会读这个文件**去检查已装主题有没有用未知屏幕。列表住在校验器里时，唯一的检查办法是抄一份 —— 而抄本会漂移 |
+| `contract/manifest.ts` | 词汇表（屏幕 / 字段类型 / 保留列 / 名字正则）+ 声明模型接口 | **`tests/suites/architecture.test.mjs` 会读这个文件**去检查已装主题有没有用未知屏幕。列表住在校验器里时，唯一的检查办法是抄一份 —— 而抄本会漂移 |
 | `contract/capabilities.ts` | `CAPABILITIES` + `isCapability()` 类型守卫 | 同上；顺带让调用点不再写 `CAPABILITIES.includes(x as Capability)` |
 | `contract/validation.ts` | 安装边界（`validateManifest`） | 只做判断，不定义词汇 |
 | `extensions/security.ts` | 只剩 `safeZipPath` / `sha256` | 名字终于和内容一致 |
@@ -1760,7 +1760,7 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 > 修法是把断言收窄到自己那张表，**收窄后再反向验证一次**（谎报 `[]` 仍会红）。
 > 这已经是同一个坑的第三次：**共享 D1 上的断言必须按 owner 收窄，不能用全局计数。**
 
-#### 4.2 已完成：脚手架（`scripts/make-*.mjs`）+ `tests/scaffold.test.mjs`
+#### 4.2 已完成：脚手架（`scripts/make-*.mjs`）+ `tests/suites/scaffold.test.mjs`
 
 **生成器是一个承诺**：「从这里开始，你不可能把形状弄错」。这个承诺在没有东西检查它的时候
 一文不值 —— 骨架恰好由一堆**会静默失败**的构造组成（`{{len(posts)}}` 的括号写法、
@@ -1773,7 +1773,7 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 `isMain()` 守卫，用户可见的错误抛 `CliError` 并转成退出码。
 **只能以命令形式运行的生成器，等于输出永远没被检查过的生成器。**
 
-`tests/scaffold.test.mjs`（68 条）用四重独立检查守住这个承诺：
+`tests/suites/scaffold.test.mjs`（68 条）用四重独立检查守住这个承诺：
 
 | # | 检查 | 用的什么 |
 |---|---|---|
@@ -1842,8 +1842,8 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 
 > ⚠️ **本节是过程记录。** `themes/eshop/`、`tests/theme-eshop.test.mjs` 与
 > `tests/_eshop-inject.mjs` 都已在批次 10 步骤 1 随旧主题一起删除。
-> 其中的命令**不要再执行**；替代品是 `tests/theme-fixture.test.mjs`（fixture 主题自洽）
-> 与 `tests/theme-integration.test.mjs`（上传→激活→渲染端到端）。
+> 其中的命令**不要再执行**；替代品是 `tests/suites/theme-fixture.test.mjs`（fixture 主题自洽）
+> 与 `tests/suites/theme-integration.test.mjs`（上传→激活→渲染端到端）。
 
 **为什么需要一个真的主题，而不是又一篇文档。** `eshop` 是**声明能力的活文档**：
 主题自有表、生成式后台屏、声明式路由（`resolve.table` / `query.as`）、双语目录 ——
@@ -1921,9 +1921,9 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 
 #### 4.4 已完成：三份开发文档
 
-`docs/I18N.md`（四层模型、`resolveLocale` 优先级、三条不变量、排查表）、
-`docs/THEME-DEV.md`（模板语言五条硬规则、`theme.json` 逐字段、症状→成因表）、
-`docs/PLUGIN-DEV.md`（**插件不发代码**的理由、7 个可声明 hook、内联语言包）。
+`docs/guides/I18N.md`（四层模型、`resolveLocale` 优先级、三条不变量、排查表）、
+`docs/guides/THEME-DEV.md`（模板语言五条硬规则、`theme.json` 逐字段、症状→成因表）、
+`docs/guides/PLUGIN-DEV.md`（**插件不发代码**的理由、7 个可声明 hook、内联语言包）。
 
 三份都**对着源码写、不是对着记忆写**。核对中改掉了三处文档失实：helper 数量写成 10
 （实为 **9**）、`query.order` 白名单漏了 `published_at`、以及"首次访问自动建表"
@@ -1941,7 +1941,7 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 | **菜单标签服务端翻译**（`label_key` + 前缀校验） | `admin-menus` GET 消费点（§2.4）、`validateAdminMenus` 按 owner 拒绝越界 key、`themes/eshop` 复用 `theme.eshop.menu.*` |
 | 账户自助：改密 / 改名（当前密码闸门下沉 `platform/auth.ts`） | `POST auth/password` / `auth/username`，稳定错误码 `wrong_current`/`weak`/`taken`/`invalid`，SPA `explain(code)` 映射译文 |
 | per-user 菜单配置（隐藏/恢复） | `site_users.menu_prefs`（0013）+ `GET/PUT admin-menus/prefs` + `screens/menu-config.js`；**UI 层语义**（规则 38） |
-| 新套件 `tests/account.test.mjs`（27 条） | 全链路：闸门码、`auth/me` 反映、prefs 往返/隔离、**label_key 翻译端到端** |
+| 新套件 `tests/suites/account.test.mjs`（27 条） | 全链路：闸门码、`auth/me` 反映、prefs 往返/隔离、**label_key 翻译端到端** |
 
 **两条流程教训（本轮实测）**：① 真浏览器验收必须放在**所有测试套件之后**——15 个套件
 共享同一块本地 D1，幂等清理会清掉 `site_locales` 的 zh-CN 行与 `theme.active`；
@@ -2035,8 +2035,8 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
 【改代码前】
 18. 先跑 npm test，确认基线是绿的（判据是 0 failures，不是断言数）
 19. 改完再跑全部套件与 npx tsc --noEmit，都必须绿
-20. 如果改了扩展的声明能力，同步更新 tests/architecture.test.mjs 与本文档
-21. 改了多语言就同步 tests/i18n.test.mjs；改了后台就跑 tests/_i18n-browser.cjs
+20. 如果改了扩展的声明能力，同步更新 tests/suites/architecture.test.mjs 与本文档
+21. 改了多语言就同步 tests/suites/i18n.test.mjs；改了后台就跑 tests/tools/_i18n-browser.cjs
 22. 新增守卫必须反向验证：注入一次违规，确认它真的会 FAIL
 23. 一个概念要在两处表达时（JS ↔ SQL、字符串 ↔ 常量），让两处共用同一个定义
 
@@ -2049,7 +2049,7 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
 43. 平台 schema 的租户/语言归属**只有一份声明**：`contract/schema.ts` 的 `PLATFORM_SCHEMA`。
    `TENANT_TABLES` / `PLATFORM_TABLES` / `DERIVED_TENANT_TABLES` / `LOCALE_COLUMN_TABLES`
    全部**派生**自它，不得手写（手写的一定会和声明漂移）
-44. schema 声明**必须被真实数据库检验**（`tests/_schema-scope.mjs`）：新表没分类 = 红；
+44. schema 声明**必须被真实数据库检验**（`tests/tools/_schema-scope.mjs`）：新表没分类 = 红；
    租户表没有 site_id = 红；平台表有 site_id = 红；`_i18n` 边车有 site_id = 红。
    **每一条分类都必须写理由**（≥10 字），派生租户必须写明 FK 路径
 45. 领域事件是**独立于 hook 的契约**（`contract/events.ts`）：事件是**事实**（过去式、
@@ -2058,7 +2058,7 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    订阅一个不存在的事件名是 400，不是"永远不触发的 hook"
 
 【越界不变量：查询级】
-46. 表有租户字段 ≠ 查询用它。`tests/_tenant-query-audit.mjs` 列出所有触碰租户表
+46. 表有租户字段 ≠ 查询用它。`tests/tools/_tenant-query-audit.mjs` 列出所有触碰租户表
    却不带 site_id 的语句；每一处都必须有**书面裁决**（为什么安全）。
    没裁决的新语句会被标成 NEW —— 它是报告工具，不进 npm test
 47. 平台表（`theme_installs` 等）上的跨站聚合是**设计**，不是泄漏：`active` 的含义是
@@ -2124,7 +2124,7 @@ export const LOCALE_COLUMN_TABLES = PLATFORM_SCHEMA.filter(t => t.locale?.kind =
 `GENERATED_TABLE_RE = /^(?:theme|plugin)_[a-z][a-z0-9_]*$/` 看着能识别"扩展生成的表"，
 但它同时匹配 `theme_installs` / `theme_settings` / `plugin_installs` / `plugin_settings`
 ——这些是**平台注册表**，设计上**没有** `site_id`。首次运行
-`tests/_schema-scope.mjs` 就在这 6 张表上假红了。
+`tests/tools/_schema-scope.mjs` 就在这 6 张表上假红了。
 
 修法是让**声明**当权威：`isGeneratedBusinessTable(name)` 先查 `PLATFORM_SCHEMA`，
 不在里面才按前缀认。**名字前缀无法区分"主题声明的表"与"关于主题的平台表"。**
@@ -2169,7 +2169,7 @@ export const LOCALE_COLUMN_TABLES = PLATFORM_SCHEMA.filter(t => t.locale?.kind =
 
 ### 11.4 检测脚本：把声明按到真实数据库上（规则 44）
 
-`tests/_schema-scope.mjs` **不读声明然后说它对**——那证明不了任何事。它：
+`tests/tools/_schema-scope.mjs` **不读声明然后说它对**——那证明不了任何事。它：
 
 1. 把 `migrations/*.sql` 应用到**临时目录里的真 SQLite**（不碰 `.wrangler/`：
    那是本机产物，CI 上没有、新鲜检出时陈旧、每个套件都在改它）；
@@ -2184,12 +2184,12 @@ export const LOCALE_COLUMN_TABLES = PLATFORM_SCHEMA.filter(t => t.locale?.kind =
 
 | | 问题 | 位置 |
 |---|---|---|
-| 架构测试 | 声明**自己**是否自洽、是否派生、是否重复 | `tests/architecture.test.mjs` |
-| schema 守卫 | 声明是否与**真实数据库**一致 | `tests/_schema-scope.mjs` |
+| 架构测试 | 声明**自己**是否自洽、是否派生、是否重复 | `tests/suites/architecture.test.mjs` |
+| schema 守卫 | 声明是否与**真实数据库**一致 | `tests/tools/_schema-scope.mjs` |
 
 ### 11.5 查询级不变量（规则 46、47）
 
-表有 `site_id` ≠ 查询用了它。`tests/_tenant-query-audit.mjs` 扫源码，列出所有
+表有 `site_id` ≠ 查询用了它。`tests/tools/_tenant-query-audit.mjs` 扫源码，列出所有
 `FROM/INTO/UPDATE <租户表>` 而 6 行窗口内没有 `site_id` 的语句。
 
 它是**报告工具**（不进 `npm test`），因为有些命中是对的：
@@ -2235,7 +2235,7 @@ event  是事实：过去式的陈述 + payload（PostPublished、LocaleEnabled�
 
 ## 12. 守卫失效记录（十二种假绿）
 
-`tests/architecture.test.mjs` 与各套件累计出过**十二次**"检查存在但从不触发"。
+`tests/suites/architecture.test.mjs` 与各套件累计出过**十二次**"检查存在但从不触发"。
 它们不都是同一个病，修法也不同——记录在此，因为**第十三次一定长得像前十次之一**。
 
 | # | 检查 | 曾经/现在的写法 | 为什么失效 | 修法 |
@@ -2244,7 +2244,7 @@ event  是事实：过去式的陈述 + payload（PostPublished、LocaleEnabled�
 | 2 | 主题/插件互不 import | `spec.includes("/extensions/plugin/")` | 真实写法是 `"../plugin/runtime"`，不含 `/extensions/` | 按文件目录**解析路径**再比较 |
 | 3 | 语言包 key 前缀 | 检查存在，但所有 `langs/` 都是空的 | **对空集合的检查是空转** | 先确认集合非空，再断言 |
 | 4 | `clearOwnerMenus` 归属隔离 | fixture 拿主题 owner 对插件 owner | 两个 fixture 的 `owner_type` 本就不同，`owner_name` 是多余的——删掉它测试**依然全绿** | **反向验证的 fixture 必须只有一处差异** |
-| 5 | `tests/scaffold.test.mjs` 清理 | `rmSync(force:true)` | Windows `EBUSY` 失败且**吞掉错误**，生成器拒绝覆盖 → 残留旧文件全存活，**断言描述的是上一轮的产物** | **清理之后要验证清理成功** |
+| 5 | `tests/suites/scaffold.test.mjs` 清理 | `rmSync(force:true)` | Windows `EBUSY` 失败且**吞掉错误**，生成器拒绝覆盖 → 残留旧文件全存活，**断言描述的是上一轮的产物** | **清理之后要验证清理成功** |
 | 6 | 套件摘要 | 摘要在 `main()` 末尾打印 | 崩溃后控制流跳出，`N passed, M failed` **永远不打印**；脚本把"匹配不到"读成"没失败" | 摘要抽成 `finish()`，`catch` 里也调用并计一条失败；**没有摘要 = 失败** |
 | 7 | 主题渲染断言 | 用 `grep` 数卡片个数 | `__fallback__` / 404 页让卡片数 = 0，与"空列表"无法区分 | 断言要盯**注入缺陷后必然变的那一个值** |
 | 8 | 本文件的断言**拼法** | `check("…", offenders, [])` | `check` 测的是**真值**，空数组恒为真 → **断言不可能失败**。批次 6 新加的 7 条全中，重复的 `MediaUploaded` 躺在磁盘上而测试 40/40 全绿 | 加 `checkEmpty()`；再加一条**元守卫**扫本文件，禁止 `check(…, …, [])` 这种拼法 |
@@ -2321,7 +2321,7 @@ event  是事实：过去式的陈述 + payload（PostPublished、LocaleEnabled�
 在第 1、2 条落地之前，这份清单的增长速度**就是纪律被消耗的速度**。
 它不是战绩，是欠条。
 
-### 第九、第十种的两个推论（都由 `tests/_launcher-inject.mjs` 抓到）
+### 第九、第十种的两个推论（都由 `tests/tools/_launcher-inject.mjs` 抓到）
 
 **（a）"某函数被调用"要问调用点有几个。** 第九种与第七种（`resetPluginRuntime`
 只测了一个 sink）、与第四种（fixture 只有一处差异）是同一个病：**只要还有另一个
@@ -2335,7 +2335,7 @@ event  是事实：过去式的陈述 + payload（PostPublished、LocaleEnabled�
 
 ### 第八种的两个推论（都由本轮的注入工具抓到）
 
-**（a）反向验证的工具自己会假绿。** `tests/_skeleton-inject.mjs` 有三个坑，全部踩过：
+**（a）反向验证的工具自己会假绿。** `tests/tools/_skeleton-inject.mjs` 有三个坑，全部踩过：
 
 | 坑 | 症状 | 修法 |
 |---|---|---|
@@ -2345,7 +2345,7 @@ event  是事实：过去式的陈述 + payload（PostPublished、LocaleEnabled�
 
 **（b）"没有摘要"必须双向成立。** 套件侧要保证崩溃也打摘要；**工具侧**要把
 "读不到摘要"当成失败。只修一半，另一半就会把崩溃读成通过——本轮
-`tests/architecture.test.mjs` 自己就犯了这条（摘要原本在文件末尾），
+`tests/suites/architecture.test.mjs` 自己就犯了这条（摘要原本在文件末尾），
 是注入工具把它抓出来的。
 
 ### 判据：什么时候该加守卫

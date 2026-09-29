@@ -1,0 +1,131 @@
+/**
+ * Source-level tenant-scope audit.
+ *
+ * The schema guard proves every table *has* a tenant answer. This one asks the
+ * complementary question: does every *query* against a tenant-scoped table
+ * actually use that answer? A table can be correctly shaped and still be read
+ * install-wide — that is the shape of a multi-site leak, and it is invisible in
+ * a single-site install.
+ *
+ * This is a **report**, not a pass/fail gate. A statement that omits `site_id`
+ * is sometimes correct: a migration-wide backfill, a `SELECT COUNT(*)` used as
+ * a health probe, or a query whose site filter is added by the caller through
+ * `requestSiteId`. So it prints every hit with its file:line for a human to
+ * judge, and exits 0 unless `--strict` is passed.
+ *
+ * Usage:
+ *   node tests/tools/_tenant-query-audit.mjs            # report
+ *   node tests/tools/_tenant-query-audit.mjs --strict   # fail on any hit
+ */
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { TENANT_TABLES } from "../../src/extensions/contract/schema.ts";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const STRICT = process.argv.includes("--strict");
+
+function walk(dir, out = []) {
+  if (!existsSync(dir)) return out;
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (p.endsWith(".ts")) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Statements worth examining: they name a tenant table as a mutation or read
+ * target. Column lists and `PRAGMA` are skipped — they cannot leak rows.
+ */
+const TARGET_RE = /\b(?:FROM|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)\b/gi;
+
+const allowed = new Set(TENANT_TABLES);
+const hits = [];
+
+for (const file of walk(join(ROOT, "src"))) {
+  const text = readFileSync(file, "utf8");
+  const lines = text.split("\n");
+  lines.forEach((line, i) => {
+    if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(line)) return;
+    if (line.trimStart().startsWith("*") || line.trimStart().startsWith("//")) return;
+    TARGET_RE.lastIndex = 0;
+    let m;
+    while ((m = TARGET_RE.exec(line))) {
+      const table = m[1].toLowerCase();
+      if (!allowed.has(table)) continue;
+      // The site filter may be on the same line (`WHERE site_id=?`) or the
+      // statement may span lines. Look at a small window to avoid reporting a
+      // query that binds site_id on the following line.
+      const window = lines.slice(i, Math.min(i + 6, lines.length)).join(" ");
+      if (/\bsite_id\b/.test(window)) continue;
+      hits.push({
+        // Normalise to POSIX separators: the report is compared against a
+        // verdict table keyed by path, and on Windows `relative()` returns
+        // backslashes — so the lookup silently missed every entry and every
+        // reviewed statement was announced as NEW. A key that depends on the
+        // host's path separator is a key that works on one machine only.
+        where: `${relative(ROOT, file).split(/[\\/]/).join("/")}:${i + 1}`,
+        table,
+        line: line.trim().slice(0, 130),
+      });
+    }
+  });
+}
+
+console.log("Tenant-scope audit: statements touching a tenant-scoped table without site_id\n");
+if (!hits.length) {
+  console.log("  (none)");
+} else {
+  const pad = Math.max(...hits.map((h) => h.where.length));
+  for (const h of hits) {
+    console.log(`  ${h.where.padEnd(pad)}  [${h.table}]  ${h.line}`);
+  }
+}
+
+console.log(`\n${hits.length} statement(s) to review.`);
+console.log(
+  "Each is *possibly* correct — a global count, a backfill, or a caller-supplied\n" +
+  "filter. The point is that a human looks, rather than assuming."
+);
+
+/**
+ * The batch-6 review verdicts.
+ *
+ * Every hit is keyed by a primary key (`id` / `post_id` / `menu_id`) that the
+ * caller obtained *through* a site-scoped query, or is a deliberate
+ * install-wide computation. Recording them here means the next reader starts
+ * from "these were judged" rather than re-deciding from scratch — and, more
+ * importantly, a **new** hit stands out as the only unreviewed one.
+ *
+ * The alternative — a `--strict` gate — was rejected: it would force a
+ * `site_id` into statements where adding one would be wrong (`theme_installs`
+ * is platform-global by design), and a guard that is wrong gets disabled.
+ */
+const REVIEWED = {
+  "src/api.ts:216": "UPDATE posts … WHERE id=? — id came from a site-scoped lookup; slug/status are not identity",
+  "src/api.ts:372": "DELETE FROM posts WHERE id=? — id already authorized against siteId above",
+  "src/api.ts:1187": "UPDATE theme_installs … WHERE name IN (SELECT value FROM settings WHERE key='theme.active') — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
+  "src/extensions/plugin/notify.ts:108": "UPDATE notification_log … WHERE id=? — the row is this send's own claim, addressed by the PK minted a few lines above for this siteId; ok/error are not identity",
+  "src/extensions/theme/runtime-worker.ts:390": "menu_items … WHERE menu_id=? — the menu row was resolved per site; locale is the remaining filter",
+  "src/extensions/theme/tables.ts:383": "UPDATE theme_table_defs WHERE id=? — registry row addressed by its own PK",
+  "src/platform/frontend.ts:84": "menu_items … WHERE menu_id=? — same reasoning as runtime-worker",
+  "src/shared/scheduler.ts:23": "UPDATE posts … WHERE id=? — the site was just read from that very row",
+};
+
+const unreviewed = hits.filter((h) => !(h.where in REVIEWED));
+if (hits.length) {
+  console.log(`\nReviewed in batch 6: ${hits.length - unreviewed.length}/${hits.length}`);
+  for (const h of hits) {
+    if (REVIEWED[h.where]) console.log(`  judged  ${h.where}  ${REVIEWED[h.where]}`);
+  }
+}
+if (unreviewed.length) {
+  console.log(`\n⚠️ ${unreviewed.length} statement(s) have NO recorded verdict — review them:`);
+  for (const h of unreviewed) console.log(`  NEW  ${h.where}  [${h.table}]`);
+} else if (hits.length) {
+  console.log("Every hit has a recorded verdict. A new table or query will show up as NEW.");
+}
+
+if (STRICT && hits.length) process.exit(1);

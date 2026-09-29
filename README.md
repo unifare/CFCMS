@@ -33,7 +33,7 @@ Uploaded extension JavaScript is **not executed in the main Worker**. This is in
 
 ## Migrations
 
-Apply migrations in order with Wrangler D1 migrations. v0.7 adds `migrations/0007_v070.sql`.
+Apply migrations in order with Wrangler D1 migrations. v0.7 adds `site/migrations/0007_v070.sql`.
 
 ## Default admin
 
@@ -45,8 +45,43 @@ On first boot the Worker creates a single administrator account so you can log i
 > **Change this password immediately.** It is a publicly known bootstrap default,
 > not a secret. Any instance still using it is open to anyone who reads this file.
 
-Authentication uses PBKDF2-hashed passwords (`src/core/crypto.ts`); the plaintext
+Authentication uses PBKDF2-hashed passwords (`src/shared/crypto.ts`); the plaintext
 is never stored. Sessions are signed cookies with a 14-day TTL.
+
+## Documentation map
+
+| Document | Read it when |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | you want the design and the *why* behind every rule |
+| [`docs/HANDOVER.md`](docs/HANDOVER.md) | you are picking the project up — start here |
+| [`AGENTS.md`](AGENTS.md) | you are about to change code (hard rules, enforced by tests) |
+| [`docs/guides/THEME-DEV.md`](docs/guides/THEME-DEV.md) | you are writing a theme |
+| [`docs/guides/PLUGIN-DEV.md`](docs/guides/PLUGIN-DEV.md) | you are writing a plugin |
+| [`docs/guides/I18N.md`](docs/guides/I18N.md) | you are touching content or UI languages |
+| `docs/design/` | you want the architecture decisions and the research behind them |
+| `docs/history/` | you want a past review or a retired batch's record |
+
+## Repository layout
+
+```
+src/          Worker source (layers: shared <- platform <- rendering <- extensions <- index.ts)
+tests/
+  suites/     18 behaviour/architecture suites — the things `npm test` runs
+  tools/      injectors, diagnostics and migration appliers — run by hand
+  fixtures/   shared test harness code imported by suites
+public/admin/ the no-build admin SPA (served as static assets)
+site/         everything that gets *loaded* into a running install
+  themes/       shipped themes (`default`, `fixture`)
+  plugins/      shipped plugins (`notify`)
+  migrations/   ordered D1 migration stream
+scripts/      scaffolder (make-*), deploy helpers, the launcher pair
+docs/         see the documentation map above
+```
+
+`site/` groups the content an install consumes — themes, plugins and the
+migration stream — so the repository root stays code-and-config only. Theme and
+plugin scaffolds default into `site/themes` and `site/plugins`; `wrangler.jsonc`
+points `migrations_dir` at `site/migrations`.
 
 ## Development
 
@@ -60,7 +95,7 @@ npm run dev
 `scripts/cfpress.sh` (POSIX sh) and `scripts/cfpress.ps1` (Windows PowerShell)
 wrap the commands above into one entry point. Both offer the same actions with
 the same numbers and the same exit codes — a parity suite
-(`tests/launcher-parity.test.mjs`) fails if they drift apart.
+(`tests/suites/launcher-parity.test.mjs`) fails if they drift apart.
 
 **Numeric menu** — run with no arguments and pick a number:
 
@@ -82,7 +117,7 @@ sh scripts/cfpress.sh            # Linux / macOS / Git Bash
 ```bash
 sh scripts/cfpress.sh dev                  # start the local dev server
 sh scripts/cfpress.sh migrate:local        # apply migrations locally
-sh scripts/cfpress.sh theme themes/eshop   # upload + activate a theme
+sh scripts/cfpress.sh theme site/themes/eshop  # upload + activate a theme
 sh scripts/cfpress.sh test                 # run every suite, one process each
 sh scripts/cfpress.sh test multisite       # run one suite
 sh scripts/cfpress.sh typecheck            # tsc --noEmit

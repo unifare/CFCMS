@@ -152,7 +152,7 @@ act_dev() {
 
 act_theme_deploy() {
   require_wrangler
-  theme="${1:-themes/default}"
+  theme="${1:-site/themes/default}"
   [ -d "$theme" ] || die "theme directory not found: $theme"
   head1 "deploy theme: $theme"
   dim "requires a running dev server at http://$DEV_HOST:$DEV_PORT (menu 1)"
@@ -176,31 +176,31 @@ act_seed() {
 # The verdict is parsed from the suite's own summary line, and a suite that
 # never printed one counts as FAILED. "I could not tell" is not "it passed"
 # (AGENTS.md, the sixth false green).
-SUITES="architecture|tests/architecture.test.mjs
-_schema-scope|tests/_schema-scope.mjs
-manifest-validation|tests/manifest-validation.test.mjs
-admin-menus|tests/admin-menus.test.mjs
-admin-spa|tests/admin-spa.test.mjs
-template-engine|tests/template-engine.test.mjs
-scaffold|tests/scaffold.test.mjs
-theme-integration|tests/theme-integration.test.mjs
-theme-fixture|tests/theme-fixture.test.mjs
-multisite|tests/multisite.test.mjs
-i18n|tests/i18n.test.mjs
-admin-contract|tests/admin-contract.test.mjs
-account|tests/account.test.mjs
-menu-custom|tests/menu-custom.test.mjs
-plugin-hooks|tests/plugin-hooks.test.mjs
-plugin-channels|tests/plugin-channels.test.mjs
-plugin-pages|tests/plugin-pages.test.mjs
-theme-worker|tests/theme-worker.test.mjs
+SUITES="architecture|tests/suites/architecture.test.mjs
+_schema-scope|tests/tools/_schema-scope.mjs
+manifest-validation|tests/suites/manifest-validation.test.mjs
+admin-menus|tests/suites/admin-menus.test.mjs
+admin-spa|tests/suites/admin-spa.test.mjs
+template-engine|tests/suites/template-engine.test.mjs
+scaffold|tests/suites/scaffold.test.mjs
+theme-integration|tests/suites/theme-integration.test.mjs
+theme-fixture|tests/suites/theme-fixture.test.mjs
+multisite|tests/suites/multisite.test.mjs
+i18n|tests/suites/i18n.test.mjs
+admin-contract|tests/suites/admin-contract.test.mjs
+account|tests/suites/account.test.mjs
+menu-custom|tests/suites/menu-custom.test.mjs
+plugin-hooks|tests/suites/plugin-hooks.test.mjs
+plugin-channels|tests/suites/plugin-channels.test.mjs
+plugin-pages|tests/suites/plugin-pages.test.mjs
+theme-worker|tests/suites/theme-worker.test.mjs
 
-launcher-parity|tests/launcher-parity.test.mjs"
+launcher-parity|tests/suites/launcher-parity.test.mjs"
 
-# `_schema-scope` is `_schema-scope.mjs`, not `_schema-scope.test.mjs` — the
-# underscore marks it as tooling, and tooling that also runs in CI still has to
-# be findable by name. So the file comes from the table above rather than from a
-# `tests/<name>.test.mjs` convention that does not hold for all of them.
+# `_schema-scope` is `tools/_schema-scope.mjs`, not `suites/_schema-scope.test.mjs`
+# — the underscore marks it as tooling, and tooling that also runs in CI still has
+# to be findable by name. So the file comes from the table above rather than from a
+# `suites/<name>.test.mjs` convention that does not hold for all of them.
 suite_file() {
   printf '%s\n' "$SUITES" | while IFS='|' read -r n f; do
     [ "$n" = "$1" ] && printf '%s\n' "$f"
@@ -268,10 +268,10 @@ act_test() {
 act_audit() {
   require_node
   head1 "tenant scope declarations vs the real database"
-  node tests/_schema-scope.mjs
+  node tests/tools/_schema-scope.mjs
   a=$?
   head1 "query-level tenant audit (report-only)"
-  node tests/_tenant-query-audit.mjs
+  node tests/tools/_tenant-query-audit.mjs
   b=$?
   [ "$a" -eq 0 ] && [ "$b" -eq 0 ]
 }
@@ -368,9 +368,9 @@ act_doctor() {
     warn "config     $CONFIG MISSING"
   fi
 
-  n=$(ls migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
+  n=$(ls site/migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
   say "  migrations $n file(s)"
-  s=$(ls tests/*.test.mjs 2>/dev/null | wc -l | tr -d ' ')
+  s=$(ls tests/suites/*.test.mjs 2>/dev/null | wc -l | tr -d ' ')
   say "  suites     $s test suite(s)"
 
   if have git; then
@@ -505,7 +505,7 @@ menu_loop() {
     case "$choice" in
       1) act_dev ;;
       2) act_migrate_local ;;
-      3) theme=$(menu_read "  theme dir [themes/default]: "); act_theme_deploy "${theme:-themes/default}" ;;
+      3) theme=$(menu_read "  theme dir [site/themes/default]: "); act_theme_deploy "${theme:-site/themes/default}" ;;
       4) act_test ;;
       5) act_typecheck ;;
       6) act_audit ;;
