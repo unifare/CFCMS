@@ -264,10 +264,11 @@ export const CORE_PACKS: Record<string, Pack> = {
 
 /**
  * Native display names for the bundled core packs — a switcher shows a
- * language's own name, not its code. Deliberately adjacent to CORE_PACKS:
- * adding a UI language means adding a pack + one line here, both in this
- * file. The admin SPA derives its language list from the server response
- * (`ui_locales` on `i18n/messages`), so NO client change is needed.
+ * language's own name, not its code. Bundled packs are the *complete*
+ * baseline of the UI language list; languages added through the Languages
+ * screen join the same list as data (see `availableUiLocaleEntries` in
+ * packs.ts) without any code change, degrading to English per key until
+ * their overrides are filled in.
  */
 export const CORE_PACK_NAMES: Record<string, string> = {
   en: "English",
@@ -277,9 +278,4 @@ export const CORE_PACK_NAMES: Record<string, string> = {
 /** The locales a platform pack ships for. Used by the admin language picker. */
 export function corePackLocales(): string[] {
   return Object.keys(CORE_PACKS);
-}
-
-/** Switcher entries for the admin UI: code + native name, one per core pack. */
-export function corePackUiLocales(): { code: string; name: string }[] {
-  return Object.keys(CORE_PACKS).map((code) => ({ code, name: CORE_PACK_NAMES[code] ?? code }));
 }

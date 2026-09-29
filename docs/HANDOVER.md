@@ -246,7 +246,7 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 | 主页接管收尾（批次 4 遗留验证）：`routes[]` 声明 `path: "/"` → 前台首页交给主题；home 闭包移到主题路由循环之后作 fallback | ✅ `/`、`/en`、`/zh-CN` 均渲染商品档案 |
 | 反向验证：改密/改名守卫下沉 `platform/auth.ts` 后注入（绕过当前密码校验） | ✅ 注入 → 2 红，还原 → 27 绿 |
 | **编辑器瘦身（用户反馈后重做）**：单编辑器、**行内全操作**——眼睛=站点级隐藏、箭头=排序、铅笔/点名字=展开改名/移动分组；删掉页面上全部说明文字与「我的显示偏好」面板（数据/API 保留） | ✅ `icons.js` 补 `eye`/`eye-off`；验收 v6 → **48 条**（含「无废话」断言） |
-| **界面语言列表去硬编码（规则 40）**：唯一事实源 `CORE_PACKS`+`CORE_PACK_NAMES`（服务端同文件），经 `i18n/messages` 的 `ui_locales` 下发，`i18n.js setUiLanguages()` 派生——**加 ja/fr = 加包+一行名字，零客户端改动**；菜单 label 语言数上限 4→8 | ✅ `core-pack.ts`/`api.ts`/`i18n.js` |
+| **界面语言列表数据驱动（规则 40，用户反馈两次后定型）**：加语言 = Languages 屏数据操作，**零代码**。宇宙 = `CORE_PACKS` ∪ 平台字典 enabled ∪ 覆盖层 locale；唯一定义 `packs.ts availableUiLocaleEntries()`（切换列表与校验集同源）；缺 key 回退英文；菜单 label 语言数上限 4→8 | ✅ `packs.ts`/`core-pack.ts`/`api.ts`/`i18n.js`；i18n 套件新增 fr 数据驱动回归（3 条） |
 
 **三条流程教训（本轮实测，详见 §8 坑位 21–23）**：真浏览器验收放在所有套件**之后**跑；
 `api()` 非 2xx 时**抛 `Error(data.error)`**（`if (d.error)` 不可达，catch 里要 `explain(err.message)`）；

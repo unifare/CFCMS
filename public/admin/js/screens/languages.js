@@ -18,6 +18,7 @@
  */
 import { api, loadContext, state } from "../state.js";
 import { pageHead, render } from "../shell.js";
+import { loadMessages } from "../i18n.js";
 import { icon } from "../../icons.js";
 import { alertDialog, attr, confirmDialog, emptyRow, esc, openDialog, toast } from "../../ui.js";
 
@@ -32,6 +33,10 @@ import { alertDialog, attr, confirmDialog, emptyRow, esc, openDialog, toast } fr
  */
 async function afterLanguageChange() {
   await loadContext();
+  // The UI-language switcher list is data-driven (AGENTS.md rule 40): a newly
+  // added language must reach `UI_LANGUAGES` immediately, not after the next
+  // full page load.
+  await loadMessages();
   render();
 }
 

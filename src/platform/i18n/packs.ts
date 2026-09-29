@@ -23,7 +23,8 @@
  * null checks.
  */
 import { Env } from "../../shared/types";
-import { CORE_PACKS } from "./core-pack";
+import { CORE_PACKS, CORE_PACK_NAMES } from "./core-pack";
+import { platformLocales } from "./locale-registry";
 import { createTranslator, packForLocale, parsePack, type Pack, type Translator } from "./translate";
 
 /** Returns the pack for `locale`, or null when this extension has none. */
@@ -93,29 +94,58 @@ export async function uiTranslator(env: Env, siteId: string, locale: string): Pr
 }
 
 /**
- * Which UI languages can actually be shown: everything a bundled pack covers,
- * plus anything the database has overrides for.
+ * Which UI languages exist, with the name the switcher shows.
  *
- * This is deliberately **not** `site_locales`. UI language and content language
- * are independent (ARCHITECTURE.md §2.4): a Chinese site owner managing an
- * English-only site must be able to read the admin in Chinese even though
- * `zh-CN` is not a language that site serves to visitors. Constraining this
- * list to the site's content locales would make that impossible.
+ * Three sources, unioned — adding a UI language is a DATA operation, never a
+ * code change (the Languages screen writes here):
+ *
+ *   1. bundled core packs        guaranteed complete (`core-pack.ts`)
+ *   2. the platform dictionary   any enabled `locales` row; keys without a
+ *                                translation fall back to English in the SPA
+ *                                (`t()` carries the English source), and are
+ *                                filled in over time via the override layer
+ *   3. locales with DB overrides an admin already started translating them
+ *
+ * This is deliberately **not** `site_locales`. UI language and content
+ * language are independent (ARCHITECTURE.md §2.4): a Chinese site owner
+ * managing an English-only site must be able to read the admin in Chinese
+ * even though `zh-CN` is not a language that site serves to visitors.
+ * Constraining this list to the site's content locales would make that
+ * impossible.
+ *
+ * This one function is BOTH the switcher list (`ui_locales` on
+ * `i18n/messages`) and the validation set (`availableUiLocales` below) —
+ * the switcher can never offer what the server would refuse, or refuse
+ * what it offers.
  */
-export async function availableUiLocales(env: Env, siteId: string): Promise<string[]> {
-  const out = new Set<string>(Object.keys(CORE_PACKS));
+export async function availableUiLocaleEntries(env: Env, siteId: string): Promise<{ code: string; name: string }[]> {
+  const names = new Map<string, string>();
+  for (const code of Object.keys(CORE_PACKS)) names.set(code, CORE_PACK_NAMES[code] ?? code);
+  try {
+    for (const row of await platformLocales(env)) {
+      if (row.enabled !== 1) continue;
+      const code = String(row.code ?? "");
+      if (code && !names.has(code)) names.set(code, String(row.native_name || row.name || code));
+    }
+  } catch { /* dictionary table absent on a pre-batch-2 database */ }
   try {
     const r = await env.DB.prepare("SELECT DISTINCT locale FROM i18n_overrides WHERE site_id=?")
       .bind(siteId)
       .all();
     for (const row of (r.results as any[]) ?? []) {
       const code = String(row?.locale ?? "");
-      if (code) out.add(code);
+      if (code && !names.has(code)) names.set(code, code);
     }
-  } catch {
-    /* table absent on a pre-0011 database */
-  }
-  return [...out].sort();
+  } catch { /* table absent on a pre-0011 database */ }
+  const entries = [...names].map(([code, name]) => ({ code, name }));
+  // English first — it is the fallback language and the escape hatch.
+  entries.sort((a, b) => (a.code === "en" ? -1 : b.code === "en" ? 1 : a.code.localeCompare(b.code)));
+  return entries;
+}
+
+/** The codes only — what `ui-locale` validation and `resolveUiLocale` check. */
+export async function availableUiLocales(env: Env, siteId: string): Promise<string[]> {
+  return (await availableUiLocaleEntries(env, siteId)).map((e) => e.code);
 }
 
 /**

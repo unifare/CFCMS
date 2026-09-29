@@ -45,6 +45,7 @@ export {
   loadUiPacks,
   uiTranslator,
   availableUiLocales,
+  availableUiLocaleEntries,
   resolveUiLocale,
   dbOverridePack,
   type PackProvider,
@@ -52,4 +53,4 @@ export {
 
 export { createTranslator, interpolate, packForLocale, parsePack, mergePacks, type Pack, type Translator } from "./translate";
 
-export { CORE_PACKS, corePackLocales, corePackUiLocales } from "./core-pack";
+export { CORE_PACKS, corePackLocales } from "./core-pack";

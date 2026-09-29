@@ -27,9 +27,9 @@ import {
   themeSettings,
 } from "./extensions/theme/capabilities";
 import {
+  availableUiLocaleEntries,
   availableUiLocales,
   corePackLocales,
-  corePackUiLocales,
   disableSiteLocale,
   enableSiteLocale,
   isLocaleCode,
@@ -787,7 +787,7 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
           defaultLocale: await siteDefaultLocale(env, siteId),
         });
     const packs = await loadUiPacks(env, siteId, locale);
-    return ok({ locale, available, ui_locales: corePackUiLocales(), layers: packs.length, messages: mergePacks(packs) });
+    return ok({ locale, available, ui_locales: await availableUiLocaleEntries(env, siteId), layers: packs.length, messages: mergePacks(packs) });
   }
   // Database override layer (§2.4 layer ④).
   if (path === "i18n/overrides") {

@@ -207,6 +207,17 @@ async function main() {
   // table would make the "monolingual creates no _i18n table" assertion pass
   // for the wrong reason on the next run.
   const previousActive = sqlite.prepare("SELECT value FROM settings WHERE site_id='default' AND key='theme.active'").get()?.value ?? null;
+  // Activating the suite's test theme below runs clear-then-insert over
+  // several SITE-WIDE tables (theme_routes, admin_menu_registry). The harness
+  // has no R2, so the real theme's manifest cannot be replayed afterwards —
+  // snapshot what activation will destroy and put it back at the end.
+  const previousRoutes = sqlite.prepare("SELECT * FROM theme_routes WHERE site_id='default'").all();
+  const previousMenus = sqlite.prepare("SELECT * FROM admin_menu_registry WHERE site_id IN ('default','*')").all();
+  // Same pattern for the language state: the lifecycle tests below need a
+  // KNOWN locale set (en, then en+zh-CN), but a human may have added jp or fr
+  // through the Languages screen. Snapshot, normalize, restore.
+  const previousSiteLocales = sqlite.prepare("SELECT * FROM site_locales WHERE site_id='default'").all();
+  const previousLocales = sqlite.prepare("SELECT * FROM locales").all();
   sqlite.exec(`DROP TABLE IF EXISTS ${I18N_TABLE}`);
   sqlite.exec(`DROP TABLE IF EXISTS ${MAIN_TABLE}`);
   sqlite.exec(`DELETE FROM theme_table_defs WHERE theme_name='${THEME}'`);
@@ -217,9 +228,18 @@ async function main() {
   sqlite.exec("DELETE FROM post_translations WHERE post_id IN (SELECT id FROM posts WHERE slug LIKE 'i18n-%')");
   sqlite.exec("DELETE FROM posts WHERE slug LIKE 'i18n-%'");
   sqlite.exec("DELETE FROM scheduled_posts WHERE post_id NOT IN (SELECT id FROM posts)");
-  sqlite.exec("DELETE FROM site_locales WHERE code='zh-CN'");
+  // The i18n lifecycle below assumes the default site's locale set is exactly
+  // what THIS suite manages (en, then en+zh-CN). Humans may have added other
+  // languages through the admin (they live in this shared dev database), so
+  // normalize first — every non-en row, not just codes we happen to know.
+  sqlite.exec("DELETE FROM site_locales WHERE site_id='default' AND code <> 'en'");
+  // Deleting the other rows can leave the site with NO default row (a human
+  // may have made zh-CN the default before this run). Re-pin en as the default
+  // so both this suite and whatever runs after it see a known state.
+  sqlite.exec("UPDATE site_locales SET is_default=1, enabled=1, sort_order=0 WHERE site_id='default' AND code='en'");
+  sqlite.exec("DELETE FROM locales WHERE code <> 'en'");
   sqlite.exec("DELETE FROM i18n_overrides WHERE site_id='default' AND key LIKE 'core.%'");
-  sqlite.exec("DELETE FROM locales WHERE code='zh-CN'");
+  sqlite.exec("DELETE FROM site_users WHERE ui_lang IS NOT NULL AND ui_lang <> 'en'");
   sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key='i18n.defaultLocale'");
 
   console.log("\n0. Admin bootstrap & auth");
@@ -369,7 +389,31 @@ async function main() {
   const badUi = await (await req(worker, env, "/api/v1/i18n/ui-locale", {
     method: "POST", headers: auth, body: JSON.stringify({ locale: "xx-YY" }),
   })).json();
-  checkTruthy("a language with no pack is refused", badUi.error);
+  checkTruthy("a completely unknown language is refused", badUi.error);
+
+  // Adding a UI language is a DATA operation: registering a locale in the
+  // platform dictionary (what the Languages screen does) makes it switchable
+  // without any code change. Keys without a translation degrade to the
+  // English fallback in the SPA (`t()` carries the English source). This is
+  // the regression for "adding ja/fr must not require touching core-pack.ts".
+  // The pure dictionary endpoint is used so the site's content languages stay
+  // untouched (§9 counts entries per enabled locale).
+  const fr = await (await req(worker, env, "/api/v1/i18n/dictionary", {
+    method: "POST", headers: auth,
+    body: JSON.stringify({ code: "fr", name: "French", native_name: "Français" }),
+  })).json();
+  check("registering a language in the platform dictionary works", fr.ok, true);
+  const frUi = await (await req(worker, env, "/api/v1/i18n/ui-locale", {
+    method: "POST", headers: auth, body: JSON.stringify({ locale: "fr" }),
+  })).json();
+  check("a dictionary locale without a bundled pack is a UI language now", frUi.locale, "fr");
+  const frMsgs = await (await req(worker, env, "/api/v1/i18n/messages?locale=fr", { headers: auth })).json();
+  const frEntry = (Array.isArray(frMsgs.ui_locales) ? frMsgs.ui_locales : []).find((l) => l && l.code === "fr");
+  check("ui_locales ships the data-driven language with its native name", frEntry && frEntry.name, "Français");
+  const frReset = await (await req(worker, env, "/api/v1/i18n/ui-locale", {
+    method: "POST", headers: auth, body: JSON.stringify({ locale: "en" }),
+  })).json();
+  check("switch back to en after the fr probe", frReset.locale, "en");
 
   // -- 8. L2 dictionary stack --------------------------------------------
   console.log("\n8. L2 dictionary layers");
@@ -457,12 +501,52 @@ async function main() {
   // -- restore ------------------------------------------------------------
   // Leave the default site's theme as this suite found it, so the suite is
   // order-independent with respect to the rest of the chain.
-  sqlite.exec("DELETE FROM site_locales WHERE code='zh-CN'");
-  sqlite.exec("DELETE FROM locales WHERE code='zh-CN'");
+  //
+  // KNOWN GAP: activating eshoptheme above also cleared the previous theme's
+  // rows in admin_menu_registry (clear-then-insert), and they cannot be
+  // re-inserted here — the previous theme's manifest lives in R2, which this
+  // harness does not have. The setting row below makes the FRONT END render
+  // the right theme again; the ADMIN menu rows are re-declared by whoever
+  // needs them (the browser acceptance script re-activates eshop on boot).
+  // Restore the exact locale state this suite found (a human's jp/fr, the
+  // default language choice) instead of guessing what "clean" means.
+  sqlite.exec("DELETE FROM site_locales WHERE site_id='default'");
+  const insSiteLocale = sqlite.prepare(
+    "INSERT INTO site_locales (site_id,code,is_default,enabled,sort_order) VALUES (?,?,?,?,?)"
+  );
+  for (const l of previousSiteLocales) insSiteLocale.run(l.site_id, l.code, l.is_default, l.enabled, l.sort_order);
+  sqlite.exec("DELETE FROM locales");
+  const insLocale = sqlite.prepare(
+    "INSERT INTO locales (code,name,is_default,native_name,direction,enabled,sort_order) VALUES (?,?,?,?,?,?,?)"
+  );
+  for (const l of previousLocales) {
+    insLocale.run(l.code, l.name, l.is_default ?? 0, l.native_name ?? null, l.direction ?? "ltr", l.enabled ?? 1, l.sort_order ?? 0);
+  }
   sqlite.exec("DELETE FROM i18n_overrides WHERE site_id='default' AND key='core.action.save'");
   if (previousActive) {
     sqlite.prepare("INSERT INTO settings(id,site_id,key,value,autoload) VALUES(?,?,?,?,1) ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value")
       .run("setting-theme-active", "default", "theme.active", previousActive);
+  }
+  // Restore the front-end routes and admin menu rows that activating
+  // eshoptheme destroyed (the activate flow clear-then-inserts both tables).
+  // Without this the real theme's front-end URLs 404 and its admin menu rows
+  // are gone until something re-declares them.
+  sqlite.exec("DELETE FROM theme_routes WHERE site_id='default'");
+  const insRoute = sqlite.prepare(
+    "INSERT INTO theme_routes (id,site_id,path,template,query_json,resolve_json,sort_order,declared_by_theme,created_at,updated_at,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+  );
+  for (const r of previousRoutes) {
+    insRoute.run(r.id, r.site_id, r.path, r.template, r.query_json ?? "{}", r.resolve_json ?? null,
+      r.sort_order ?? 0, r.declared_by_theme ?? null, r.created_at, r.updated_at, r.title ?? null);
+  }
+  sqlite.exec("DELETE FROM admin_menu_registry WHERE site_id IN ('default','*')");
+  const insMenu = sqlite.prepare(
+    "INSERT INTO admin_menu_registry (id,site_id,owner_type,owner_name,menu_id,label,icon,screen,args_json,capability,sort_order,enabled,created_at,updated_at,label_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+  );
+  for (const m of previousMenus) {
+    insMenu.run(m.id, m.site_id, m.owner_type, m.owner_name, m.menu_id, m.label, m.icon ?? null,
+      m.screen, m.args_json ?? "{}", m.capability ?? null, m.sort_order ?? 0, m.enabled ?? 1,
+      m.created_at, m.updated_at, m.label_key ?? null);
   }
 
   console.log(`\n${"=".repeat(64)}`);
