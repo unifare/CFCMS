@@ -41,12 +41,20 @@
    `node tests/manifest-validation.test.mjs` 与 `node tests/architecture.test.mjs`
    （后者守 `DOMAIN_EVENTS` 的完整性、唯一性、payload 版本兜底，以及
    "事件名不得混进 hook 列表"）。
+7d. **如果动了 `scripts/cfpress.sh` 或 `scripts/cfpress.ps1`（加动作、改菜单编号、
+   改套件表）**，跑 `node tests/launcher-parity.test.mjs`。它要求两份文件
+   **动作名、菜单编号、套件表、退出码**完全对齐，并且套件表要覆盖
+   `package.json` 的 `test` 链（增删套件时两边都要改，它会告诉你漏了哪边）。
+   ⚠️ 改 `cfpress.ps1` 后**必须确认 BOM 还在**（`head -c 3 scripts/cfpress.ps1 | xxd`
+   应显示 `efbbbf`）——多数编辑器/写入工具会把它吃掉，而症状要到 Windows
+   PowerShell 5.1 下才出现（中文变乱码），PS 7 与文本编辑器都看不出来。
 8. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
    本仓库已经发生过**八种**（见下方「守卫失效记录」与「同一意图的两种写法」）。
    工具：`node tests/_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法，11 个场景）、
+   `node tests/_launcher-inject.mjs`（启动器两侧对齐 / BOM / stderr 提示 / EOF 退出，13 个场景）、
    `node tests/_eshop-inject.mjs`、`node tests/_i18n-field-inject.mjs`。
-   ⚠️ 这三个工具**用 Worker 线程在进程内跑套件**——本沙箱 `spawnSync` 一律 `EBUSY`，
+   ⚠️ 这四个工具**用 Worker 线程在进程内跑套件**——本沙箱 `spawnSync` 一律 `EBUSY`，
    用子进程会把"跑不起来"伪装成"没变红"。
 
 **当前源码布局**（已重整完毕，新代码必须放对位置）：
@@ -78,8 +86,28 @@ scripts/                  脚手架（生成器必须可被 import，见 tests/s
 ├── _scaffold.mjs         共用：parseArgs / writeTree / CliError / isMain
 ├── make-theme.mjs        themeFiles() 纯函数 + main(argv, io)
 ├── make-plugin.mjs       pluginFiles() 纯函数 + main(argv, io)
-└── make-table.mjs        tableDeclarations() 纯函数 + main(argv, io)
+├── make-table.mjs        tableDeclarations() 纯函数 + main(argv, io)
+├── cfpress.sh            ★ 启动/部署入口（POSIX sh）：数字菜单 + 命令模式
+└── cfpress.ps1           ★ 同上，Windows PowerShell 5.1 版
 ```
+
+**启动器两份文件是一个契约**：`cfpress.sh` 与 `cfpress.ps1` 承诺"同一套动作、同一套
+菜单编号、同一套退出码"。`tests/launcher-parity.test.mjs` **解析**两份文件的
+`case`/`switch` 分支与套件表再比对——不是 grep 子串。改任一侧都要改另一侧，
+否则套件变红。（为什么必须解析结构：见下方「十种假绿」。）
+
+launcher 侧已经踩过、并已写进测试的四条：
+① **`.ps1` 必须有 UTF-8 BOM**——Windows PowerShell 5.1 把无 BOM 文件按 ANSI/GBK 读，
+菜单里的中文在**解析期**就变乱码（PS 7 与文本编辑器都看不出来）。
+② **`.ps1` 不得用 `$ErrorActionPreference = 'Stop'`**——PS 5.1 会把原生命令的每一行
+stderr 包成 `NativeCommandError`，`Stop` 让它变**终止性**错误；本仓库每个套件都打
+`ExperimentalWarning` 到 stderr，于是 launcher 跑第一个套件就死。
+③ **菜单提示必须走 stderr**——`choice=$(menu_read ...)` 会把 stdout 一起捕进去，
+提示写 stdout 时每个答案都变成 `"  > 9"`，**没有任何分支能匹配**（界面看着正常）。
+④ **输入耗尽必须退出**——把 EOF 当"再问一次"会无限刷菜单（PS 版实测**一分钟 9.7 MB 日志**）。
+`sh` 版读 stdin（管道可驱动），`ps1` 版在调 `Read-Host` **之前**用
+`[Console]::IsInputRedirected -and -not [Console]::In.Peek()` 判断——事后无法区分
+"没有控制台"和"用户按了回车"。
 
 **`contract/manifest.ts` 为什么单独存在**：`tests/architecture.test.mjs` 需要**读**这些
 词汇表（后台屏幕白名单、字段类型、保留列）。词汇表住在校验器内部时，唯一的检查办法
@@ -153,7 +181,8 @@ await hooks.applyFilters("html", ctx, out);
 
 ## 守卫失效记录（READ THIS）
 
-`tests/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」：
+`tests/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。
+**全库累计十种**——`docs/ARCHITECTURE.md` §12 是完整表，这里列前三种：
 
 | 检查 | 曾经的写法 | 为什么失效 | 现状 |
 |---|---|---|---|
@@ -269,7 +298,7 @@ check("no domain event is declared twice", dupes, []);   // ← 不可能失败
 > 结果两条条件写成 `.filter(...)` 的假绿调用溜过去了。**守卫的守卫也要覆盖每种写法**
 > ——这正是第七种的教训，隔一节又犯了一次。
 
-### 反向验证工具自身的三条铁律（`tests/_skeleton-inject.mjs`）
+### 反向验证工具自身的三条铁律（`tests/_skeleton-inject.mjs`、`_launcher-inject.mjs`）
 
 本轮把 11 个场景全部跑通了，途中工具自己假绿过三次：
 
@@ -281,6 +310,30 @@ check("no domain event is declared twice", dupes, []);   // ← 不可能失败
 
 第 2、3 条合起来的后果很值得记：**一次未还原的注入，会让后续所有场景的结论作废**，
 而 `assertPristine` 之所以没拦住，是因为它的基准快照本身取自已经脏掉的树。**先修树，再快照。**
+
+### 第九种假绿：守卫被**另一半**满足（`_launcher-inject.mjs` 第 5 场景）
+
+写启动器对齐检查时，`deploy` 守卫的断言是"`Test-DeployPrecheck` 在定义体之外出现过一次"。
+注入时只删掉了 `Invoke-Deploy` 里的那一次调用，`Invoke-DeployFull` 里的**另一处调用**
+继续满足断言 → **套件全绿，而部署路径已经不再检查占位符**。
+
+**规则**：断言"某函数被调用"时，要问一句"它有几个调用点"。
+**每个调用点各写一条断言**（现在是 `(Invoke-Deploy)` 与 `(Invoke-DeployFull)` 两条），
+并且**按函数体切出来单独检查**，不要在整个文件的文本里搜。
+这跟第七种（`resetPluginRuntime` 只测了一个 sink）是同一个病，
+跟「fixture 只有一处差异」是同一条反向推理。
+
+### 第十种假绿：**期望值写反了**，于是"红得不对"被读成"没红"（同工具第 3、9 场景）
+
+`checkEmpty("no suite name is listed only by .sh", onlySh)` —— 从 `.ps1` 里删掉一个套件时，
+这个断言**正确地红了**（`.sh` 有、`.ps1` 没有 = "只有 .sh 列出"）。
+但我在场景里把 `expect` 写成了 `... only by .ps1`，工具于是报
+`<- went red, but not where expected`，我第一反应是"套件有 bug"，差点去改**对的代码**。
+
+**规则**：出现"红了但不是这一条"时，先怀疑**期望值**，再怀疑代码。
+断言名里的方向词（only by X / missing from X / left / right）要**照着集合差集的定义读一遍**
+再写进场景。顺带：工具必须把**实际红了哪几条**打印出来（`[…|…]`），
+否则"红得不对"和"没红"在输出上无法区分。同一次会话里，第 9 场景也是同一个错误。
 
 ### 合法豁免要写在源码里，不要写在测试里
 

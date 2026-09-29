@@ -32,7 +32,8 @@
     "test:account": "node tests/account.test.mjs",
     "test:menu-custom": "node tests/menu-custom.test.mjs",
     "test:schema": "node tests/_schema-scope.mjs",
-    "test": "node tests/architecture.test.mjs && node tests/_schema-scope.mjs && node tests/manifest-validation.test.mjs && node tests/admin-menus.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/scaffold.test.mjs && node tests/theme-integration.test.mjs && node tests/theme-eshop.test.mjs && node tests/multisite.test.mjs && node tests/i18n.test.mjs && node tests/admin-contract.test.mjs && node tests/account.test.mjs && node tests/menu-custom.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs"
+    "test:launcher": "node tests/launcher-parity.test.mjs",
+    "test": "node tests/architecture.test.mjs && node tests/_schema-scope.mjs && node tests/manifest-validation.test.mjs && node tests/admin-menus.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/scaffold.test.mjs && node tests/theme-integration.test.mjs && node tests/theme-eshop.test.mjs && node tests/multisite.test.mjs && node tests/i18n.test.mjs && node tests/admin-contract.test.mjs && node tests/account.test.mjs && node tests/menu-custom.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs && node tests/launcher-parity.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.3",

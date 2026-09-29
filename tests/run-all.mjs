@@ -42,6 +42,12 @@ const suites = [
   ["plugin hooks", "plugin-hooks.test.mjs"],
   ["theme sandbox (L3)", "theme-worker.test.mjs"],
   ["aurora templates", "theme-aurora.test.mjs"],
+  // The launcher parity check is pure text analysis over scripts/cfpress.sh and
+  // scripts/cfpress.ps1 — no Worker, no database. It guards the promise those
+  // two files make to each other ("one set of actions"), which decays silently
+  // otherwise: a missing action only surfaces when someone on the other OS
+  // needs it.
+  ["launcher parity (sh <-> ps1)", "launcher-parity.test.mjs"],
 ];
 
 const results = [];
