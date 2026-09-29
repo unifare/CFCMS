@@ -12,7 +12,7 @@
  *   3. never use `git checkout` to restore — it cannot restore an untracked file
  *      and it fails silently. Snapshot the bytes here, and verify the restore.
  */
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -152,6 +152,18 @@ const SCENARIOS = [
     after: "*.ps1           text eol=crlf working-tree-encoding=UTF-8-BOM",
     expect: ".gitattributes does not use working-tree-encoding",
   },
+  {
+    // The converse of "every suite in the table is in `npm test`": a suite that
+    // exists on disk but appears in **none** of the four registries. This is the
+    // observation-surface hole that let `plugin-channels.test.mjs` hide — all
+    // three original assertions checked "a table entry exists elsewhere", so an
+    // orphan file satisfied every one of them. Section 5b scans the real disk
+    // listing instead.
+    label: "a test suite exists on disk but is in no registry (orphan suite)",
+    createFile: join(ROOT, "tests", "orphan-probe.test.mjs"),
+    createBody: "process.exit(0);\n",
+    expect: "every `tests/*.test.mjs` on disk is in the launcher table",
+  },
 ];
 
 // --- run a suite in a worker thread -----------------------------------------
@@ -238,7 +250,16 @@ async function main() {
     const originalBytes = pristine.get(target);
 
     let mutated;
-    if (sc.bomStrip) {
+    if (sc.createFile) {
+      // A scenario whose defect *is* a file's existence. Nothing to mutate, but
+      // the "did the injection land" rule still applies: the file must not have
+      // pre-existed, or the scenario would be reading the previous run's state.
+      if (existsSync(sc.createFile)) {
+        console.log(`SKIP ${i + 1}. ${sc.label} — ${sc.createFile} already exists (stale tree)`);
+        problems++;
+        continue;
+      }
+    } else if (sc.bomStrip) {
       mutated = originalBytes[0] === 0xef ? originalBytes.subarray(3) : originalBytes;
       if (mutated === originalBytes) {
         console.log(`SKIP ${i + 1}. ${sc.label} — already had no BOM`);
@@ -258,10 +279,19 @@ async function main() {
     }
 
     // Rule 2: prove the injection changed the bytes.
-    const beforeHash = sha(target);
-    writeFileSync(target, mutated);
-    const afterHash = sha(target);
-    if (beforeHash === afterHash) {
+    const beforeHash = sc.createFile ? "<absent>" : sha(target);
+    if (sc.createFile) {
+      writeFileSync(sc.createFile, sc.createBody);
+      if (!existsSync(sc.createFile)) {
+        console.log(`SKIP ${i + 1}. ${sc.label} — could not create ${sc.createFile}`);
+        problems++;
+        continue;
+      }
+    } else {
+      writeFileSync(target, mutated);
+    }
+    const afterHash = sc.createFile ? "<created>" : sha(target);
+    if (!sc.createFile && beforeHash === afterHash) {
       console.log(`SKIP ${i + 1}. ${sc.label} — injection changed nothing (${beforeHash})`);
       problems++;
       writeFileSync(target, originalBytes);
@@ -274,9 +304,15 @@ async function main() {
     const hit = verdict.names.some((n) => n.startsWith(sc.expect));
     const wentRed = verdict.aborted || verdict.failed > 0;
 
-    // Rule 3: restore, then verify the restore by hash.
-    writeFileSync(target, originalBytes);
-    const restored = sha(target) === pristineHash.get(target);
+    // Rule 3: restore, then verify the restore by hash (and by absence).
+    if (sc.createFile) {
+      rmSync(sc.createFile, { force: true });
+    } else {
+      writeFileSync(target, originalBytes);
+    }
+    const restored = sc.createFile
+      ? !existsSync(sc.createFile)
+      : sha(target) === pristineHash.get(target);
 
     const status = hit && restored ? "ok  " : "BAD ";
     if (!hit || !restored) problems++;

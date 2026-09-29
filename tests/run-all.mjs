@@ -40,6 +40,11 @@ const suites = [
   ["multi-language (L0-L3)", "i18n.test.mjs"],
   ["admin contract", "admin-contract.test.mjs"],
   ["plugin hooks", "plugin-hooks.test.mjs"],
+  // The channel runtime: webhook delivery + the claim-before-send dedup ledger.
+  // It was missing from all four registries (npm test, this list, and both
+  // launchers) while still existing and passing — see the coverage guard in
+  // `launcher-parity.test.mjs`.
+  ["plugin channels (notify)", "plugin-channels.test.mjs"],
   // Plugin-declared admin pages run right after plugin hooks: both drive the
   // real Worker against a plugin install, and this one adds the page renderer —
   // the only suite that reads markup back out of a response.

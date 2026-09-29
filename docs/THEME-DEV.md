@@ -298,7 +298,7 @@ curl -sI "$BASE/en" | grep -i x-cfpress-template
 ```bash
 npx tsc --noEmit                 # 若有 worker 运行时主题
 node tests/scaffold.test.mjs     # 生成器与模板形状
-node tests/theme-aurora.test.mjs # 真主题渲染快照
+node tests/theme-fixture.test.mjs # 真主题渲染快照
 ```
 
 手动过一遍：

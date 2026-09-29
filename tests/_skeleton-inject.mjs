@@ -161,11 +161,19 @@ const SCENARIOS = [
     // has no per-assertion name here, so this scenario only requires red.
     runs: [["tests/manifest-validation.test.mjs", null]],
   },
+  {
+    label: "a doc code block names a test suite that does not exist",
+    file: join(ROOT, "docs/THEME-DEV.md"),
+    before: ["node tests/theme-fixture.test.mjs # 真主题渲染快照"],
+    after: ["node tests/theme-deleted-long-ago.test.mjs # 真主题渲染快照"],
+    runs: [["tests/architecture.test.mjs", "every test path named in a doc code block exists on disk"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
 const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
-  join(ROOT, "src/extensions/contract/hooks.ts")])];
+  join(ROOT, "src/extensions/contract/hooks.ts"),
+  join(ROOT, "docs/THEME-DEV.md")])];
 
 function hashAll() {
   const out = {};

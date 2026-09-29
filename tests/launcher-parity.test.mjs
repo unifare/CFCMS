@@ -24,7 +24,7 @@
  * Not in `npm test`'s fast path? It is — it is cheap (no Worker, no D1) and the
  * thing it guards is the entry point everyone touches first.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -333,6 +333,31 @@ function normName(s) {
     if (!existsSync(join(ROOT, file))) missing.push(`${name} -> ${file}`);
   }
   checkEmpty("every suite file in the table exists on disk", missing);
+}
+
+// 5b. the converse — every `tests/*.test.mjs` on disk is in the table.
+//     Without this arrow, a suite that is missing from *all* the registries is
+//     invisible: section 6 compares the table against `npm test`, and if a file
+//     is absent from both, that comparison happily passes. `plugin-channels`
+//     sat in exactly that hole — it existed, ran green, and was listed by
+//     neither the launcher nor `npm test`.
+//
+//     Only `*.test.mjs` is required to be registered. The `_`-prefixed tools
+//     (`_schema-scope.mjs`, `_*-inject.mjs`, …) are exempt: they are tooling run
+//     by hand or by a dedicated entry, and `_schema-scope` is in the chain while
+//     the injectors deliberately are not.
+{
+  const suitesOnDisk = readdirSync(join(ROOT, "tests"))
+    .filter((f) => f.endsWith(".test.mjs"))
+    .map((f) => `tests/${f}`);
+  const inTable = new Set(shSuite.values());
+  const unregistered = suitesOnDisk.filter((f) => !inTable.has(f));
+  checkEmpty("every `tests/*.test.mjs` on disk is in the launcher table", unregistered);
+  check(
+    "the disk scan found the suites (the check is not vacuous)",
+    suitesOnDisk.length > 10,
+    `${suitesOnDisk.length} suite files on disk`
+  );
 }
 
 // 6. the table covers package.json's `test` chain — otherwise the launcher and

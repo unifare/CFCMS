@@ -1272,6 +1272,60 @@ section("The schema declaration covers the real database (§10 rules 41–44)");
 }
 
 // ---------------------------------------------------------------------------
+section("Docs do not reference test suites that no longer exist");
+// ---------------------------------------------------------------------------
+
+/**
+ * Documentation is executable here: AGENTS.md tells a contributor which suite
+ * to run after which change, and `package.json` / the launchers are checked
+ * against disk by `tests/launcher-parity.test.mjs`. A doc that names a deleted
+ * suite is not a cosmetic wart — it is an instruction that fails when followed,
+ * and the failure looks like "the suite is broken", not "the doc is stale".
+ *
+ * Batch 10 deleted two theme suites and left eight references behind. They were
+ * found by hand, which is the exact failure mode this repo keeps re-learning:
+ * a convention nobody enforces is a convention that expires.
+ *
+ * Scope: only `tests/*.(test.)mjs` paths written **inside a fenced code block**.
+ * Prose is deliberately exempt — the history section legitimately quotes retired
+ * names ("`theme-aurora` was deleted in batch 10"), and a guard that forbids
+ * mentioning a deleted file would forbid explaining *why* it was deleted.
+ * A fenced block is the unambiguous "run this" position; prose is not.
+ */
+{
+  const DOCS = [
+    "AGENTS.md",
+    "README.md",
+    ...walk(join(ROOT, "docs"), [".md"]).map((f) => rel(f)),
+  ];
+  const missing = [];
+  let refsScan = 0;
+
+  for (const doc of DOCS) {
+    const src = read(join(ROOT, doc));
+    // Split on fences; odd-indexed chunks are the inside of a code block.
+    const chunks = src.split(/^[ \t]*(?:```|~~~)[^\n]*$/m);
+    const fenced = chunks.filter((_, i) => i % 2 === 1).join("\n");
+    for (const m of fenced.matchAll(/\btests\/[A-Za-z0-9_.-]+\.mjs\b/g)) {
+      refsScan++;
+      if (!existsSync(join(ROOT, m[0]))) missing.push(`${doc}: ${m[0]}`);
+    }
+  }
+
+  checkEmpty(
+    "every test path named in a doc code block exists on disk",
+    [...new Set(missing)]
+  );
+  // Non-vacuity: a rename of the docs directory would silently empty the scan
+  // and the assertion above would pass by finding nothing to complain about.
+  check(
+    "the doc scan actually read the code blocks (non-vacuity)",
+    refsScan > 5,
+    `${refsScan} fenced test-path references across ${DOCS.length} docs`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 //
