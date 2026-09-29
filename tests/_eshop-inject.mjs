@@ -45,13 +45,32 @@ function read(rel) { return readFileSync(join(THEME_DIR, rel), "utf8"); }
 function write(rel, text) { writeFileSync(join(THEME_DIR, rel), text); }
 
 // `probe` runs the same substitution the mutation will, so the guard can verify
-// the *content* changed even when the length does not.
-function mutate(rel, re, to) {
+// the *content* changed even when the length does not. `minMatches` asserts the
+// mutation hit every instance it intended to: a scoped defect that exists twice
+// and is injected once leaves the other instance green — the fixture-drift
+// lesson again, one level down.
+function mutate(rel, re, to, minMatches = 1) {
   const before = read(rel);
-  const after = before.replace(re, to);
+  const hits = (before.match(new RegExp(re.source, re.flags + (re.flags.includes("g") ? "" : "g"))) ?? []).length;
+  if (hits < minMatches) {
+    throw new Error(`${rel}: pattern ${re} matched ${hits} time(s), expected >= ${minMatches}`);
+  }
+  const after = before.replace(new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"), to);
   if (after === before) throw new Error(`${rel}: pattern ${re} matched nothing`);
   write(rel, after);
-  return { rel, before: hash(before), after: hash(after) };
+  return { rel, before: hash(before), after: hash(after), hits };
+}
+
+// Whole-document surgery for mutations a single regex cannot express safely
+// (deleting one route object via regex would stop at the first inner `}`).
+// The pristine checks below are semantic, so a re-serialized manifest is fine.
+function mutateJson(rel, fn) {
+  const before = read(rel);
+  const doc = JSON.parse(before);
+  const changed = fn(doc);
+  if (!changed) throw new Error(`${rel}: JSON mutation was a no-op`);
+  write(rel, JSON.stringify(doc, null, 2) + "\n");
+  return { rel, before: hash(before), after: hash(read(rel)) };
 }
 
 const SCENARIOS = {
@@ -60,10 +79,12 @@ const SCENARIOS = {
   // "every child closes every section it opens".
   "unclosed-section": () => mutate("templates/archive-product.html", /\{\{\/section\}\}/, ""),
 
-  // The listing route loses its scope name, so the `products` collection the
-  // archive template iterates is declared nowhere. Must redden
-  // "the listing route names its scope".
-  "route-scope": () => mutate("theme.json", /"as":\s*"products"/, '"as": "items"'),
+  // Both listing routes (the front page and /shop) lose their scope name, so
+  // the `products` collection the archive template iterates is declared
+  // nowhere. The front page and /shop share one defect class; injecting only
+  // one would leave the other half green. Must redden both
+  // "the listing route names its scope" AND "the front-page route names its scope".
+  "route-scope": () => mutate("theme.json", /"as":\s*"products"/, '"as": "items"', 2),
 
   // The item route forgets which column identifies a single object, so a miss
   // stops being distinguishable from a hit. Must redden
@@ -74,6 +95,16 @@ const SCENARIOS = {
   // the declaration disagree. Must redden
   // "only the text-bearing fields are translatable".
   translatable: () => mutate("theme.json", /"translatable":\s*\[[^\]]*\]/, '"translatable": ["name"]'),
+
+  // The front page stops being the shop: the "/" route vanishes and the home
+  // request falls back to the blog listing. Must redden all four
+  // "the front page / route" assertions.
+  "home-route": () =>
+    mutateJson("theme.json", (doc) => {
+      const n = doc.routes.length;
+      doc.routes = doc.routes.filter((r) => r.path !== "/");
+      return doc.routes.length === n - 1;
+    }),
 
   // The link points at a path no route serves: the classic "renders 200, points
   // at a 404" defect. **Same byte length as the correct form** — which is why
@@ -131,6 +162,10 @@ function assertPristine(dir, prefix) {
   if (!/"translatable":\s*\[\s*"name",\s*"blurb"\s*\]/.test(manifest)) {
     problems.push('translatable is not ["name","blurb"]');
   }
+  // The front page must be claimed: a snapshot missing the "/" route would
+  // faithfully restore a theme whose home page is the blog again.
+  const routes = JSON.parse(manifest).routes.map((r) => r.path);
+  if (!routes.includes("/")) problems.push('no "/" route (front page not claimed)');
   // Every child must close every section it opens; a layout legitimately has an
   // unclosed slot, so only files that `@extends` are checked.
   for (const f of ["404", "archive-product", "index", "page", "single", "single-product"]) {

@@ -144,6 +144,14 @@ async function main() {
   check("the item route resolves the table by slug", shopItem.resolve, { table: "product", by: "slug" });
   check("the item route names a template", shopItem.template, "single-product");
   check("the listing route names its scope", manifest.routes.find((r) => r.path === "/shop").query.as, "products");
+  // The front page IS the shop: the theme claims "/" and the router honours it.
+  // Only a *declared* root route takes the home page away from the blog
+  // fallback, so the declaration is the whole contract — assert every half.
+  const homeRoute = manifest.routes.find((r) => r.path === "/");
+  checkTruthy("the front page is claimed by a route", !!homeRoute);
+  check("the front-page route reads the product table", homeRoute && homeRoute.resolve, { table: "product" });
+  check("the front-page route renders the product archive", homeRoute && homeRoute.template, "archive-product");
+  check("the front-page route names its scope", homeRoute && homeRoute.query.as, "products");
   check("lanes are declared", manifest.locales, ["en", "zh-CN"]);
 
   // -- 3. the real architecture rules -------------------------------------

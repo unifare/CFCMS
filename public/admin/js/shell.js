@@ -12,6 +12,7 @@
 import { app, loadContext, state } from "./state.js";
 import { header, rememberGroups, sidebar } from "./nav.js";
 import { closeMenus, esc, setTheme, toast } from "../ui.js";
+import { t, setUiLocale } from "./i18n.js";
 
 let screens = new Map();
 let loginScreen = null;
@@ -66,10 +67,11 @@ export async function switchSite(id) {
   closeMenus();
   await loadContext();
   await render();
-  toast(`Switched to ${state.sites.find((s) => s.id === id)?.name || id}`);
+  const name = state.sites.find((s) => s.id === id)?.name || id;
+  toast(t("core.msg.switchedTo", "Switched to {name}").replace("{name}", name));
 }
 
-/** Global click delegation for nav / theme / actions rendered as data attrs. */
+/** Global click delegation for nav / theme / language / actions rendered as data attrs. */
 document.addEventListener("click", (e) => {
   const themeBtn = e.target.closest("[data-theme]");
   if (themeBtn) {
@@ -78,11 +80,25 @@ document.addEventListener("click", (e) => {
     render();
     return;
   }
+  // Interface language. Labels are translated server-side (menu labels) and
+  // client-side (everything else), so a switch must refresh BOTH the
+  // dictionary and the cached menu context before re-rendering — otherwise
+  // the sidebar keeps the previous language until the next full load.
+  const langBtn = e.target.closest("[data-ui-locale]");
+  if (langBtn) {
+    closeMenus();
+    awaitWrap(setUiLocale(langBtn.dataset.uiLocale).then(() => loadContext()));
+    return;
+  }
   const siteBtn = e.target.closest("[data-switch-site]");
   if (siteBtn) { switchSite(siteBtn.dataset.switchSite); return; }
   const nav = e.target.closest("[data-nav]");
   if (nav) { go(nav.dataset.nav); return; }
 });
+
+async function awaitWrap(p) {
+  try { await p; } finally { await render(); }
+}
 
 /** Cmd/Ctrl+K focuses search. */
 document.addEventListener("keydown", (e) => {
@@ -153,7 +169,7 @@ async function renderScreen(c, page) {
   }
   const screen = screens.get(page);
   if (!screen) {
-    c.innerHTML = `<div class="panel">${esc(page)} is not a screen.</div>`;
+    c.innerHTML = `<div class="panel">${esc(page)} ${esc(t("core.msg.notAScreen", "is not a screen."))}</div>`;
     return;
   }
   return screen(c);
@@ -176,6 +192,6 @@ export async function render() {
   try {
     await renderScreen(c, state.page);
   } catch (e) {
-    c.innerHTML = `<div class="panel"><div class="top" style="margin-bottom:.5rem"><h1 style="font-size:1.125rem">Something went wrong</h1></div><p class="muted">${esc(e.message)}</p></div>`;
+    c.innerHTML = `<div class="panel"><div class="top" style="margin-bottom:.5rem"><h1 style="font-size:1.125rem">${esc(t("core.msg.wentWrong", "Something went wrong"))}</h1></div><p class="muted">${esc(e.message)}</p></div>`;
   }
 }

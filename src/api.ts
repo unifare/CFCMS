@@ -1,5 +1,5 @@
 import { Env } from "./shared/types";
-import { bootstrapAdmin, currentUser, login, logout, requireAdmin, setUserUiLang } from "./platform/auth";
+import { bootstrapAdmin, changePassword, changeUsername, currentUser, getMenuPrefs, login, logout, requireAdmin, setMenuPrefs, setUserUiLang } from "./platform/auth";
 import { activity, jsonBody, now, ok } from "./shared/repo";
 import { randomId } from "./shared/crypto";
 import { CORE_BLOCKS } from "./rendering/blocks";
@@ -389,6 +389,92 @@ async function genericTable(env: Env, table: string, url: URL, siteId: string) {
   return ok({ items: rows.results, site: siteId });
 }
 
+/** Settings key holding the site-level admin menu customization blob. */
+const MENU_CUSTOM_KEY = "admin.menu.custom";
+
+/** Locale keys inside a `label` override object. */
+const LABEL_LOCALE_RE = /^[A-Za-z0-9-]{2,10}$/;
+/** Sidebar item keys: core ids, `cpt:<name>`, `menu:<menu_id>`. */
+const ITEM_KEY_RE = /^[A-Za-z0-9:_-]{1,120}$/;
+/** Group ids are the SPA's built-in group keys (kebab-case). */
+const GROUP_ID_RE = /^[a-z][a-z0-9-]{0,59}$/;
+
+function normaliseMenuCustomLabel(v: unknown, what: string): Record<string, string> | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "object" || Array.isArray(v)) throw new Error(`${what}: label must be an object of locale -> string`);
+  const out: Record<string, string> = {};
+  for (const [loc, val] of Object.entries(v as Record<string, unknown>).slice(0, 4)) {
+    if (!LABEL_LOCALE_RE.test(loc)) throw new Error(`${what}: bad locale in label: ${loc}`);
+    if (typeof val !== "string" || !val.trim()) throw new Error(`${what}: label for ${loc} must be a non-empty string`);
+    if (val.length > 120) throw new Error(`${what}: label for ${loc} is longer than 120 characters`);
+    out[loc] = val.trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function normaliseMenuCustomOrder(v: unknown, what: string): number | null {
+  if (v === undefined || v === null) return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < -100000 || n > 100000) throw new Error(`${what}: order must be an integer`);
+  return n;
+}
+
+/**
+ * Normalize a PUT admin-menus/custom body into the storage blob. Throws with a
+ * human-readable message on structural violations (the endpoint maps that to a
+ * 400); unknown fields are dropped so the stored shape stays exactly what the
+ * SPA consumes.
+ */
+function normaliseMenuCustom(b: unknown): { items: Record<string, unknown>; groups: Record<string, unknown> } {
+  if (typeof b !== "object" || b === null || Array.isArray(b)) throw new Error("body must be an object");
+  const body = b as Record<string, unknown>;
+  const rawItems = body.items ?? {};
+  if (typeof rawItems !== "object" || Array.isArray(rawItems)) throw new Error("items must be an object");
+  const itemKeys = Object.keys(rawItems as Record<string, unknown>);
+  if (itemKeys.length > 200) throw new Error("too many item overrides (max 200)");
+  const items: Record<string, unknown> = {};
+  for (const key of itemKeys) {
+    const what = `item ${key}`;
+    if (!ITEM_KEY_RE.test(key)) throw new Error(`${what}: bad key`);
+    const v = (rawItems as Record<string, unknown>)[key];
+    if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Error(`${what}: must be an object`);
+    const row = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    const label = normaliseMenuCustomLabel(row.label, what);
+    if (label) out.label = label;
+    const order = normaliseMenuCustomOrder(row.order, what);
+    if (order !== null) out.order = order;
+    if (row.group !== undefined && row.group !== null) {
+      if (typeof row.group !== "string" || !GROUP_ID_RE.test(row.group)) throw new Error(`${what}: bad group id`);
+      out.group = row.group;
+    }
+    if (row.hidden !== undefined && row.hidden !== null) {
+      if (typeof row.hidden !== "boolean") throw new Error(`${what}: hidden must be a boolean`);
+      out.hidden = row.hidden;
+    }
+    if (Object.keys(out).length) items[key] = out;
+  }
+  const rawGroups = body.groups ?? {};
+  if (typeof rawGroups !== "object" || Array.isArray(rawGroups)) throw new Error("groups must be an object");
+  const groupKeys = Object.keys(rawGroups as Record<string, unknown>);
+  if (groupKeys.length > 30) throw new Error("too many group overrides (max 30)");
+  const groups: Record<string, unknown> = {};
+  for (const id of groupKeys) {
+    const what = `group ${id}`;
+    if (!GROUP_ID_RE.test(id)) throw new Error(`${what}: bad group id`);
+    const v = (rawGroups as Record<string, unknown>)[id];
+    if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Error(`${what}: must be an object`);
+    const row = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    const label = normaliseMenuCustomLabel(row.label, what);
+    if (label) out.label = label;
+    const order = normaliseMenuCustomOrder(row.order, what);
+    if (order !== null) out.order = order;
+    if (Object.keys(out).length) groups[id] = out;
+  }
+  return { items, groups };
+}
+
 async function settings(env: Env, siteId: string) {
   const rows = await env.DB.prepare("SELECT key, value, autoload FROM settings WHERE site_id=? ORDER BY key").bind(siteId).all();
   return ok({ items: rows.results, site: siteId });
@@ -453,6 +539,85 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
   const user = auth;
   const siteId = requestSiteId(url);
+
+  // -- self-service credentials (any signed-in role) -----------------------
+  // Change-own-password / change-own-username. The current password is
+  // verified inside `platform/auth.ts` so every caller gets the same gate.
+  // The `error` field is a stable code, not prose: the SPA maps it to a
+  // translated message via the UI dictionary.
+  if (path === "auth/password" && method === "POST") {
+    const b = await jsonBody(request);
+    const result = await changePassword(env, user.id, String(b.current_password ?? ""), String(b.new_password ?? ""));
+    if (result === "weak") return ok({ error: "weak" }, 400);
+    if (result === "wrong_current") return ok({ error: "wrong_current" }, 403);
+    await activity(env, user.id, "update", "user_password", user.id, {});
+    return ok({ ok: true });
+  }
+  if (path === "auth/username" && method === "POST") {
+    const b = await jsonBody(request);
+    const wanted = String(b.username ?? "").trim();
+    const result = await changeUsername(env, user.id, String(b.current_password ?? ""), wanted);
+    if (result === "invalid") return ok({ error: "invalid" }, 400);
+    if (result === "taken") return ok({ error: "taken" }, 409);
+    if (result === "wrong_current") return ok({ error: "wrong_current" }, 403);
+    await activity(env, user.id, "update", "user_username", user.id, { username: wanted });
+    return ok({ ok: true, username: wanted });
+  }
+
+  // -- per-user sidebar menu configuration ---------------------------------
+  // UI-level only. The hidden set never widens or narrows what the API
+  // answers: capability filtering happens per endpoint, not per menu.
+  if (path === "admin-menus/prefs" && method === "GET") {
+    return ok({ hidden: await getMenuPrefs(env, user.id) });
+  }
+  if (path === "admin-menus/prefs" && method === "PUT") {
+    const b = await jsonBody(request);
+    if (!Array.isArray(b.hidden)) return ok({ error: "hidden must be an array of nav keys" }, 400);
+    const hidden = [...new Set((b.hidden as unknown[]).map((v: unknown) => String(v)).filter((s: string) => s && s.length <= 120))].slice(0, 200);
+    await setMenuPrefs(env, user.id, hidden);
+    await activity(env, user.id, "update", "menu_prefs", user.id, { count: hidden.length });
+    return ok({ ok: true, hidden });
+  }
+
+  // -- site-level admin menu customization (batch 5) ------------------------
+  // A per-site JSON blob in `settings`: item label overrides (per UI locale),
+  // item ordering, cross-group moves, site-wide hiding; the same for groups.
+  // This is a *display* layer consumed by the SPA (`nav.js applyMenuCustom`):
+  // it never widens what an endpoint answers — capability filtering stays per
+  // endpoint. Editing changes what every admin of the site sees, so it needs
+  // `settings.manage`; reading needs no extra permission because every
+  // sidebar is rendered from it.
+  if (path === "admin-menus/custom" && method === "GET") {
+    const row = await env.DB.prepare("SELECT value FROM settings WHERE site_id=? AND key=?").bind(siteId, MENU_CUSTOM_KEY).first<any>();
+    let parsed: any = {};
+    try { parsed = row?.value ? JSON.parse(row.value) : {}; } catch { parsed = {}; }
+    return ok({
+      items: parsed.items && typeof parsed.items === "object" && !Array.isArray(parsed.items) ? parsed.items : {},
+      groups: parsed.groups && typeof parsed.groups === "object" && !Array.isArray(parsed.groups) ? parsed.groups : {},
+      can_manage: await requirePermission(env, user, "settings.manage"),
+    });
+  }
+  if (path === "admin-menus/custom" && method === "PUT") {
+    if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);
+    const b = await jsonBody(request);
+    let blob: { items: Record<string, unknown>; groups: Record<string, unknown> };
+    try {
+      blob = normaliseMenuCustom(b);
+    } catch (e: any) {
+      return ok({ error: e?.message || "invalid menu customization" }, 400);
+    }
+    await env.DB.prepare("INSERT INTO settings(id,site_id,key,value,autoload) VALUES(?,?,?,?,1) ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value")
+      .bind(`admin-menu-custom-${siteId}`, siteId, MENU_CUSTOM_KEY, JSON.stringify(blob)).run();
+    await activity(env, user.id, "update", "menu_custom", siteId, { items: Object.keys(blob.items).length, groups: Object.keys(blob.groups).length });
+    return ok({ ok: true, ...blob });
+  }
+  if (path === "admin-menus/custom" && method === "DELETE") {
+    if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);
+    await env.DB.prepare("DELETE FROM settings WHERE site_id=? AND key=?").bind(siteId, MENU_CUSTOM_KEY).run();
+    await activity(env, user.id, "delete", "menu_custom", siteId, {});
+    return ok({ ok: true, items: {}, groups: {} });
+  }
+
   if((path === "posts" || path === "pages" || /^posts\//.test(path) || /^pages\//.test(path)) && method !== "GET") {
     if(!(await requirePermission(env,user,"content.write"))) return ok({error:"Forbidden"},403);
   }
@@ -976,7 +1141,25 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
       return allowed;
     };
     const groups=await listAdminMenuGroups(env,siteId,{can:canView});
-    return ok({site:siteId,groups,items:groups.flatMap(g=>g.items)});
+    // Labels translate through the UI dictionary (§2.4). A declared
+    // `label_key` wins when the current interface language has a translation
+    // for it; otherwise the literal label is returned unchanged, so a menu
+    // that declares a key nobody ships still reads correctly. The resolved UI
+    // locale rides along so the client can show what it got.
+    const uiLocale=await resolveUiLocale(env,siteId,{
+      userLang:(user as any).ui_lang??null,
+      defaultLocale:await siteDefaultLocale(env,siteId),
+    });
+    const dict=mergePacks(await loadUiPacks(env,siteId,uiLocale)) as Record<string,unknown>;
+    const translated=groups.map(g=>({...g,items:g.items.map(m=>{
+      let label=m.label;
+      if(m.label_key){
+        const v=dict[m.label_key];
+        if(typeof v==="string"&&v)label=v;
+      }
+      return {...m,label};
+    })}));
+    return ok({site:siteId,ui_locale:uiLocale,groups:translated,items:translated.flatMap(g=>g.items)});
   }
   if(path==="theme/blocks"&&method==="GET") return ok({items:await listThemeBlocks(env,siteId),site:siteId});
   if(path==="theme/fields"&&method==="GET") return ok({items:await listFieldDefs(env,siteId),site:siteId});

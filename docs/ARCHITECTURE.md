@@ -260,6 +260,13 @@ plugin.{slug}.*   插件文案              plugin.seo.meta.title
 
 **为什么前缀必须强制**：两个主题各自有一个叫 `nav.home` 的 key，同站切换时会互相覆盖。前缀把命名空间隔离了。这个是**必须机器检查**的（扫描所有 `langs/*.json` 的 key 前缀是否符合所属目录），写进文档没用。
 
+> **✅ L2 已在后台 SPA 消费（批次 5）。** 落地形状：
+>
+> - **核心语言包**是 TS 常量（`src/platform/i18n/core-pack.ts`），en 与 zh-CN 各约 90 个 key——不依赖 R2，全新安装即有完整后台文案。
+> - **SPA 侧**只有一个叶子模块 `public/admin/js/i18n.js`：`t(key, fallback)`（字典值 → 英文 fallback → key 本身，**永不空白**）、`loadMessages()`（`GET /api/v1/i18n/messages`，一次拿全合并字典）、`setUiLocale(loc)`（`POST /api/v1/i18n/ui-locale` 持久化到 `site_users.ui_lang` + 重新拉字典）。字典缓存在 localStorage，**登录屏**在能发认证请求之前就用上次的语言渲染。
+> - **界面语言按用户持久化**（`site_users.ui_lang`，批次 2 的列），所以**换浏览器也保持**——这也是浏览器验收脚本必须在登录后显式重置语言的原因（见 HANDOVER 坑位 23）。
+> - **菜单标签的翻译消费点在服务端**：`GET /api/v1/admin-menus` 用 `resolveUiLocale` + `loadUiPacks` + `mergePacks` 解析字典，行的 `label_key` 命中字典就替换 `label`，未命中保留原文；响应带 `ui_locale`。SPA 切语言 = `setUiLocale → loadContext() → render()`，**不做任何前端二次翻译**——同一个答案只有一处定义。`label_key` 的前缀校验见 §3.5 与 AGENTS.md 规则 13d。
+
 ### 2.5 L3：主题业务语言层（本规划的重点）
 
 现在是回答用户问题的核心：**主题自己的数据怎么多语言，且为什么必须平台开关。**
@@ -690,6 +697,10 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
 
 **页面键（SPA 侧）**：`table:` 系列用**三个互不重叠的前缀**——`table:<table>` 是列表，`table-new:<table>` 是新建表单，`table-edit:<table>:<slug>` 是编辑某一行。曾经用"一个前缀 + 可选段"（`table:<table>[:<slug>]`），结果"列表"和"新建"在缺省 slug 时**是同一个页面名**：点"新增"跳回它自己所在的列表，什么也没发生。这个缺陷只有真实浏览器验收才暴露得出来（`tests/_admin-menus-browser.cjs`）。
 
+**菜单标签多语言（批次 5，迁移 `0013` 的 `label_key` 列）**：`adminMenus[]` 可以声明 `label_key`（如 `"theme.eshop.menu.products"`），**必须**匹配 owner 前缀 `theme.{name}.` / `plugin.{name}.`（`validateAdminMenus` 用 ownerName 构造正则，越界 key 让**安装失败**而不是静默不翻译——与规则 11 同一个理由）。消费点只有一个：`GET /api/v1/admin-menus` 命中合并字典就替换 `label`（§2.4）。范例 `themes/eshop/theme.json` 的三个菜单**复用既有语言包 key**（`theme.eshop.menu.*`）而不是发明第二套——两个地方需要同一个答案时共享定义。
+
+**站点菜单编辑器（批次 5）**：管理员可以对整个站点的后台菜单做**站点级定制**——逐语言改名（en/zh-CN）、菜单项排序（箭头/拖拽）、**跨组移动**、分组改名与排序、对所有人隐藏。存为 `settings` 表里每站一份 JSON（key `admin.menu.custom`），`GET/PUT/DELETE admin-menus/custom` 三端点（写需 `settings.manage`；GET 顺带回 `can_manage`）。**唯一应用点是 `nav.js` 的纯函数 `applyMenuCustom()`**——侧栏与编辑器共用同一份定义（与 `groupOf()` 同一条纪律）。解析顺序：override[locale] → override.en → 内置/服务端翻译文案。分组 id 是 `nav.js` 内置的七个（`general`/`content`/`from-theme`/`extensions`/`appearance`/`system`/`tools`）；**移动到不存在的分组会被忽略**（项绝不消失）。排序语义：显式 order 升序在前，未排序的按内置顺序殿后（稳定排序）——编辑器的结构性变更会**物化整组显式 order**。与每用户隐藏（`menu_prefs`）叠加：有效隐藏 = 站点级 hidden ∪ 用户自己的隐藏。契约在 `tests/menu-custom.test.mjs`（40 条，含纯函数逻辑与「不存在分组」注入）。
+
 ---
 
 ## 4. 插件架构
@@ -1107,12 +1118,14 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `users` / `roles` / `permissions` / `sessions` | 平台 | 权限体系 |
 | `media` | 平台 | 媒体库 |
 | `menus` / `menu_items` | 平台 | 前台导航 |
-| `admin_menu_registry` | 平台 | **已落地**（批次 3，0012），后台菜单统一注册表。主题与插件走同一条注册路径，`owner_type`/`owner_name` 决定停用谁时清谁。旧表 `theme_admin_menus` 已 `DROP`。见 §4.4 |
+| `admin_menu_registry` | 平台 | **已落地**（批次 3，0012），后台菜单统一注册表。主题与插件走同一条注册路径，`owner_type`/`owner_name` 决定停用谁时清谁。旧表 `theme_admin_menus` 已 `DROP`。批次 5 加 `label_key` 列（0013，菜单标签的字典 key，见 §3.5）。见 §4.4 |
 | `i18n_overrides` | 平台 | **新增**，界面翻译覆盖（L2 最高优先层） |
 | `theme_table_defs` | 平台 | **新增**，主题自有表的注册表：`logical_name → table_name / i18n_table / fields`。见 §6.3 |
 
 > 表里写的是 `users`/`roles`/…，但**实际的管理员账号表叫 `site_users`**（`M3` 加的是
-> `site_users.ui_lang`）。`sessions`/`users` 在本仓库并不存在——别照着这行去写迁移。
+> `site_users.ui_lang`；批次 5 的 0013 又加了 `menu_prefs`——per-user 隐藏菜单的
+> JSON 数组，纯 UI 层语义见 §3.5 / AGENTS.md 规则 38）。`sessions`/`users` 在本仓库
+> 并不存在——别照着这行去写迁移。
 
 ### 6.2 主题声明表（平台代管，数据属主题）
 
@@ -1895,6 +1908,26 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 三份都**对着源码写、不是对着记忆写**。核对中改掉了三处文档失实：helper 数量写成 10
 （实为 **9**）、`query.order` 白名单漏了 `published_at`、以及"首次访问自动建表"
 （实际是**主题激活时**由 `applyThemeCapabilities` → `syncThemeTables` 建的）。
+
+#### 4.5 已完成：后台界面语言 + 账户自助 + 菜单配置（批次 5）
+
+用户需求原话：「后台的多语言至少要中/英」「用户要可以修改密码、用户名」「左侧菜单
+可配置、菜单动态多语言、和系统语言对齐」。四件事、一套语言基建：
+
+| 项 | 落点 |
+|---|---|
+| 核心 UI 语言包（en + zh-CN，各约 90 key） | `src/platform/i18n/core-pack.ts`（§2.4 落地段） |
+| SPA 字典消费：`t()` / 登录屏缓存 / 语言切换器 | `public/admin/js/i18n.js`（叶子模块）+ `nav.js`/`shell.js`/`auth.js` 接线 |
+| **菜单标签服务端翻译**（`label_key` + 前缀校验） | `admin-menus` GET 消费点（§2.4）、`validateAdminMenus` 按 owner 拒绝越界 key、`themes/eshop` 复用 `theme.eshop.menu.*` |
+| 账户自助：改密 / 改名（当前密码闸门下沉 `platform/auth.ts`） | `POST auth/password` / `auth/username`，稳定错误码 `wrong_current`/`weak`/`taken`/`invalid`，SPA `explain(code)` 映射译文 |
+| per-user 菜单配置（隐藏/恢复） | `site_users.menu_prefs`（0013）+ `GET/PUT admin-menus/prefs` + `screens/menu-config.js`；**UI 层语义**（规则 38） |
+| 新套件 `tests/account.test.mjs`（27 条） | 全链路：闸门码、`auth/me` 反映、prefs 往返/隔离、**label_key 翻译端到端** |
+
+**两条流程教训（本轮实测）**：① 真浏览器验收必须放在**所有测试套件之后**——15 个套件
+共享同一块本地 D1，幂等清理会清掉 `site_locales` 的 zh-CN 行与 `theme.active`；
+② `api()` 帮手在非 2xx 时**抛 `Error(data.error)`**——错误码进 catch 的 `err.message`，
+SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.message)`。
+详见 HANDOVER 坑位 21–23。
 
 ---
 

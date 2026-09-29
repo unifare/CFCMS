@@ -1,8 +1,8 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-09-28 23:30 (GMT+8) ｜ 交接基线：**本轮提交**
-> （`Unify admin menus into one registry + generate table screens from declarations`；
-> 上一轮 `48edc41` 多语言四层，再上一轮 `d6e2239` 后台 SPA 拆分，再上一轮 `265d03c` 分层）
+> 更新时间：2026-09-29 (GMT+8) ｜ 交接基线：**本轮提交**
+> （`Admin UI language (en/zh-CN) + account self-service + per-user menu config`；
+> 上一轮批次 4 脚手架 + eshop 范例主题与主页接管，再上一轮 `48edc41` 多语言四层）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
 
 ---
@@ -32,7 +32,10 @@
 03ae88d  Add handover document
 d6e2239  Split the admin SPA into modules + add structure tests
 48edc41  Multi-language: four layers (L0-L3) + theme-owned tables
-????????  Unify admin menus into one registry + generate table screens   ← 当前 HEAD
+a1ac8e3  Unify admin menus into one registry + generate table screens from declarations
+33f6369  Add theme/plugin scaffolders + make declared routes actually drive rendering
+fb2b012  Add eshop sample theme, its test suite, and the three dev docs (batch 4)  ← 上一基线
+????????  Admin UI language (en/zh) + account self-service + per-user menu config  ← 本轮
 ```
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
@@ -44,11 +47,22 @@ d6e2239  Split the admin SPA into modules + add structure tests
 「主题自有表」部分（DDL 生成 + 注册表 + facade + 沙箱端点）一起做了。
 顺带修掉三个只在真实交互下才暴露的缺陷（见 §5 批次 2 与 §8 坑位 11–13）。
 
-本轮：**批次 3 —— 后台菜单统一 + 生成式表格屏幕**。`admin_menu_registry` 取代
-`theme_admin_menus`（迁移时 drop），主题与插件走同一套菜单注册；`table-list` /
-`table-edit` 两个屏幕**完全由 `tables[].fields[]` 声明生成**，主题不再需要写后台代码；
-插件菜单（`seo`）作为同一机制的第二个消费者落地。顺带修掉一个**真实浏览器验收才暴露**
-的产品缺陷（"新增"与"列表"曾是同一个页名，见 §8 坑位 17）。
+`fb2b012`（+`33f6369`，批次 4）：**脚手架三件套 + `contract/` 拆分 + 路由消费契约 +
+eshop 范例主题 + 三份开发文档**。生成器全部可被 import（本机沙箱无法 spawn 子进程），
+`tests/scaffold.test.mjs` 68 条用真实校验器与真实模板引擎跑生成物。发现并修掉
+"声明先于运行时"缺陷族的两例（`routes[].resolve.table`、`routes[].template`）。
+
+本轮：**批次 5 —— 后台界面语言 + 账户自助 + 菜单配置**。后台 SPA 全面接入 L2 四层
+字典（en/zh-CN 核心包约 90 key ×2），语言切换器持久化到 `site_users.ui_lang`；
+扩展菜单支持 `label_key`（**服务端**翻译，前缀校验拒绝越界 key）；用户可自助改密/改名
+（当前密码闸门下沉 `platform/auth.ts`，稳定错误码）；左侧菜单可按用户隐藏/恢复
+（`site_users.menu_prefs`，纯 UI 层）。迁移 `0013`。真浏览器验收 38 条全绿
+（`.wrangler/eshop-verify.cjs` v5）。
+
+同轮收尾了批次 4 的遗留验证：**主页接管**（`routes[]` 声明 `path: "/"` 时前台首页交给
+主题渲染，`src/index.ts` 的 home 闭包改为主题路由循环之后的 fallback），
+`themes/eshop/theme.json` 首位路由即商品档案页；`tests/theme-eshop.test.mjs` 45 条、
+`tests/_eshop-inject.mjs` 加 home-route 场景。
 
 ## 3. 源码布局（分层已落地，旧路径 `src/core/*` 已不存在）
 
@@ -212,7 +226,31 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 > `theme-aurora` 的摘要格式（只打 `N failure(s)`、无 passed 计数）也已统一。
 > 详见 AGENTS.md「第六种假绿」与 ARCHITECTURE §4.3。
 
-## 6. 测试与验证（当前全绿：14 套件 / 0 失败）
+### 批次 5（后台界面语言 + 账户自助 + 菜单配置）—— ✅ 本轮完成
+
+| 项 | 状态 |
+|---|---|
+| 核心 UI 语言包 en + zh-CN（各约 90 key：导航/操作/主题/登录/账户/菜单配置/提示/错误码） | ✅ `core-pack.ts`，两语言**同步扩**（§2.4 落地段） |
+| SPA 字典消费 `public/admin/js/i18n.js`（叶子模块：`t()` 永不空白、localStorage 登录屏缓存、`setUiLocale`） | ✅ |
+| 语言切换器（header 下拉）+ 登录屏双语 + 切换即 `loadContext()+render()` | ✅ `nav.js`/`shell.js`/`auth.js` |
+| **菜单标签服务端翻译**：`admin_menu_registry.label_key`（0013）+ `validateAdminMenus` owner 前缀校验 + `admin-menus` GET 消费点 | ✅ eshop 三个菜单复用 `theme.eshop.menu.*` |
+| 账户自助改密/改名：`platform/auth.ts`（`changePassword`/`changeUsername`，当前密码闸门在服务函数内）+ `POST auth/password` / `auth/username` | ✅ 稳定错误码 `wrong_current`/`weak`/`taken`/`invalid` |
+| `screens/account.js`（每个角色可用，不依赖 `users.manage`） | ✅ 客户端只预检两次新密码一致 |
+| per-user 菜单配置：`site_users.menu_prefs`（0013）+ `GET/PUT admin-menus/prefs` + `screens/menu-config.js` | ✅ 规则 38：只影响侧边栏，不授/撤权限；`dashboard` 永远显示 |
+| **站点菜单编辑器**（用户追加需求）：逐语言改名（en/zh-CN）、项排序（箭头+拖拽）、**跨组移动**、分组改名与排序、对所有人隐藏、恢复默认 | ✅ `admin.menu.custom` settings blob + `GET/PUT/DELETE admin-menus/custom`（写需 `settings.manage`，GET 回 `can_manage`） |
+| 应用点收敛：`nav.js` 纯函数 `applyMenuCustom()`（侧栏与编辑器共用） | ✅ 规则 39：改名叠加在服务端翻译之上；稳定排序；**不存在分组=忽略**（反向验证抓到过“项消失”真缺陷）；结构性变更物化整组 order |
+| 新套件 `tests/menu-custom.test.mjs`（40 条：API 契约 + 权限分层 + 校验 400s + 按站隔离 + **纯函数逻辑**） | ✅ 已进 `npm test`（16 套件 665 条） |
+| 浏览器验收 v6 扩到 **47 条**：编辑器 11 条（改名 en/zh、组改名、组序、项序、跨组、站点隐藏、zh 回退、恢复默认） | ✅ 全绿 |
+| 新套件 `tests/account.test.mjs`（27 条，含 **label_key 翻译端到端**：zh-CN →「商品」、en → "Things"、无翻译回退原文） | ✅ 已进 `npm test`（15 套件） |
+| 真浏览器验收 `.wrangler/eshop-verify.cjs` v5（38 条：前台 18 + 界面语言往返 + 服务端翻译菜单 + 菜单隐藏/恢复 + 账户三道闸门） | ✅ 全绿 |
+| 主页接管收尾（批次 4 遗留验证）：`routes[]` 声明 `path: "/"` → 前台首页交给主题；home 闭包移到主题路由循环之后作 fallback | ✅ `/`、`/en`、`/zh-CN` 均渲染商品档案 |
+| 反向验证：改密/改名守卫下沉 `platform/auth.ts` 后注入（绕过当前密码校验） | ✅ 注入 → 2 红，还原 → 27 绿 |
+
+**三条流程教训（本轮实测，详见 §8 坑位 21–23）**：真浏览器验收放在所有套件**之后**跑；
+`api()` 非 2xx 时**抛 `Error(data.error)`**（`if (d.error)` 不可达，catch 里要 `explain(err.message)`）；
+`ui_lang` 按用户持久化在 D1（**换浏览器也保持**，验收脚本登录后必须显式重置）。
+
+## 6. 测试与验证（当前全绿：16 套件 / 665 条 / 0 失败）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -228,10 +266,12 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | template-engine | 49 | 模板解释器单元（含 **子模板未闭合 section 抛错**、**三层继承最派生者胜**） |
 | **scaffold** | **68** | 生成的 theme/plugin/table 通过**真实** `validateManifest` + **真实**模板引擎 + **真实**架构规则；`@include`/`@extends` 目标存在；每个子模板 section 开闭配对；语言包前缀；拒绝覆盖；非法输入退出码；`--translatable` 正反两面 |
 | theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含**表驱动路由**：`resolve.table` / `routes[].template` / `query.as` / 单条未命中 404） |
-| **theme-eshop** | **41** | **范例主题**：`themes/eshop/` 的声明与模板互相自洽——表/翻译字段/菜单↔表配对/路由 `resolve`/`query.as`/语言包，全部过**真实**校验器与**真实**架构规则；六个模板各渲染一次（有数据/无数据）；链接走路由自己的路径；`@first` 绑迭代作用域 |
+| **theme-eshop** | **45** | **范例主题**：`themes/eshop/` 的声明与模板互相自洽——表/翻译字段/菜单↔表配对/路由 `resolve`/`query.as`/语言包，全部过**真实**校验器与**真实**架构规则；六个模板各渲染一次（有数据/无数据）；链接走路由自己的路径；`@first` 绑迭代作用域；**主页接管**（`path: "/"` 声明即前台首页，+4 条） |
 | multisite | 74 | 多站点隔离（含 SEO 端点按站点，第 9b 段） |
 | i18n | 62 | 多语言四层契约（§5.4① 八条全覆盖）+ 翻译组 + 主题自有表 |
 | admin-contract | 32 | 后台 API 契约 |
+| **account** | **27** | **账户自助与菜单偏好（批次 5 新增）**：改密/改名的当前密码闸门（wrong_current 403 / weak 400 / taken 409 / invalid 400）、旧密码失效、`auth/me` 反映改名、menu_prefs 往返/去重/按用户隔离、**label_key 翻译端到端**（zh-CN→「物品」、en→"Things"、无 key 菜单保留原文、`ui_locale` 回显） |
+| **menu-custom** | **40** | **站点菜单编辑器（批次 5 新增）**：`admin-menus/custom` 三端点契约（默认空、往返、按站隔离、DELETE 复位）、权限分层（author 可读不可写、`can_manage` 回显）、10 种结构违规 400 + 未知字段剥离、`applyMenuCustom` 纯函数（双语改名解析/稳定排序/跨组移动/**不存在分组被忽略**/siteHidden/navGroups 过滤语义） |
 | plugin-hooks | 25 | 插件 hook 生命周期 |
 | theme-worker | 28 | L3 沙箱（含 WorkerStub 不可跨请求） |
 | theme-aurora | 14 | aurora 主题渲染快照式检查（摘要格式本轮统一为 `N passed, M failed`） |
@@ -260,7 +300,14 @@ node tests/_eshop-inject.mjs restore      # 快照还原（assertPristine 双向
 npx wrangler dev --port 8787 --ip 127.0.0.1     # 另开一个 shell
 node tests/_i18n-browser.cjs                     # 多语言：22 条断言
 node tests/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言（本轮新增）
+node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 新功能：47 条断言
 ```
+
+⚠️ **浏览器验收必须放在所有测试套件之后跑**（先测试 → 再 `theme:deploy` + 恢复 locale
+→ 最后验收）。15 个套件共享同一块本地 D1，幂等清理会清掉 `site_locales` 的 zh-CN 行
+与 `settings.theme.active`——本轮 `/zh-CN` 404 之谜的真相就是这个（ symptom 是
+"昨天还好好的 URL 今天 404"）。`eshop-verify.cjs` 对此**自愈**：登录后先把界面语言
+重置为 en 再重载（`ui_lang` 按用户持久化，见坑位 23）。
 
 `_i18n-browser.cjs` 跑 22 条断言：登录 → Languages 屏 → 加语言 → 编辑器语言版本条 →
 建翻译 → 删翻译 → 停用语言，并断言**零 console 错误、零失败请求、零 5xx**。
@@ -291,27 +338,37 @@ fixture 的那一项**；修正方式是再加一个**同类型**的第二个 ow
 ⚠️ **新守卫必须反向验证**：写完守卫 → 故意注入一次违规 → 确认它 FAIL。测不出失败的检查等于没有检查。
 本轮 6 项注入（见 §5 批次 3）全部如期变红。
 
-## 7. 后台 SPA（两轮前拆分，本轮新增 3 个模块）
+## 7. 后台 SPA（两轮前拆分，批次 5 又新增 3 个模块）
 
-`public/admin/admin.js` 1514 行单文件 → 入口 + 5 个基础模块 + 屏幕模块
-（`js/screens/` 现有 21 个文件：注册表 `index.js` + 20 个屏幕/工具模块）。
+`public/admin/admin.js` 1514 行单文件 → 入口 + 6 个基础模块 + 屏幕模块
+（`js/screens/` 现有 23 个文件：注册表 `index.js` + 22 个屏幕/工具模块）。
 
 ### 落点
 
 ```
 public/admin/
-├── admin.js             入口：装配 + window.* 注册（< 120 行）
+├── admin.js             入口：装配 + window.* 注册（< 120 行）+ boot 时 cachedMessages()
 ├── ui.js  icons.js      UI kit / 图标
 └── js/
     ├── state.js         state + api/scoped/contentPath/postTypeInfo/loadContext（叶子模块）
-    ├── nav.js           navGroups / sidebar / header（纯 markup，不调 render）
-    ├── shell.js         render + go + switchSite + pageHead + 屏幕注册表 + 页名分发
-    ├── auth.js          renderLogin / doLogin / logout / setThemeForTest
-    ├── table-form.js    ★ 本轮新增：字段类型 → 控件 的唯一映射 + 值往返
-    └── screens/         index.js（注册表）+ 20 个屏幕/工具模块
-                         ★ table-list.js / table-edit.js 是本轮新增（生成式）
-                         ★ theme-menu.js 本轮改写为统一菜单分发器
+    │                    loadContext 同取 admin-menus/prefs → state.hiddenMenus（与菜单同取：
+    │                    切语言重跑 loadContext 时两者同时刷新）
+    ├── i18n.js          ★ 批次 5：t()/loadMessages/setUiLocale（叶子中的叶子，谁都能 import 它）
+    ├── nav.js           baseGroups（分组带稳定 id）/ applyMenuCustom（★ 站点定制唯一应用点，
+    │                    纯函数，侧栏与编辑器共用）/ navGroups（应用定制 + 双层隐藏过滤）/
+    │                    navGroups / sidebar / header（语言下拉）
+    ├── shell.js         render + go + switchSite + pageHead + 屏幕注册表 + 页名分发 + 语言切换委托
+    ├── auth.js          renderLogin / doLogin / logout / setThemeForTest（登录成功后 loadMessages）
+    ├── table-form.js    字段类型 → 控件 的唯一映射 + 值往返
+    └── screens/         index.js（注册表）+ 22 个屏幕/工具模块
+                         ★ account.js / menu-config.js 是批次 5 新增（都走 data-* 委托，零新 window.*）
+                         ★ menu-config.js = 站点菜单编辑器（改名/排序/跨组/隐藏/恢复默认，
+                           结构性变更物化显式 order，标签 change 即存、Enter 提交）+ 我的偏好双面板
 ```
+
+**`i18n.js` 是叶子中的叶子**：不 import 任何东西，所以包括 `ui.js` 在内的所有模块都能
+依赖它而不成环。菜单标签**不在**这里翻译——`admin-menus` API 已在服务端把 `label_key`
+换成译文，切换语言时 `setUiLocale → loadContext() → render()` 重取上下文即可。
 
 **关键设计：`shell.js` 不 import 任何屏幕。** 屏幕通过 `setScreenTable(SCREENS)`
 自注册，登录屏通过 `setLoginScreen(renderLogin)` 注入 —— 否则
@@ -437,6 +494,28 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 20. **反向验证的 fixture 必须只有一处差异**。拿"主题 owner vs 插件 owner"去验
     `owner_name` 过滤是**假绿**：删掉 `owner_name` 依然全绿，因为两个 fixture 的
     `owner_type` 本来就不同。写用例时先问「我把这一条删了，哪个断言会变红」。
+21. **共享 D1 会被测试套件清掉配置**。15 个套件共用同一块本地 D1，幂等清理波及
+    `site_locales`（zh-CN 行消失）与 `settings.theme.active`——症状是"昨天还好好的
+    `/zh-CN` 今天 404"。**验收顺序铁律：先跑全部套件 → 再部署/恢复配置 → 最后真浏览器
+    验收**。`eshop-verify.cjs` 对语言状态自愈（登录后重置为 en 再重载）。
+22. **`api()` 帮手在非 2xx 时抛 `Error(data.error)`**——服务端的稳定错误码
+    （`wrong_current`/`weak`/`taken`/`invalid`）出现在 catch 的 `err.message` 里，
+    SPA 里 `if (d.error)` 分支**永远不可达**。错误对话框要写
+    `explain(err.message)`，否则用户看到裸码（账户屏实踩：对话框显示 "wrong_current"）。
+23. **`ui_lang` 按用户持久化在 D1，换浏览器也保持**。全新浏览器登录依然是上次的语言
+    （localStorage 缓存只是登录屏的加速，不是事实源）。浏览器验收脚本断言界面文案前
+    必须先显式重置语言；否则上一次运行切过中文，这一次的英文断言全红——**功能没坏，
+    是状态没归零**。
+24. **SPA 套件的盲区：只 import、不点击**。`admin-spa.test.mjs` 做静态检查 + 真实
+    import 入口，但从不执行登录点击路径——`doLogin` 里漏 import 一个函数（ReferenceError）
+    套件全绿，因为屏幕渲染异常会被 catch 成错误面板，而登录路径根本没被走到。
+    **登录卡死的探针**：playwright 监听 `console`/`pageerror`/`response` + 打印
+    `#dialog-host`（`_i18n-browser.cjs` 同款手法；`auth.js` 缺 `loadMessages` 就是这样抓到的）。
+25. **`fill()` 只派发 `input` 不派发 `change`**。菜单编辑器的标签输入在 `change`（失焦）时
+    才保存——自动化测试 fill 之后**必须显式 blur**，否则断言读到的是改名前的界面
+    （v6 首跑实踩：改名断言挂了，但后续步骤的点击触发 blur 又把它救活了——症状是
+    "现在没生效、两步之后生效了"）。Enter 提交（keydown→blur）是给人用的快捷方式，
+    不是给 playwright 的。
 
 ## 9. 权威文档索引
 
@@ -450,5 +529,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `tests/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
 | `tests/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
 | `tests/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |
+| `tests/account.test.mjs` | 账户自助与菜单偏好契约（当前密码闸门 / 稳定错误码 / prefs 隔离 / **label_key 翻译端到端**） |
+| `.wrangler/eshop-verify.cjs` | eshop 全链路 + 批次 5 新功能的真浏览器验收（38 条，语言状态自愈，需 `wrangler dev`） |
 | `docs/HANDOVER.md` | 本文 |
 | `.workbuddy-ai/memory/` | 工作日志（按天）+ `MEMORY.md`（长期记忆）——本机文件，不入库 |

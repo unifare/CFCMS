@@ -87,6 +87,95 @@ export async function setUserUiLang(env: Env, userId: string, lang: string | nul
     .run();
 }
 
+/**
+ * A username that can be typed, remembered and used in a URL-free context.
+ * Deliberately stricter than "any non-empty string": the username is shown in
+ * the header, sorted in lists and (one day) may appear in author URLs.
+ */
+const USERNAME_RE = /^[A-Za-z0-9_.-]{3,32}$/;
+
+export function validUsername(username: string): boolean {
+  return USERNAME_RE.test(username);
+}
+
+/**
+ * Change the caller's own password. The current password is verified *here*,
+ * not in the API layer, so every future caller (CLI, API token, a second
+ * screen) gets the same gate and none can forget it.
+ *
+ * Returns `"ok"`, `"wrong_current"`, or `"weak"`.
+ */
+export async function changePassword(
+  env: Env,
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<"ok" | "wrong_current" | "weak"> {
+  if (typeof newPassword !== "string" || newPassword.length < 8) return "weak";
+  const row = await env.DB.prepare("SELECT password_hash FROM site_users WHERE id=?")
+    .bind(userId)
+    .first<any>();
+  if (!row) return "wrong_current";
+  if (!(await verifyPassword(currentPassword, row.password_hash))) return "wrong_current";
+  await env.DB.prepare("UPDATE site_users SET password_hash=?, updated_at=? WHERE id=?")
+    .bind(await hashPassword(newPassword), Math.floor(Date.now() / 1000), userId)
+    .run();
+  return "ok";
+}
+
+/**
+ * Change the caller's own username. Also gated on the current password — the
+ * username is half of the login credential, and a hijacked session must not be
+ * able to silently lock the real owner out of it.
+ *
+ * Returns `"ok"`, `"wrong_current"`, `"invalid"`, or `"taken"`.
+ */
+export async function changeUsername(
+  env: Env,
+  userId: string,
+  currentPassword: string,
+  newUsername: string
+): Promise<"ok" | "wrong_current" | "invalid" | "taken"> {
+  if (typeof newUsername !== "string" || !USERNAME_RE.test(newUsername)) return "invalid";
+  const row = await env.DB.prepare("SELECT password_hash FROM site_users WHERE id=?")
+    .bind(userId)
+    .first<any>();
+  if (!row) return "wrong_current";
+  if (!(await verifyPassword(currentPassword, row.password_hash))) return "wrong_current";
+  const clash = await env.DB.prepare("SELECT id FROM site_users WHERE username=? AND id<>?")
+    .bind(newUsername, userId)
+    .first<any>();
+  if (clash) return "taken";
+  await env.DB.prepare("UPDATE site_users SET username=?, updated_at=? WHERE id=?")
+    .bind(newUsername, Math.floor(Date.now() / 1000), userId)
+    .run();
+  return "ok";
+}
+
+/**
+ * The navigation keys this user hid from the sidebar. Stored as a JSON array
+ * in `site_users.menu_prefs`; anything unparseable reads as "nothing hidden" —
+ * a corrupt preference must hide the whole admin, not render it empty.
+ */
+export async function getMenuPrefs(env: Env, userId: string): Promise<string[]> {
+  try {
+    const row = await env.DB.prepare("SELECT menu_prefs FROM site_users WHERE id=?")
+      .bind(userId)
+      .first<any>();
+    const parsed = JSON.parse(String(row?.menu_prefs ?? "[]"));
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the hidden-navigation set. Overwrites, never merges. */
+export async function setMenuPrefs(env: Env, userId: string, hidden: string[]): Promise<void> {
+  await env.DB.prepare("UPDATE site_users SET menu_prefs=?, updated_at=? WHERE id=?")
+    .bind(JSON.stringify(hidden), Math.floor(Date.now() / 1000), userId)
+    .run();
+}
+
 export async function requireAdmin(env: Env, request: Request): Promise<SessionUser | Response> {
   const user = await currentUser(env, request);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });

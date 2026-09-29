@@ -21,6 +21,8 @@ import themes from "./themes.js";
 import plugins from "./plugins.js";
 import languages from "./languages.js";
 import themeMenuScreen from "./theme-menu.js";
+import account from "./account.js";
+import menuConfig from "./menu-config.js";
 import { tableListScreen } from "./table-list.js";
 import { tableEditScreen } from "./table-edit.js";
 
@@ -38,6 +40,8 @@ export const SCREENS = {
   languages,
   sites,
   users,
+  account,
+  "menu-config": menuConfig,
   seo,
   urls,
   settings,

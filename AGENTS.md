@@ -220,6 +220,7 @@ await hooks.applyFilters("html", ctx, out);
 | 13 | 显式语言的 URL（`/en/x`）找不到时返回 404，**不回退到别的语言** |
 | 13b | `lang_group` 可空，**「没有它就是自己」这条规则必须只写一次**：JS 用 `groupOf()`，SQL 用 `GROUP_SQL`（`src/api.ts`），两处共用同一个定义 |
 | 13c | 语言开关（启用/停用/加语言/改默认）改动后**必须刷新后台上下文**（`loadContext()`），否则编辑器的语言版本条会整条不渲染 |
+| 13d | 扩展菜单的 `label_key` 必须带 owner 前缀（`theme.{name}.` / `plugin.{name}.`，规则 11 的延伸——`validateAdminMenus` 用 ownerName 构造正则拒绝越界 key）。**菜单标签的翻译发生在服务端**（`admin-menus` GET 命中字典即替换 `label`），SPA 不做二次翻译 |
 
 规则 11 的后果：`themes/aurora/langs/zh-CN.json` 里写 `"nav.home"` 会让测试失败，
 必须写 `"theme.aurora.nav.home"`。**这不是风格要求**——两个扩展都定义 `nav.home`
@@ -408,6 +409,8 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 | 35 | 后台页名用**三个前缀**：`table:<t>`（列表）/ `table-new:<t>`（新建）/ `table-edit:<t>:<slug>`（编辑）。**不得合并成一个带可选后缀的前缀** |
 | 36 | `table-list` / `table-edit` 的列表列与表单控件**必须由 `tables[].fields[]` 生成**；主题不得手写后台表单 |
 | 37 | 插件清单**不得声明 `tables[]`**（校验器直接拒绝，不是忽略），也**不得使用 `table-list` / `table-edit`** screen |
+| 38 | 菜单显示分**两层**：① **站点级定制**（改名/排序/跨组移动/对所有人隐藏）存 `settings` 的 `admin.menu.custom`（每站一份 JSON），PUT/DELETE 需 `settings.manage`，GET 任何登录用户可读；② **每用户隐藏**存 `site_users.menu_prefs`（UI 层）。两者都**只影响侧边栏渲染**——capability 过滤仍在各端点，藏菜单不授/撤任何权限。`dashboard` 永远显示（逃生门） |
+| 39 | 站点菜单定制的**唯一应用点是 `nav.js` 的 `applyMenuCustom()`**（纯函数；侧栏与编辑器共用，别写第二份应用逻辑）。改名覆盖叠加在服务端 label_key 翻译**之上**（解析：override[locale] → override.en → 内置文案）；排序是**稳定排序**（显式 order 升序在前，未排序的按内置顺序殿后）；**移动到不存在的分组=忽略**（项留在原地，绝不丢弃）；结构性变更（排序/移动）必须**物化整组显式 order**，否则隐式/显式混排没法读。标签输入**change（失焦）即保存**，Enter 提交——`fill()` 类工具只派发 `input` 不派发 `change`，自动化测试 fill 后必须 blur |
 
 **理由（规则 34）**：插件只有一个**安装级** `enabled` 标志，主题是**按站点**激活的。
 所以插件菜单写一次 `site_id='*'`、读时用 `OR` 匹配；按站点扇出会需要"新建站点时补菜单"

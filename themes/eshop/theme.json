@@ -20,6 +20,13 @@
 
   "routes": [
     {
+      "path": "/",
+      "template": "archive-product",
+      "title": "Shop",
+      "resolve": { "table": "product" },
+      "query": { "as": "products" }
+    },
+    {
       "path": "/shop",
       "template": "archive-product",
       "title": "Shop",
@@ -59,6 +66,7 @@
     {
       "id": "eshop-products",
       "label": "Products",
+      "label_key": "theme.eshop.menu.products",
       "icon": "box",
       "screen": "table-list",
       "args": { "table": "product" },
@@ -67,6 +75,7 @@
     {
       "id": "eshop-product-new",
       "label": "Add product",
+      "label_key": "theme.eshop.menu.productNew",
       "icon": "plus",
       "screen": "table-edit",
       "args": { "table": "product" },
@@ -75,6 +84,7 @@
     {
       "id": "eshop-settings",
       "label": "Shop settings",
+      "label_key": "theme.eshop.menu.settings",
       "icon": "chart",
       "screen": "theme-settings",
       "sortOrder": 22

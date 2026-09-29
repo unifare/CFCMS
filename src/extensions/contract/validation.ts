@@ -40,6 +40,12 @@ import type { ValidatedManifest } from "./manifest";
 // and the strict object type would make every property probe an error.
 function asArray(v: unknown): any[] { return Array.isArray(v) ? v : []; }
 function fail(msg: string): never { throw new Error(msg); }
+/** Escape a string for literal use inside `new RegExp`. Extension names may
+ *  contain `.`, `+`, `(` … — an unescaped name would silently widen the
+ *  `label_key` prefix check instead of tightening it. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * Validate an extension manifest. Themes carry a much larger declaration
@@ -64,7 +70,7 @@ export function validateManifest(manifest: any, type: "plugin" | "theme"): Valid
     // exist, so a plugin's `adminMenus` was silently accepted and never read —
     // the author saw an installed plugin and no menu, with nothing to explain
     // the gap.
-    validateAdminMenus(manifest.adminMenus, new Set<string>(), "plugin");
+    validateAdminMenus(manifest.adminMenus, new Set<string>(), "plugin", String(manifest.name));
     validateHooks(manifest.hooks);
     // `tables[]` is not ignored, it is refused. Accepting it would let a plugin
     // declare a table the platform never creates, and the failure would only
@@ -151,8 +157,20 @@ function validateHooks(hooks: unknown) {
  * production: the manifest is valid, activation succeeds, and the page renders
  * empty. Better to refuse the manifest.
  */
-function validateAdminMenus(menus: unknown, declaredTables: Set<string>, ownerType: "plugin" | "theme") {
+function validateAdminMenus(
+  menus: unknown,
+  declaredTables: Set<string>,
+  ownerType: "plugin" | "theme",
+  ownerName: string
+) {
   const seen = new Set<string>();
+  // Rule 11 (§10): pack keys are namespaced by owner. A `label_key` outside
+  // the owner's namespace would either shadow another extension's key or, more
+  // likely, never resolve at all — the menu would silently stay untranslated.
+  // The manifest is refused instead of shipping a key that cannot work.
+  const keyRe = new RegExp(
+    `^${ownerType}\\.${escapeRegExp(ownerName)}\\.[^\\s]+$`
+  );
   for (const menu of asArray(menus)) {
     if (!menu || typeof menu !== "object") fail("adminMenus entries must be objects");
 
@@ -173,6 +191,14 @@ function validateAdminMenus(menus: unknown, declaredTables: Set<string>, ownerTy
     // installed-but-unusable menu is impossible.
     if (menu.capability !== undefined && menu.capability !== null && !isCapability(String(menu.capability))) {
       fail(`adminMenu ${id}: unsupported capability "${menu.capability}"`);
+    }
+
+    if (
+      menu.label_key !== undefined &&
+      menu.label_key !== null &&
+      (typeof menu.label_key !== "string" || !keyRe.test(menu.label_key))
+    ) {
+      fail(`adminMenu ${id}: label_key must match "${ownerType}.${ownerName}.<key>" (rule 11), got "${menu.label_key}"`);
     }
 
     if (menu.args !== undefined && (typeof menu.args !== "object" || menu.args === null || Array.isArray(menu.args))) {
@@ -351,7 +377,7 @@ function validateThemeManifest(m: any) {
   }
 
   // Now that `declaredTables` exists, the menus can be checked against it.
-  validateAdminMenus(m.adminMenus, declaredTables, "theme");
+  validateAdminMenus(m.adminMenus, declaredTables, "theme", String(m.name));
 
   for (const code of asArray(m.locales)) {
     if (!LOCALE_CODE_RE.test(String(code))) {

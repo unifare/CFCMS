@@ -31,6 +31,15 @@ export const state = {
   adminMenus: [],
   /** The same rows grouped by owner, for the sidebar's section headings. */
   menuGroups: [],
+  /** Navigation keys the user hid from the sidebar (menu configuration).
+   *  A Set so `navGroups` can filter without re-parsing on every render. */
+  hiddenMenus: new Set(),
+  /** Site-level menu customization (renames, ordering, grouping, site-wide
+   *  hiding) — one JSON blob per site, applied by nav.js applyMenuCustom. */
+  menuCustom: { items: {}, groups: {} },
+  /** Whether the signed-in user may edit the site-level menu (settings.manage).
+   *  Echoed by the server on GET admin-menus/custom so the SPA never guesses. */
+  menuCanManage: false,
   postTypes: [],
   fields: [],
   sidebarCollapsed: localStorage.getItem("cfpress.admin.sidebar") === "1",
@@ -80,6 +89,29 @@ export async function loadContext() {
   } catch {
     state.menuGroups = [];
     state.adminMenus = [];
+  }
+  // The user's own hidden-sidebar set. Fetched with the menu context on
+  // purpose: a language switch re-runs loadContext(), and the sidebar must
+  // re-render with both the translated labels AND the same hidden set.
+  try {
+    const p = await api("admin-menus/prefs");
+    state.hiddenMenus = new Set(Array.isArray(p.hidden) ? p.hidden : []);
+  } catch {
+    state.hiddenMenus = new Set();
+  }
+  // The site-level menu customization (shared by every admin of this site).
+  // Scoped to the site like the menus themselves; refetched by the same
+  // language-switch / site-switch path so renames follow the UI locale.
+  try {
+    const cc = await api(scoped("admin-menus/custom"));
+    state.menuCustom = {
+      items: cc.items && typeof cc.items === "object" ? cc.items : {},
+      groups: cc.groups && typeof cc.groups === "object" ? cc.groups : {},
+    };
+    state.menuCanManage = cc.can_manage === true;
+  } catch {
+    state.menuCustom = { items: {}, groups: {} };
+    state.menuCanManage = false;
   }
   state.themeMenus = state.adminMenus.filter((m) => m.owner_type === "theme");
   state.pluginMenus = state.adminMenus.filter((m) => m.owner_type === "plugin");

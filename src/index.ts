@@ -63,7 +63,8 @@ function matchRoute(routePath:string,path:string):{params:Record<string,string>}
  * Front-end router.
  *
  * URL shape (after site resolution, one or many sites per install):
- *   /{locale}                  -> home   (front-page | home | index)
+ *   /{locale}                  -> theme route for "/" if declared, else home
+ *                                 (front-page | home | index)
  *   /{locale}/blog/{slug}      -> single post
  *   /{locale}/{type}/{slug}    -> single of a theme-declared post type
  *   /{locale}/{slug}           -> static page (page-{slug} | page | single | index)
@@ -156,14 +157,19 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  ctx.waitUntil(bootPluginRuntime(env).catch(()=>[]));
 
  // Home
- if(!rest){
+ // Sits AFTER the theme-route loop, not before it: a theme may declare
+ // `path: "/"` and take over the front page (a shop whose home page IS the
+ // shop). When no theme claims the root, `matchRoute("","")` never fires and
+ // this fallback runs exactly as it always did — latest posts through the
+ // home/index template hierarchy.
+ const home=async()=>{
    const ps=await latestPosts(env,locale,siteId) as any[];
    const r=await renderPage(env,{
      siteId,locale,path:u.pathname,kind:"home",title:site.title,description:site.description,
      extra:{posts:ps.map((p:any)=>({slug:p.slug,title:p.title,excerpt:p.excerpt,url:`/${locale}/blog/${p.slug}`}))}
    },request);
    return respond(r.html,r.template,r.status);
- }
+ };
 
  // Theme-declared routes take priority over the built-in fallbacks so a theme
  // can own its own URL space (e.g. /properties/:slug).
@@ -285,6 +291,10 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
   },request);
   return respond(r.html,r.template,r.status);
  }
+
+ // A theme that declared `path: "/"` already answered above; everything else
+ // falls back to the built-in home.
+ if(!rest)return home();
 
  // Built-in post permalink
  if(rest.startsWith("blog/")){

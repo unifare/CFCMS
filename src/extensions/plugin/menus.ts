@@ -39,6 +39,8 @@ export interface PluginAdminMenu {
   screen: string;
   args?: Record<string, unknown>;
   capability?: string;
+  /** Optional translation key for the label (`plugin.{name}.…`). See ThemeAdminMenu. */
+  label_key?: string;
 }
 
 /** Materialise a plugin's `adminMenus` into the shared registry. */
@@ -62,6 +64,7 @@ export async function registerPluginMenus(
         screen: m.screen,
         args: m.args ?? {},
         capability: m.capability ?? null,
+        labelKey: m.label_key ?? null,
         sortOrder: i,
       }))
   );

@@ -58,6 +58,8 @@ export interface AdminMenuInput {
   screen: string;
   args?: Record<string, unknown>;
   capability?: string | null;
+  /** Optional dictionary key the API translates `label` through (§2.4). */
+  labelKey?: string | null;
   sortOrder?: number;
   enabled?: boolean;
 }
@@ -69,6 +71,9 @@ export interface AdminMenuRow {
   owner_name: string;
   menu_id: string;
   label: string;
+  /** The declared translation key, if any. The API layer consumes it; the row
+   *  keeps the declared value so the client can show *what* would translate. */
+  label_key: string | null;
   icon: string | null;
   screen: string;
   args: Record<string, unknown>;
@@ -152,6 +157,7 @@ function normalise(row: any): AdminMenuRow {
     owner_name: String(row.owner_name),
     menu_id: String(row.menu_id),
     label: String(row.label),
+    label_key: row.label_key ?? null,
     icon: row.icon ?? null,
     screen: String(row.screen),
     args: parseArgs(row.args_json),
@@ -185,11 +191,11 @@ export async function registerOwnerMenus(
     if (!m || !m.id || !m.screen) continue;
     await env.DB.prepare(
       `INSERT INTO admin_menu_registry
-         (id, site_id, owner_type, owner_name, menu_id, label, icon, screen,
+         (id, site_id, owner_type, owner_name, menu_id, label, label_key, icon, screen,
           args_json, capability, sort_order, enabled, created_at, updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET
-         label=excluded.label, icon=excluded.icon, screen=excluded.screen,
+         label=excluded.label, label_key=excluded.label_key, icon=excluded.icon, screen=excluded.screen,
          args_json=excluded.args_json, capability=excluded.capability,
          sort_order=excluded.sort_order, enabled=excluded.enabled,
          updated_at=excluded.updated_at`
@@ -201,6 +207,7 @@ export async function registerOwnerMenus(
         ownerName,
         m.id,
         m.label ?? m.id,
+        m.labelKey ?? null,
         m.icon ?? null,
         m.screen,
         JSON.stringify(m.args ?? {}),

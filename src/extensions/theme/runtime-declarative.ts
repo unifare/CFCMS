@@ -86,6 +86,14 @@ export interface ThemeAdminMenu {
    * theme could set it and have the type checker call it a mistake.
    */
   capability?: string;
+  /**
+   * Optional translation key for the label (`theme.{name}.…`). When the UI
+   * dictionary has a translation for the current interface language, the
+   * admin-menus API returns it instead of the literal `label`; when it does
+   * not, `label` is returned unchanged. The fallback text is therefore not
+   * optional even when a key is given.
+   */
+  label_key?: string;
 }
 
 export interface ThemeBlock {

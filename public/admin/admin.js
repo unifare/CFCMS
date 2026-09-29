@@ -23,6 +23,7 @@
 import { api, loadContext, state } from "./js/state.js";
 import { go, render, setLoginScreen, setScreenTable, switchSite, toggleGroup, toggleSidebar } from "./js/shell.js";
 import { doLogin, logout, renderLogin, setThemeForTest } from "./js/auth.js";
+import { cachedMessages, loadMessages } from "./js/i18n.js";
 import { SCREENS } from "./js/screens/index.js";
 import { addBlock, deleteContent, editContent, newContent, saveContent, showRevisions } from "./js/screens/editor.js";
 import { installExtension } from "./js/screens/extension-install.js";
@@ -55,11 +56,16 @@ for (const [name, fn] of Object.entries(WINDOW_HANDLERS)) window[name] = fn;
 
 watchSystemTheme();
 applyTheme();
+// Restore the previous session's dictionary before the first paint so even
+// the login screen renders in the language the user chose last time; the
+// authoritative load happens right after `auth/me` below.
+cachedMessages();
 (async () => {
   try {
     const d = await api("auth/me");
     state.user = d.user;
-    if (!state.user) renderLogin();
-    else { await loadContext(); await render(); }
+    if (!state.user) { renderLogin(); return; }
+    await Promise.all([loadContext(), loadMessages()]);
+    await render();
   } catch { renderLogin(); }
 })();

@@ -174,6 +174,7 @@ export async function applyThemeCapabilities(
         screen: m.screen,
         args: m.args ?? {},
         capability: m.capability ?? null,
+        labelKey: m.label_key ?? null,
         // Declaration order *is* the menu order; the manifest has no explicit
         // sort field, and inventing one would let a theme claim a position
         // ahead of the platform's own items.

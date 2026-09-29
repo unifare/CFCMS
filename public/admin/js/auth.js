@@ -8,19 +8,20 @@
 import { api, app, loadContext, state } from "./state.js";
 import { render, setLoginScreen } from "./shell.js";
 import { icon } from "../icons.js";
-import { alertDialog, setTheme } from "../ui.js";
+import { alertDialog, esc, setTheme } from "../ui.js";
+import { loadMessages, t } from "./i18n.js";
 
 export function renderLogin() {
   app.innerHTML = `<div class="login"><div class="loginbox">
     <span class="brand-mark">${icon("layers")}</span>
-    <h1>Sign in to CFPress</h1>
-    <p class="muted">Manage content, themes and sites.</p>
+    <h1>${esc(t("core.auth.title", "Sign in to CFPress"))}</h1>
+    <p class="muted">${esc(t("core.auth.subtitle", "Manage content, themes and sites."))}</p>
     <div class="login-shell">
-      <div class="field"><label for="u">Username</label><input id="u" value="admin" autocomplete="username"></div>
-      <div class="field" style="margin-bottom:0"><label for="p">Password</label><input id="p" type="password" value="change-me-now" autocomplete="current-password"></div>
+      <div class="field"><label for="u">${esc(t("core.auth.username", "Username"))}</label><input id="u" value="admin" autocomplete="username"></div>
+      <div class="field" style="margin-bottom:0"><label for="p">${esc(t("core.auth.password", "Password"))}</label><input id="p" type="password" value="change-me-now" autocomplete="current-password"></div>
     </div>
-    <button class="btn primary" style="width:100%" id="signin">Sign in</button>
-    <p class="muted text-sm" style="margin-top:1rem">First login default: <b>admin / change-me-now</b>. Change it before production use.</p>
+    <button class="btn primary" style="width:100%" id="signin">${esc(t("core.action.login", "Sign in"))}</button>
+    <p class="muted text-sm" style="margin-top:1rem">${esc(t("core.auth.defaultHint", "First login default: admin / change-me-now. Change it before production use."))}</p>
   </div></div>`;
 
   const submit = () => doLogin();
@@ -34,10 +35,12 @@ export async function doLogin() {
   try {
     const d = await api("auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) });
     state.user = d.user;
-    await loadContext();
+    // Menu labels are translated server-side and the shell strings client-side;
+    // both must be loaded before the first post-login render.
+    await Promise.all([loadContext(), loadMessages()]);
     render();
   } catch (e) {
-    await alertDialog({ title: "Sign-in failed", description: e.message });
+    await alertDialog({ title: t("core.auth.failed", "Sign-in failed"), description: e.message });
   }
 }
 
