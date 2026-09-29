@@ -151,16 +151,35 @@ can be pointed elsewhere with `CFPRESS_BASE`.
 
 ## Deploy
 
-Configure D1, R2 and KV IDs in `wrangler.jsonc` (the launcher's `doctor` action
-tells you whether this is still pending), then:
+The committed `wrangler.jsonc` carries `REPLACE_WITH_...` placeholders for the
+D1 database id and the KV namespace id. That is deliberate: this is a public
+repo, and resource ids only mean anything inside one account. Create your own
+with `wrangler d1 create` / `wrangler kv namespace create`, then put the real
+values somewhere that is not committed — the convention here is a gitignored
+`wrangler.local.jsonc` sitting next to `wrangler.jsonc` with the same structure.
+
+**Every wrangler command then needs `-c wrangler.local.jsonc`.** Without it
+wrangler reads the placeholder file and fails with "not a valid UUID" — which
+is a better outcome than deploying a Worker whose DB binding points nowhere,
+but it is still a confusing first error if you were not expecting it.
 
 ```bash
-npm run db:migrate
-npm run deploy
+npx wrangler d1 migrations apply cfpress --remote -c wrangler.local.jsonc
+npx wrangler deploy -c wrangler.local.jsonc
 ```
 
-or, in one step, `sh scripts/cfpress.sh deploy:full` (remote migrations, then
-deploy).
+The launcher's `doctor` action reports whether the placeholders are still in
+place, and `deploy` refuses to run with them (pass `--force` to override).
+
+### Paid-plan bindings are commented out by default
+
+`worker_loaders` and `services` are commented out in `wrangler.jsonc` because
+`worker_loaders` requires a Workers Paid plan. Neither is required to run: the
+theme runtime checks `env.LOADER` and degrades to declarative rendering when it
+is absent (`runtime-worker.ts` returns `null`, and `index.ts` falls through).
+A free-plan deploy is therefore a working CMS that declines `runtime: "worker"`
+themes — not a broken one. **Restore both together on a paid account**;
+restoring only `services` points `THEME_HOST` at a worker that cannot load.
 
 ## License
 
