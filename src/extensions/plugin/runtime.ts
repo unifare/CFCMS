@@ -1,6 +1,8 @@
 import { Env } from "../../shared/types";
 import { randomId } from "../../shared/crypto";
 import { isCapability } from "../contract/capabilities";
+import type { ChannelMessage, ChannelSendResult } from "../contract/channels";
+import { readChannelConfig, deliverNotification } from "./notify";
 import { registerPluginMenus } from "./menus";
 
 export type ExtensionContext = {
@@ -238,7 +240,14 @@ export async function bootPluginRuntime(env: Env): Promise<RuntimePlugin[]> {
               ...c,
               env: c?.env ?? env,
               extension: identity,
-              api: pluginApi(env, "plugin", plugin.name, plugin.permissions, requireSiteId(c)),
+              api: pluginApi(
+                env, "plugin", plugin.name, plugin.permissions, requireSiteId(c),
+                // The facade needs the declared channels so `notify()` can
+                // refuse one the plugin never asked for (the manifest is the
+                // authority), and so it reads only the settings the channel's
+                // configSchema declared.
+                Array.isArray(plugin.manifest?.channels) ? plugin.manifest.channels : []
+              ),
             },
             data
           );
@@ -404,6 +413,19 @@ export interface PluginApi {
   readContent(id: string): Promise<any>;
   readPluginSetting(key: string): Promise<string | null>;
   log(message: string): Promise<void>;
+  /**
+   * Deliver a notification through a channel this plugin declared.
+   *
+   * The host performs the send — the plugin names the channel and supplies the
+   * message; see `contract/channels.ts` for why it cannot be the other way
+   * round. The channel's configuration is read from this plugin's settings, so
+   * a plugin never handles its own credentials.
+   *
+   * Never throws: a delivery failure is a value. The caller is typically a hook
+   * on a request path, where an exception would turn "the endpoint was down"
+   * into a failed page render.
+   */
+  notify(channel: string, message: ChannelMessage): Promise<ChannelSendResult>;
 }
 
 export function pluginApi(
@@ -411,7 +433,14 @@ export function pluginApi(
   type: string,
   name: string,
   permissions: string[],
-  siteId: string
+  siteId: string,
+  /**
+   * The channels this plugin declared. Defaulted to `[]` rather than required,
+   * because every existing caller constructs a facade for something that has no
+   * channels, and the correct behaviour there is "no channel is declared" —
+   * which is what an empty list produces.
+   */
+  channels: any[] = []
 ): PluginApi {
   if (!siteId) {
     // Unreachable through the dispatcher (it supplies the request's site), and
@@ -477,6 +506,26 @@ export function pluginApi(
       } catch {
         /* logging must never break a request */
       }
+    },
+    async notify(channel: string, message: ChannelMessage): Promise<ChannelSendResult> {
+      // Declaring a channel is what grants the right to use it: the manifest is
+      // the authority, so a plugin cannot reach a channel it never asked for
+      // even if it guesses the code. The declared `configSchema` also decides
+      // which stored settings are read — an undeclared setting is not config.
+      const declared = channels.find((c) => String(c?.code) === channel);
+      if (!declared) {
+        return { ok: false, error: `plugin "${name}" does not declare channel "${channel}"` };
+      }
+      const keys = (Array.isArray(declared.configSchema) ? declared.configSchema : [])
+        .map((f: any) => String(f?.key ?? ""))
+        .filter(Boolean);
+      const config = await readChannelConfig(env, name, channel, keys);
+      return await deliverNotification(env, siteId, name, channel, config, {
+        title: String(message?.title ?? ""),
+        content: String(message?.content ?? ""),
+        payload: (message?.payload && typeof message.payload === "object") ? message.payload : {},
+        dedupKey: message?.dedupKey ? String(message.dedupKey) : undefined,
+      });
     },
   };
 }

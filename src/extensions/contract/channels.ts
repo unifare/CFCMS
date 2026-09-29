@@ -80,11 +80,20 @@ export interface NotificationChannel {
  *
  * A plugin may only declare a `code` from this list: declaring one the host
  * cannot deliver would put a selectable option in the admin that fails at send
- * time, which is a promise the platform has not kept. `payment` is deliberately
- * absent — v0.8 implements notification only, and listing an unimplemented
- * channel "is promising a capability that does not exist".
+ * time, which is a promise the platform has not kept.
+ *
+ * `payment` is absent because v0.8 implements notification only — and an
+ * unimplemented channel left in the list "is promising a capability that does
+ * not exist", which is the repo's existing criterion for removing an option
+ * rather than stubbing it.
+ *
+ * `mail` was removed for the same reason at the time it was written: the host
+ * has no mail binding, so a channel the admin could select would never send
+ * anything on any deployment. It goes back in when there is a transport to put
+ * behind it, not before. `webhook` is the abstracted minimum that works
+ * everywhere, which is why it is the one that ships.
  */
-export const HOST_CHANNEL_CODES = ["webhook", "mail"] as const;
+export const HOST_CHANNEL_CODES = ["webhook"] as const;
 
 /** A notification about to be sent. Field names follow the reference design. */
 export interface ChannelMessage {

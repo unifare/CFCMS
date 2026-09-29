@@ -115,6 +115,7 @@ export const PLATFORM_SCHEMA = [
   { table: "theme_settings", tenant: "platform", locale: null, note: "theme setting values, keyed (theme_name,key); config read only by the admin, not the front end" },
   { table: "shortcodes", tenant: "platform", locale: null, note: "registered shortcodes (platform-global registry)" },
   { table: "widget_instances", tenant: "platform", locale: null, note: "sidebar widget placement" },
+  { table: "notification_log", tenant: "site", locale: null, note: "host-written send ledger: also the dedup store for ChannelMessage.dedupKey" },
 ] as const;
 
 /**
