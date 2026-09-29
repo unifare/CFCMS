@@ -482,7 +482,7 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
-console.log("\n11. Inline language packs (ARCHITECTURE.md §2.4 layers ②/③)");
+console.log("\n7. Inline language packs (ARCHITECTURE.md §2.4 layers ②/③)");
 // ---------------------------------------------------------------------------
 // A plugin declares its UI strings in `plugin.json` instead of shipping a
 // `langs/` directory, because a plugin package is stored as a zip and never
@@ -542,7 +542,7 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
-console.log("\n7. language{} — the explicit language structure (rule 42)");
+console.log("\n8. language{} — the explicit language structure (rule 42)");
 // ---------------------------------------------------------------------------
 // A `language` block states HOW language is stored, which `translatable` alone
 // cannot. Each case below is a way the two spellings can disagree, or a claim
@@ -667,7 +667,7 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
-console.log("\n8. subscribes[] — domain event subscriptions (rule 45)");
+console.log("\n9. subscribes[] — domain event subscriptions (rule 45)");
 // ---------------------------------------------------------------------------
 
 accepts(
@@ -706,7 +706,7 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
-console.log("\n8. Plugins declare data, not code — rule 48 (batch 10)");
+console.log("\n10. Plugins declare data, not code — rule 48 (batch 10)");
 // ---------------------------------------------------------------------------
 //
 // The reference implementation loaded `plugin/index.js` and called its
@@ -729,7 +729,7 @@ for (const key of ["entry", "entryFile", "handler", "main", "script", "activate"
 accepts(v, validPlugin(), "the same plugin without the code key", "plugin");
 
 // ---------------------------------------------------------------------------
-console.log("\n9. Plugin pages: blocks are a closed set — rule 49");
+console.log("\n11. Plugin pages: blocks are a closed set — rule 49");
 // ---------------------------------------------------------------------------
 const pagePlugin = (pageOverrides = {}, manifestOverrides = {}) => ({
   name: "notify",
@@ -801,7 +801,7 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
-console.log("\n10. A plugin-page menu must open a declared page — rule 50");
+console.log("\n12. A plugin-page menu must open a declared page — rule 50");
 // ---------------------------------------------------------------------------
 accepts(
   v,
@@ -829,7 +829,7 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
-console.log("\n11. Plugin-owned tables are validated like a theme's — batch 10 debt paid");
+console.log("\n13. Plugin-owned tables are validated like a theme's — batch 10 debt paid");
 // ---------------------------------------------------------------------------
 // Batch 4 recorded "only plugin-owned tables remain", and the validator *refused*
 // `tables[]` for plugins until migration 0014 gave them somewhere to register.
@@ -879,7 +879,7 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
-console.log("\n12. Channels: code and field types are closed sets — rule 51");
+console.log("\n14. Channels: code and field types are closed sets — rule 51");
 // ---------------------------------------------------------------------------
 const channelPlugin = (channels) => ({ name: "notify", version: "1.0.0", channels });
 

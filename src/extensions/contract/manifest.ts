@@ -161,6 +161,23 @@ export function isFixedAdminScreen(screen: string): boolean {
 export const ALLOWED_PAGE_BLOCKS = ["table", "stats", "form"] as const;
 
 /**
+ * Aggregates a `stats` block may declare (rule 49).
+ *
+ * A closed set, and deliberately small: each entry is one SQL expression the
+ * host can compute without a query builder, and each has a server-side
+ * implementation (`tableAggregate` in `theme/table-facade.ts`). A name outside
+ * this list is refused at install time, so the admin never draws a "cannot
+ * compute" panel for a manifest that could have been rejected.
+ *
+ * `latest` is NOT here. An earlier draft listed it in the renderer's `KNOWN`
+ * set while the validator rejected it — a declaration the runtime could never
+ * reach. Two spellings of one closed set is the drift the shared constant
+ * exists to prevent; the validator and the renderer now read this list.
+ */
+export const ALLOWED_AGGREGATES = ["count", "sum"] as const;
+export type PageAggregate = (typeof ALLOWED_AGGREGATES)[number];
+
+/**
  * Screen types that read an extension-owned table, and therefore must name one.
  *
  * Kept next to the screen list rather than inside the validator so the two can

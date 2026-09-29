@@ -266,6 +266,7 @@ $Script:Suites = [ordered]@{
     'account'            = 'tests/account.test.mjs'
     'menu-custom'        = 'tests/menu-custom.test.mjs'
     'plugin-hooks'       = 'tests/plugin-hooks.test.mjs'
+    'plugin-pages'       = 'tests/plugin-pages.test.mjs'
     'theme-worker'       = 'tests/theme-worker.test.mjs'
     'launcher-parity'    = 'tests/launcher-parity.test.mjs'
 }

@@ -27,7 +27,7 @@
  * guards anything installed at runtime from a third-party zip.
  */
 import {
-  ALLOWED_ADMIN_SCREENS, ALLOWED_FIELD_TYPES, ALLOWED_PAGE_BLOCKS, ALLOWED_TABLE_FIELD_TYPES,
+  ALLOWED_ADMIN_SCREENS, ALLOWED_AGGREGATES, ALLOWED_FIELD_TYPES, ALLOWED_PAGE_BLOCKS, ALLOWED_TABLE_FIELD_TYPES,
   FIELD_KEY_RE, IDENT_RE, LOCALE_CODE_RE, PLUGIN_PAGE_SCREEN_PREFIX, RESERVED_COLUMNS, SCOPE_NAME_RE,
   TABLE_ADMIN_SCREENS, TABLE_LANGUAGE_STRATEGIES, TABLE_NAME_RE, isProseFieldType, validExtensionName,
   validTemplateName, validVersion,
@@ -177,7 +177,9 @@ function validateAdminPages(pages: unknown, declaredTables: Set<string>, ownerNa
       }
       if (block.type === "stats" && block.aggregate !== undefined) {
         const agg = String(block.aggregate);
-        if (agg !== "count" && agg !== "sum") fail(`adminPage ${id}: unsupported aggregate "${agg}"`);
+        if (!(ALLOWED_AGGREGATES as readonly string[]).includes(agg)) {
+          fail(`adminPage ${id}: unsupported aggregate "${agg}" (allowed: ${ALLOWED_AGGREGATES.join(", ")})`);
+        }
         if (agg === "sum" && !String(block.field || "")) {
           fail(`adminPage ${id}: aggregate "sum" needs a field`);
         }

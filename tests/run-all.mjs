@@ -40,6 +40,10 @@ const suites = [
   ["multi-language (L0-L3)", "i18n.test.mjs"],
   ["admin contract", "admin-contract.test.mjs"],
   ["plugin hooks", "plugin-hooks.test.mjs"],
+  // Plugin-declared admin pages run right after plugin hooks: both drive the
+  // real Worker against a plugin install, and this one adds the page renderer —
+  // the only suite that reads markup back out of a response.
+  ["plugin pages (declare -> render)", "plugin-pages.test.mjs"],
   ["theme sandbox (L3)", "theme-worker.test.mjs"],
   ["fixture theme", "theme-fixture.test.mjs"],
   // The launcher parity check is pure text analysis over scripts/cfpress.sh and

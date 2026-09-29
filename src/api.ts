@@ -50,7 +50,7 @@ import {
   listOwnerTableDefs,
   refreshThemeTableI18n,
 } from "./extensions/theme/tables";
-import { tableBySlug, tableDelete, tableList, tableSave, resolveTableForSite } from "./extensions/theme/table-facade";
+import { tableBySlug, tableDelete, tableList, tableSave, tableAggregate, deriveSlug, resolveTableForSite } from "./extensions/theme/table-facade";
 
 /**
  * Which site does this admin request target? Explicit `?site=` wins; otherwise
@@ -934,6 +934,24 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
     if (!def) return ok({ error: `no table "${ttMatch[1]}" is declared for this site` }, 404);
     const locale = String(url.searchParams.get("locale") ?? "").trim() || (await siteDefaultLocale(env, siteId));
     if (method === "GET") {
+      // A `stats` block asks for an aggregate instead of rows: `?aggregate=count`
+      // or `?aggregate=sum&field=<numeric>`, optionally `&groupBy=<field>`. The
+      // aggregate and both columns are validated against the declaration inside
+      // `tableAggregate` — never interpolated — and an unsupported combination
+      // answers 400 rather than a fabricated zero.
+      const agg = url.searchParams.get("aggregate");
+      if (agg) {
+        const result = await tableAggregate(env, def, {
+          aggregate: agg,
+          field: url.searchParams.get("field"),
+          groupBy: url.searchParams.get("groupBy"),
+          status: url.searchParams.get("status"),
+        });
+        if (!result) {
+          return ok({ error: `cannot compute aggregate "${agg}" for table "${ttMatch[1]}"` }, 400);
+        }
+        return ok({ def, locale, ...result });
+      }
       const items = await tableList(env, def, {
         locale,
         limit: Number(url.searchParams.get("limit") ?? 50),
@@ -946,7 +964,12 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
       if (!(await requirePermission(env, user, "content.write"))) return ok({ error: "Forbidden" }, 403);
       const body = await jsonBody(request);
       try {
-        const row = await tableSave(env, def, body, locale);
+        // A plugin page's `form` block offers only the fields its manifest
+        // declared, and a plugin never declares the platform's `slug` — so a
+        // write from that path arrives slugless. Derive one rather than
+        // rejecting, while the built-in table screens keep their explicit slug.
+        const withSlug = body?.slug || method === "PUT" ? body : { ...body, slug: deriveSlug(def, body) };
+        const row = await tableSave(env, def, withSlug, locale);
         return ok({ ok: true, locale, row }, 201);
       } catch (e: any) {
         return ok({ error: e?.message || "save failed" }, 400);

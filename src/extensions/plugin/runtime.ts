@@ -3,7 +3,7 @@ import { randomId } from "../../shared/crypto";
 import { isCapability } from "../contract/capabilities";
 import type { ChannelMessage, ChannelSendResult } from "../contract/channels";
 import { readChannelConfig, deliverNotification } from "./notify";
-import { registerPluginMenus } from "./menus";
+import { registerPluginMenus, registerPluginTables } from "./menus";
 
 export type ExtensionContext = {
   env: Env;
@@ -192,16 +192,23 @@ async function loadEnabledPlugins(env: Env): Promise<RuntimePlugin[]> {
     return { name: String(r.name), title: String(r.title ?? r.name), manifest, permissions, hooks };
   });
 
-  // Converge the menu registry with the enabled set. Hooks and menus both come
-  // from "which plugins are enabled and what did each declare", so they are
-  // materialised at the same moment — a plugin whose `adminMenus` never made it
-  // into the database would otherwise be a plugin with hooks that work and a
-  // sidebar entry that silently never appears.
+  // Converge the menu registry and the table registry with the enabled set.
+  // Hooks, menus and tables all come from "which plugins are enabled and what
+  // did each declare", so they are materialised at the same moment — a plugin
+  // whose `adminMenus` (or `tables[]`) never made it into the database would
+  // otherwise be a plugin whose hooks work while its sidebar entry silently
+  // never appears, or whose admin page reads a table that does not exist.
   for (const plugin of out) {
     try {
       await registerPluginMenus(env, plugin.name, plugin.manifest?.adminMenus);
     } catch {
       // A menu that cannot be written must not take the request down with it.
+    }
+    try {
+      await registerPluginTables(env, plugin.name, plugin.manifest ?? {});
+    } catch {
+      // Same reasoning: a table that cannot be created must not 500 the request
+      // that happened to boot the runtime. The next boot retries.
     }
   }
 

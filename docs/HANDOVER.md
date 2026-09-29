@@ -1,9 +1,11 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-09-29 (GMT+8) ｜ 交接基线：**本轮提交**
-> （`Admin UI language (en/zh-CN) + account self-service + per-user menu config`；
-> 上一轮批次 4 脚手架 + eshop 范例主题与主页接管，再上一轮 `48edc41` 多语言四层）
+> 更新时间：2026-09-29 (GMT+8) ｜ 交接基线：**批次 10 —— 插件系统三支柱（自有表 / 通知渠道 / 声明式后台页面）**
+> （上一轮批次 5 后台界面语言 + 账户自助 + 菜单配置；再上一轮批次 4 脚手架 + eshop 范例主题；
+> 再上一轮 `48edc41` 多语言四层）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
+>
+> ⚠️ 本轮的批次过程文档在 `docs/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
 
 ---
 
@@ -34,8 +36,18 @@ d6e2239  Split the admin SPA into modules + add structure tests
 48edc41  Multi-language: four layers (L0-L3) + theme-owned tables
 a1ac8e3  Unify admin menus into one registry + generate table screens from declarations
 33f6369  Add theme/plugin scaffolders + make declared routes actually drive rendering
-fb2b012  Add eshop sample theme, its test suite, and the three dev docs (batch 4)  ← 上一基线
-3ccd66b  Admin UI language (en/zh) + account self-service + site menu editor  ← 本轮
+fb2b012  Add eshop sample theme, its test suite, and the three dev docs (batch 4)
+3ccd66b  Admin UI language (en/zh) + account self-service + site menu editor  (batch 5)
+959f423  Review: multi-language invariants (batch 6 review)
+83e65ed  Fix the four multi-language defects the review found (batch 6)
+36720a1  Rule 41: every data field carries a language dimension (batch 7)
+...      (batches 8–9: 见 ARCHITECTURE.md §8 路线图)
+576fe6a  Delete retired themes/plugins + fix the 11th false green (batch 10 step 1)
+34c0bc9  Owner-agnostic own tables: rebuild theme_table_defs with owner_type (step 2)
+bcc856c  Channel contract + plugin page contract + rules 48–51 (steps 3+4)
+9487b40  Channel runtime: webhook impl + dedup ledger + PluginApi.notify (step 5)
+9fd19db  Admin renderer: plugin-page blocks + channel settings form (step 6)  ← 上一基线
+本轮      plugins/notify sample plugin + tests/plugin-pages.test.mjs + reverse verification (steps 7+8)
 ```
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
@@ -252,7 +264,60 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 `api()` 非 2xx 时**抛 `Error(data.error)`**（`if (d.error)` 不可达，catch 里要 `explain(err.message)`）；
 `ui_lang` 按用户持久化在 D1（**换浏览器也保持**，验收脚本登录后必须显式重置）。
 
-## 6. 测试与验证（当前全绿：16 套件 / 682 条 / 0 失败）
+### 批次 6–9 —— 多语言加固 / 规则 41 —— ✅ 已完成
+
+详见 `docs/ARCHITECTURE.md` §8 路线图与 `docs/REVIEW-2026-09-29.md`（批次 6 审查报告）。
+要点：**批次 6** 审查「多语言事实会不会在后续开发里丢失」，4 高危（`tableDelete` 跨站/删全语言、
+theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`）+ 3 中危全部修完，
+新增 `resolveContentLocale()`（内容语言回退阶梯唯一定义）；**批次 7** 落地规则 41
+（所有数据必须有多语言能力，`contract/manifest.ts` 的分类表 `PROSE_FIELD_TYPES` /
+`LANGUAGE_NEUTRAL_FIELD_TYPES` + 四道结构守卫）。
+
+### 批次 10（插件系统三支柱）—— ✅ 本轮完成
+
+批次 10 把插件系统从「菜单 + hooks」扩成完整三支柱：**自有表（owner-agnostic）→
+通知渠道（declare → host delivers）→ 声明式后台页面（declare → host renders）**。
+设计全文在 `docs/PLUGIN-ARCHITECTURE.md`；八步交付顺序，每步独立可验证、每条新守卫都反向验证。
+
+| 步骤 | 内容 | 状态 |
+|---|---|---|
+| 1 | 删除旧主题/插件（39 文件）+ 第十一种假绿修复 | ✅ `576fe6a` |
+| 2 | 自有表 owner-agnostic：`theme_table_defs` 重建出 `owner_type` | ✅ `34c0bc9` |
+| 3+4 | 渠道契约 + 插件页面契约 + 规则 48–51 校验 | ✅ `bcc856c` |
+| 5 | 渠道运行时：webhook 实现 + claim-before-send 去重台账 + `PluginApi.notify` | ✅ `9487b40` |
+| 6 | 后台渲染器：`plugin-page` 块渲染 + 渠道设置表单 | ✅ `9fd19db` |
+| 7 | **`plugins/notify/` 示例插件**：`webhook` 渠道 + 三块 `adminPages` + `notify-settings` 菜单 | ✅ 本轮 |
+| 8 | **`tests/plugin-pages.test.mjs`（56 条）+ `tests/_plugin-pages-inject.mjs`（10 场景反向验证）** | ✅ 本轮 |
+
+**本轮（步骤 7+8）落实的四件事**：
+
+1. **`plugins/notify/plugin.json` 真实存在**（`tests/admin-menus.test.mjs` 从磁盘读它）。
+   声明 `webhook` 渠道（`configSchema` 四字段）+ 一个 `deliveries` 页面（`stats`×2 /
+   `table` / `form` 四种块）+ `notify-settings` 与 `notify-deliveries` 两个菜单 +
+   `title_template`/`default_description` 设置。真实校验器接受。
+2. **补上「插件自有表」最后一段未接线**：`syncOwnerTables` 早就支持 `"plugin"`，
+   但**从没有人调用它**。经 `PluginTableSync` 提供者注入（规则 3 不允许 `plugin/` import
+   `theme/`）按站点扇出——`plugin-pages` 套件证明启用插件会**真的建出物理表**并写注册表。
+3. **`tests/plugin-pages.test.mjs`（56 条）** 覆盖：未声明页面 id 被拒（规则 50）/
+   块类型闭集合（规则 49）/ `form` 块写入落到**真实物理行**（不是 201）/ `stats` 聚合数字正确
+   （含 `sum` 空集为 `null` 而非 0）/ 禁用插件菜单与页面从注册表消失 / 按站点租户边界 /
+   **§9 渲染器真渲染**（读回 markup）。
+4. **`tests/_plugin-pages-inject.mjs`（10 场景）** 每个守卫注入一个真实缺陷、
+   断言**具名断言**变红、还原、哈希一致。全部 0 problem。
+
+**本轮新抓的两个「声明了但没人读」缺陷（200 + 内容错）**：
+
+- **渲染器读错了字段路径**：表格端点答 `{ def: { fields }, items }`，渲染器却读扁平
+  `data.fields` → 每个 `table`/`form` 块都画「这张表没有声明这些字段」——**HTTP 200、
+  数据在线上完全正确**。修法：`sourceFields()` 先认 `data.def.fields`。
+  **这个缺陷在本轮之前没有任何守卫**（`admin-spa` 只查模块图，`plugin-pages` 只查服务端），
+  所以本轮给 `plugin-pages` 加了 §9「渲染器真渲染」——**唯一一条把 markup 读回来的断言**。
+- **`tableAggregate` 无视 `status` 参数**：声明了却没消费，`sum`/`count` 的"空选择"断言
+  因此假绿。修法是消费 `status` 并补一条对照断言（同选择下 `count` 应为真实的 0，
+  以证明 `null` 是"没行"而不是"过滤被丢掉"）。
+
+
+## 6. 测试与验证（当前全绿：19 套件 / 925 条 / 0 失败）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -261,35 +326,49 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 22 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、**屏幕集合钉住 / 菜单引用的表存在 / 已退役表不再被引用**、**每个声明字段的多语言能力（§10 规则 41，含分类表四道结构守卫）** |
-| manifest-validation | 66 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、插件拒绝 `tables[]`、**路由 `resolve` 二选一 / `resolve.by` / `query.as` 作用域名**、**规则 41 双向：散文必须声明 / 语言中立不得声明**） |
+| architecture | 45 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 的闭集合双表对比（`ALLOWED_*` ↔ `RENDERED_*`）** |
+| _schema-scope | 21 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
+| manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
 | admin-spa | 15 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次 |
-| template-engine | 49 | 模板解释器单元（含 **子模板未闭合 section 抛错**、**三层继承最派生者胜**） |
-| **scaffold** | **71** | 生成的 theme/plugin/table 通过**真实** `validateManifest` + **真实**模板引擎 + **真实**架构规则；`@include`/`@extends` 目标存在；每个子模板 section 开闭配对；语言包前缀；拒绝覆盖；非法输入退出码；`--translatable` 正反两面；**生成的清单确实过规则 41** |
-| theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含**表驱动路由**：`resolve.table` / `routes[].template` / `query.as` / 单条未命中 404） |
-| **theme-eshop** | **45** | **范例主题**：`themes/eshop/` 的声明与模板互相自洽——表/翻译字段/菜单↔表配对/路由 `resolve`/`query.as`/语言包，全部过**真实**校验器与**真实**架构规则；六个模板各渲染一次（有数据/无数据）；链接走路由自己的路径；`@first` 绑迭代作用域；**主页接管**（`path: "/"` 声明即前台首页，+4 条） |
-| multisite | 74 | 多站点隔离（含 SEO 端点按站点，第 9b 段） |
-| i18n | 66 | 多语言四层契约（§5.4① 八条全覆盖）+ 翻译组 + 主题自有表 |
+| template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
+| scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
+| theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
+| theme-fixture | 47 | fixture 主题的声明与模板自洽 |
+| multisite | 74 | 多站点隔离（含 SEO 端点按站点） |
+| i18n | 66 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
 | admin-contract | 32 | 后台 API 契约 |
-| **account** | **27** | **账户自助与菜单偏好（批次 5 新增）**：改密/改名的当前密码闸门（wrong_current 403 / weak 400 / taken 409 / invalid 400）、旧密码失效、`auth/me` 反映改名、menu_prefs 往返/去重/按用户隔离、**label_key 翻译端到端**（zh-CN→「物品」、en→"Things"、无 key 菜单保留原文、`ui_locale` 回显） |
-| **menu-custom** | **40** | **站点菜单编辑器（批次 5 新增）**：`admin-menus/custom` 三端点契约（默认空、往返、按站隔离、DELETE 复位）、权限分层（author 可读不可写、`can_manage` 回显）、10 种结构违规 400 + 未知字段剥离、`applyMenuCustom` 纯函数（双语改名解析/稳定排序/跨组移动/**不存在分组被忽略**/siteHidden/navGroups 过滤语义） |
-| plugin-hooks | 25 | 插件 hook 生命周期 |
+| account | 27 | 账户自助：改密/改名的当前密码闸门、稳定错误码、menu_prefs 隔离、label_key 翻译端到端 |
+| menu-custom | 40 | 站点菜单编辑器三端点契约、权限分层、10 种结构违规 400、`applyMenuCustom` 纯函数语义 |
+| plugin-hooks | 32 | 插件 hook 生命周期 |
+| **plugin-pages** | **56** | **插件声明式后台页面（批次 10 新增）**：未声明页面 id 被拒（规则 50）/ 块类型闭集合（规则 49）/ `form` 块写入落到**真实物理行** / `stats` 聚合数字正确（`sum` 空集 = `null` 非 0）/ 禁用插件菜单与页面从注册表消失 / 按站点租户边界 / **§9 渲染器真渲染（读回 markup——本轮唯一一条把响应变成 HTML 再断言的守卫）** |
+| plugin-channels | 55 | 通知渠道运行时：webhook fetch 计数、claim-before-send 去重（含跨站双向）、`readChannelConfig` 只读声明过的 key |
 | theme-worker | 28 | L3 沙箱（含 WorkerStub 不可跨请求） |
-| theme-aurora | 14 | aurora 主题渲染快照式检查（摘要格式本轮统一为 `N passed, M failed`） |
+| launcher-parity | 55 | `cfpress.sh` ↔ `cfpress.ps1` 动作/菜单编号/套件表/退出码逐项对齐（解析结构，非 grep）+ BOM |
 
-⚠️ **一跑必须有摘要行**：`theme-eshop` / `theme-aurora` 都遵循「catch 里也打印摘要、
-崩溃标注 `(aborted)`」——脚本判据统一是 `^[0-9]+ passed, [0-9]+ failed`，
-**匹配不到就当失败**（见「第六种假绿」）。
+⚠️ **一跑必须有摘要行**：所有套件遵循「catch 里也打印摘要、崩溃标注 `(aborted)`」——
+脚本判据统一是 `^[0-9]+ passed, [0-9]+ failed`，**匹配不到就当失败**（见「第六种假绿」）。
+本轮清掉了三处**多余的第二个摘要行**（`admin-spa` / `i18n` / `architecture` 各自打过一个
+`${X ? "1" : "0"} failure(s)`）——两个摘要两种拼法，正是 grep 抓错行、把崩溃读成通过的原因。
 
-另有一个**不在 `npm test` 链里**的反向验证工具（手工跑）：
+另有一个**不在 `npm test` 链里**的反向验证工具（`_tenant-query-audit.mjs`，跑得可当普通 suite）：
 
 ```bash
-node tests/_eshop-inject.mjs list         # 7 个场景
-node tests/_eshop-inject.mjs inject <场景> # 注入（内容哈希证明生效）
-node tests/theme-eshop.test.mjs           # 应红在预期断言
-node tests/_eshop-inject.mjs restore      # 快照还原（assertPristine 双向验证）
+node tests/_schema-scope.mjs           # 迁移流 → 临时 SQLite，逐表核对声明与真实列
+node tests/_tenant-query-audit.mjs     # 列出所有「碰租户表但不带 site_id」的语句；每条需书面裁决
 ```
+
+⚠️ `_tenant-query-audit.mjs` 的 `REVIEWED` 表**键是 `file:line`**——任何在上方的编辑都会
+把一条已裁决的语句挤成 `NEW`。本轮 `api.ts` 新增若干行后，`theme_installs` 那条从 `:1154`
+移到 `:1187`，必须**重新键位**；同时补了 `notify.ts:108`（本批次的去重台账回写）的裁决。
+跑它时 `NEW` 是**提示不是失败**，但每条都要有人看一眼。
+
+插件系统的反向验证工具（手工跑，不进 `npm test`）：
+
+```bash
+node tests/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 → 断言具名断言变红 → 还原 → 哈希一致
+```
+
 
 第二个反向验证工具，守**规则 41（所有数据都有多语言能力）**：
 
@@ -347,10 +426,10 @@ fixture 的那一项**；修正方式是再加一个**同类型**的第二个 ow
 ⚠️ **新守卫必须反向验证**：写完守卫 → 故意注入一次违规 → 确认它 FAIL。测不出失败的检查等于没有检查。
 本轮 6 项注入（见 §5 批次 3）全部如期变红。
 
-## 7. 后台 SPA（两轮前拆分，批次 5 又新增 3 个模块）
+## 7. 后台 SPA（两轮前拆分，批次 5 增 3 个模块，批次 10 再增 2 个）
 
 `public/admin/admin.js` 1514 行单文件 → 入口 + 6 个基础模块 + 屏幕模块
-（`js/screens/` 现有 23 个文件：注册表 `index.js` + 22 个屏幕/工具模块）。
+（`js/screens/` 现有 24 个文件：注册表 `index.js` + 23 个屏幕/工具模块）。
 
 ### 落点
 
@@ -361,33 +440,47 @@ public/admin/
 └── js/
     ├── state.js         state + api/scoped/contentPath/postTypeInfo/loadContext（叶子模块）
     │                    loadContext 同取 admin-menus/prefs → state.hiddenMenus（与菜单同取：
-    │                    切语言重跑 loadContext 时两者同时刷新）
+    │                    切语言重跑 loadContext 时两者同时刷新）＋ state.plugins（每个块
+    │                    页面的声明来源）
     ├── i18n.js          ★ 批次 5：t()/loadMessages/setUiLocale（叶子中的叶子，谁都能 import 它）
+    ├── plugin-page.js   ★ 批次 10：声明式插件页面的**渲染器**（谁都能 import 它，无状态）
+    │                    导出 RENDERED_BLOCK_TYPES / RENDERED_AGGREGATES /
+    │                    RENDERED_CHANNEL_FIELD_TYPES，架构测试按集合与契约对比
     ├── nav.js           baseGroups（分组带稳定 id）/ applyMenuCustom（★ 站点定制唯一应用点，
     │                    纯函数，侧栏与编辑器共用）/ navGroups（应用定制 + 双层隐藏过滤）/
     │                    navGroups / sidebar / header（语言下拉）
     ├── shell.js         render + go + switchSite + pageHead + 屏幕注册表 + 页名分发 + 语言切换委托
     ├── auth.js          renderLogin / doLogin / logout / setThemeForTest（登录成功后 loadMessages）
     ├── table-form.js    字段类型 → 控件 的唯一映射 + 值往返
-    └── screens/         index.js（注册表）+ 22 个屏幕/工具模块
+    └── screens/         index.js（注册表）+ 23 个屏幕/工具模块
                          ★ account.js / menu-config.js 是批次 5 新增（都走 data-* 委托，零新 window.*）
                          ★ menu-config.js = 站点菜单编辑器（改名/排序/跨组/隐藏/恢复默认，
                            结构性变更物化显式 order，标签 change 即存、Enter 提交）+ 我的偏好双面板
+                         ★ plugin-page.js 是批次 10 新增：`plugin-page:<id>` 屏幕——
+                           声明从 state.plugins 读（单一事实源），每块独立加载数据
 ```
 
 **`i18n.js` 是叶子中的叶子**：不 import 任何东西，所以包括 `ui.js` 在内的所有模块都能
 依赖它而不成环。菜单标签**不在**这里翻译——`admin-menus` API 已在服务端把 `label_key`
 换成译文，切换语言时 `setUiLocale → loadContext() → render()` 重取上下文即可。
 
+**`plugin-page.js`（渲染器）是第二个「谁都能 import」的叶子**：无状态、不读 `state`，
+只吃 `(decl, dataBySource)` 返回 HTML。它存在的原因是**插件不能带可执行代码**
+（Workers 禁 `eval`/`new Function`/动态 import），所以插件声明 `blocks[]`、宿主负责画。
+这是同一个模式的第三次应用，前两次是 `tables[].fields[]`（宿主生成 CRUD 表单）与
+`channels[].configSchema`（宿主生成设置表单）。**加了新块类型要改三处**——契约、
+`RENDERED_BLOCK_TYPES`、渲染器 switch——漏一处是架构测试失败，而不是 200 的空面板。
+
 **关键设计：`shell.js` 不 import 任何屏幕。** 屏幕通过 `setScreenTable(SCREENS)`
 自注册，登录屏通过 `setLoginScreen(renderLogin)` 注入 —— 否则
 `shell → screens → shell` 立即成环。`extension-install.js` 独立出来是为了
 不让"主题屏"依赖"插件屏"。屏幕内的 `window.xxx()` 调用已全部改为直接调用导入的函数。
 
-### 页名分发（本轮改动的核心）
+### 页名分发（批次 3 定形，批次 10 加第五个前缀）
 
-`shell.js` 按四个前缀分发页名：`menu:<id>`（扩展菜单）、`table:<t>`（列表）、
-`table-new:<t>`（新建）、`table-edit:<t>:<slug>`（编辑）。**必须保持三前缀分离**——
+`shell.js` 按前缀分发页名：`menu:<id>`（扩展菜单）、`table:<t>`（列表）、
+`table-new:<t>`（新建）、`table-edit:<t>:<slug>`（编辑）、**`plugin-page:<id>`（批次 10）**。
+**必须保持三前缀分离**——
 合并成 `table:<t>[:<slug>]` 会让"列表"和"新建"成为同一个页名，点 Add 时路由认为
 "已经在目标页上"而不重渲染，按钮看起来完全没反应（见 §8 坑位 17）。
 
@@ -525,20 +618,44 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     （v6 首跑实踩：改名断言挂了，但后续步骤的点击触发 blur 又把它救活了——症状是
     "现在没生效、两步之后生效了"）。Enter 提交（keydown→blur）是给人用的快捷方式，
     不是给 playwright 的。
+26. **「声明了但没人读」缺陷族又添两员（批次 10）**：字段被校验、运行时没人消费 → **200 + 内容错**。
+    ① 插件列表 API 把 `adminPages[]`/`channels[]` 存成 JSON **字符串**（透出了但读不了）；
+    ② 渲染器读扁平 `data.fields` 而端点答 `data.def.fields`（每块都画"表没有这些字段"）；
+    ③ `tableAggregate` 声明了 `status` 参数却从没消费它（空选择断言因此假绿）。
+    **加字段时先找它的消费点，找不到就别加**——同一个病在本仓库已经出现七次。
+27. **守卫的"观测面"决定了它能抓到什么（批次 10 的核心教训）**。渲染器字段路径的缺陷
+    **在服务端断言里根本不可见**：`plugin-pages` 起初只查 API 与 DB，注入该缺陷后
+    `admin-spa`（只查模块图）与 `plugin-pages`（只查服务端）**双双全绿**。
+    修法不是再加一条服务端断言，而是**加一条把响应变成 HTML 再读回来的断言**（§9）。
+    **推论**：一条守卫只能证它观测的那一层；"测试全绿"不代表"这个缺陷有人看着"。
+28. **反向验证工具不要把「套件自己 abort」当成「读不到摘要」**。`_plugin-pages-inject.mjs`
+    原本一见 `(aborted)` 就报"no summary"，于是"缺表"那个真实红（`18 passed, 5 failed`）
+    被当成**坏了运行器**而不是**坏了守卫**。分开两个概念：`aborted` = **没有可解析的摘要**；
+    `selfAborted` = 套件自己走进了 catch（摘要仍可读）。**没有摘要才算失败**，
+    有摘要的 abort 就是一份真实证据。
+29. **`_tenant-query-audit.mjs` 的裁决表键是 `file:line`**，任何上方编辑都会把一条
+    已裁决语句挤成 `NEW`。改完 `src/api.ts` 之类的文件后跑一次，**报了 `NEW` 就重新键位**
+    （本轮 `theme_installs` 那条从 `:1154` 移到 `:1187`）。`NEW` 是提示不是失败，
+    但每条都要有人写一句为什么会话安全的裁决。
 
 ## 9. 权威文档索引
 
 | 文档 | 内容 |
 |---|---|
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
-| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则 14–20、后台 SPA 规则 21–24、主题自有表规则 25–29、共用定义规则 30–31、**菜单注册表与生成式屏幕规则 32–37**、明确不做的事） |
-| `tests/architecture.test.mjs` | 分层与越界守门人（13 组检查） |
+| `docs/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
+| `docs/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
+| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、明确不做的事） |
+| `tests/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表） |
 | `tests/admin-menus.test.mjs` | 菜单注册表契约（归属隔离 / 安装级可见 / 停用只删自己 / 切主题切回） |
 | `tests/i18n.test.mjs` | 多语言四层契约（§5.4① 八条 + 翻译组 + 主题自有表 + 9b 段 `lang_group` 回归） |
 | `tests/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
 | `tests/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
 | `tests/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |
-| `tests/account.test.mjs` | 账户自助与菜单偏好契约（当前密码闸门 / 稳定错误码 / prefs 隔离 / **label_key 翻译端到端**） |
-| `.wrangler/eshop-verify.cjs` | eshop 全链路 + 批次 5 新功能的真浏览器验收（38 条，语言状态自愈，需 `wrangler dev`） |
+| `tests/account.test.mjs` | 账户自助与菜单偏好契约（当前密码闸门 / 稳定错误码 / prefs 隔离 / label_key 翻译端到端） |
+| `tests/plugin-pages.test.mjs` | 插件声明式后台页面契约（规则 49/50 + `form` 写入落真表 + `stats` 聚合 + 禁用清理 + **渲染器真渲染**） |
+| `tests/_plugin-pages-inject.mjs` | 上者的反向验证工具（10 场景，注入→具名断言变红→还原→哈希一致） |
+| `tests/_tenant-query-audit.mjs` | 租户查询审计（列出所有碰租户表但不带 `site_id` 的语句，逐条书面裁决；键是 `file:line`） |
+| `.wrangler/eshop-verify.cjs` | 全链路真浏览器验收（语言状态自愈，需 `wrangler dev`） |
 | `docs/HANDOVER.md` | 本文 |
 | `.workbuddy-ai/memory/` | 工作日志（按天）+ `MEMORY.md`（长期记忆）——本机文件，不入库 |

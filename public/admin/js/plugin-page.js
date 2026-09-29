@@ -52,12 +52,39 @@ export const RENDERED_BLOCK_TYPES = ["table", "stats", "form"];
  */
 export const RENDERED_CHANNEL_FIELD_TYPES = ["text", "password", "url", "number", "boolean"];
 
+/**
+ * The aggregates this module can draw.
+ *
+ * Must equal `ALLOWED_AGGREGATES` in `extensions/contract/manifest.ts` and the
+ * set `tableAggregate` on the server will compute. Three spellings of one
+ * closed set is two too many — hence a comparison in
+ * `tests/architecture.test.mjs` rather than a comment asking nicely.
+ */
+export const RENDERED_AGGREGATES = ["count", "sum"];
+
 /** Human labels for the block types, used in the page header and empty states. */
 const BLOCK_LABELS = {
   table: "Records",
   stats: "Summary",
   form: "Submit",
 };
+
+/**
+ * The field declarations for a block's source.
+ *
+ * The table endpoint answers `{ def: { fields: [...] }, locale, items }`, so
+ * the declarations live at `data.def.fields`. A *flat* `data.fields` is also
+ * accepted because an aggregate response reuses the same envelope and a future
+ * caller may hand the block a narrower payload. Reading only the flat path was
+ * the bug that made every `table` and `form` block draw "the table declares no
+ * such fields" at HTTP 200 — the columns were declared, shown from the wrong
+ * key, and the block looked empty rather than mis-wired.
+ */
+function sourceFields(data) {
+  if (Array.isArray(data?.def?.fields)) return data.def.fields;
+  if (Array.isArray(data?.fields)) return data.fields;
+  return [];
+}
 
 // ---------------------------------------------------------------------------
 // Block renderers
@@ -79,7 +106,7 @@ const BLOCK_LABELS = {
 function renderTableBlock(block, data) {
   const cols = Array.isArray(block.columns) ? block.columns.map(String) : [];
   const rows = Array.isArray(data?.items) ? data.items : [];
-  const fields = Array.isArray(data?.fields) ? data.fields : [];
+  const fields = sourceFields(data);
   const byKey = new Map(fields.map((f) => [String(f.key), f]));
   const shown = cols.filter((c) => byKey.has(c));
 
@@ -114,18 +141,18 @@ function renderTableBlock(block, data) {
 /**
  * `stats` — one aggregate over one of the plugin's own tables.
  *
- * Supported aggregates are `count`, `sum` and `latest`, because those are the
- * three the host can compute honestly without a query builder. An unknown
- * aggregate is reported as a configuration problem rather than silently shown
- * as a zero — a zero is a *value*, and displaying it for an unsupported
- * operation would be a fabricated number.
+ * Supported aggregates are exactly the ones the validator accepts
+ * (`ALLOWED_AGGREGATES` = `count`, `sum`) and that the API can compute without
+ * a query builder. An unknown aggregate is reported as a configuration problem
+ * rather than silently shown as a zero — a zero is a *value*, and displaying it
+ * for an unsupported operation would be a fabricated number.
  */
 function renderStatsBlock(block, data) {
   const aggregate = String(block.aggregate || "count");
   const groupBy = block.groupBy ? String(block.groupBy) : "";
   const label = String(block.label || BLOCK_LABELS.stats);
 
-  const KNOWN = ["count", "sum", "latest"];
+  const KNOWN = RENDERED_AGGREGATES;
   if (!KNOWN.includes(aggregate)) {
     return `<div class="panel"><div class="empty">"${esc(aggregate)}" is not an aggregate this admin can compute (${esc(
       KNOWN.join(", ")
@@ -143,17 +170,20 @@ function renderStatsBlock(block, data) {
       .map(
         (g) => `<div class="stat">
         <div class="stat-label">${esc(String(g.key ?? "—"))}</div>
-        <div class="stat-value">${esc(String(g.value ?? 0))}</div>
+        <div class="stat-value">${esc(g.value === null || g.value === undefined ? "—" : String(g.value))}</div>
       </div>`
       )
       .join("");
     return `<div class="stats">${cards || `<div class="empty">No data.</div>`}</div>`;
   }
 
-  const value = data?.value ?? 0;
+  // `value` is `null` when there is nothing to add up (SUM over no rows), which
+  // is drawn as an em dash — never as 0, which would be a fabricated datapoint.
+  const value = data?.value;
+  const shown = value === null || value === undefined ? "—" : String(value);
   return `<div class="stats"><div class="stat">
     <div class="stat-label">${esc(label)} · ${esc(aggregate)}${groupBy ? ` by ${esc(groupBy)}` : ""}</div>
-    <div class="stat-value">${esc(String(value))}</div>
+    <div class="stat-value">${esc(shown)}</div>
   </div></div>`;
 }
 
@@ -167,7 +197,7 @@ function renderStatsBlock(block, data) {
  */
 function renderFormBlock(block, data) {
   const names = Array.isArray(block.fields) ? block.fields.map(String) : [];
-  const fields = Array.isArray(data?.fields) ? data.fields : [];
+  const fields = sourceFields(data);
   const byKey = new Map(fields.map((f) => [String(f.key), f]));
   const shown = names.filter((n) => byKey.has(n));
 

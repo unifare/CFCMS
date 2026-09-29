@@ -1,5 +1,9 @@
 # CFPress 批次 10 交接文档 —— 插件系统（步骤 1–6 完成）
 
+> ⚠️ **状态：已归档（ARCHIVED）**。本批次 8 步**全部完成**（步骤 7+8 见下方 §4 的补记）。
+> **正式交接请看 `docs/HANDOVER.md`**（已把本批次的提交脉络、进度、套件数、坑位续上）。
+> 本文只保留步骤 1–6 的过程细节与用户拍板决策，供追溯，**不要再当成"待办清单"读**。
+
 > 更新时间：2026-09-29 19:40 (GMT+8) ｜ 当前 HEAD：**`9fd19db`**（已推送，三路校验一致）
 > 读者：接手本批次的开发者或 AI 会话。**先读本文，再读 `docs/PLUGIN-ARCHITECTURE.md`（设计全文）、
 > `docs/ARCHITECTURE.md`（分层与红线）、`AGENTS.md`（规则 48–51 全文）。**
@@ -92,23 +96,34 @@ bcc856c  渠道契约 + 插件页面契约 + 规则 48–51 校验（步骤 3+4�
 
 ## 4. 待办（接手人从这里开始）
 
-### 步骤 7：`plugins/notify/` 示例插件
-- 声明 `webhook` 渠道 + 一个 `adminPages`（用全三种块）+ `notify-settings` 菜单
-- **`plugin.json` 必须真实存在于磁盘**（`tests/admin-menus.test.mjs` 读它）；
-  菜单要有 `title_template`/`default_description` 设置（`tests/_admin-menus-browser.cjs` 依赖）
-- 记得 `zip` 上传路径会跑校验器——本地直接放目录 + `seedBundledExtensions` 不行就手动 INSERT，参考 `plugin-hooks.test.mjs` 的 `installPlugin()`
+> ✅ **本节已全部完成，以下保留原文供追溯。**
 
-### 步骤 8：`tests/plugin-pages.test.mjs` + 反向验证
-- 覆盖：菜单指向不存在的页面 id 被校验器拒绝（安装期）；块类型闭集合；`form` 块写入落到真实表；
-  `stats` 块聚合数字正确；禁用插件后其菜单与页面从注册表消失
-- 新守卫照例：注入违规 → 确认在**预期的那条断言**上红 → 还原 → 哈希一致
+### 步骤 7：`plugins/notify/` 示例插件 —— ✅ 完成
+- 声明 `webhook` 渠道 + 一个 `adminPages`（用全三种块）+ `notify-settings` 菜单 ✅
+- **`plugin.json` 真实存在于磁盘**（`tests/admin-menus.test.mjs` 从磁盘读它，43 条通过）✅
+- 真实校验器 `validateManifest(manifest, "plugin")` 接受 ✅
+- 实际落盘：`hooks: ["html","afterSavePost"]`、`subscribes: ["PostPublished"]`、
+  `tables[]` 一张 `log`（`event`/`target` text、`severity` number、`note` longtext，
+  `translatable: ["event","target","note"]`）、`webhook` 渠道四字段配置、
+  `deliveries` 页面四块（`stats`×2 / `table` / `form`）、两个菜单、内联 en/zh-CN 语言包
 
-### 收尾杂项
-- `_tenant-query-audit.mjs` 的 `REVIEWED` 键是 `file:line`——本轮动过 `api.ts`（新增 4 行），
-  跑一次看它报不报 `NEW`，报了就重新键位
-- `tests/manifest-validation.test.mjs` 有个既有的重复小节号 "8"（纯装饰，可顺手修）
-- 批次完成后**刷新 `docs/HANDOVER.md` 正式版**（把 §2 提交脉络、§5 进度、§6 套件数、§8 坑位续上）；
-  本文档降级为批次存档
+### 步骤 8：`tests/plugin-pages.test.mjs` + 反向验证 —— ✅ 完成
+- **56 条断言**，驱动真实 Worker 对真实本地 D1 覆盖：未声明页面 id 被拒（规则 50）、
+  块类型闭集合（规则 49）、`form` 块写入落到**真实物理行**、`stats` 聚合数字正确、
+  禁用插件菜单与页面从注册表消失，外加按站点租户边界与 **§9 渲染器真渲染**
+- **`tests/_plugin-pages-inject.mjs`**：10 个场景，每个注入真实缺陷 → 断言**具名断言**变红
+  → 还原 → 哈希一致。**10 场景 0 problem**
+- 顺带补上**「插件自有表」的最后一段未接线**：`syncOwnerTables` 早支持 `"plugin"` 但没人调用，
+  经 `PluginTableSync` 提供者注入（规则 3 不允许 `plugin/` import `theme/`）按站点扇出
+
+### 收尾杂项 —— ✅ 完成
+- `_tenant-query-audit.mjs` 的 `REVIEWED` 键是 `file:line`——`api.ts` 新增行后
+  `theme_installs` 那条从 `:1154` 移到 **`:1187`**，已重新键位；并补了
+  `notify.ts:108`（去重台账回写）的裁决。现在 **8/8 全部有裁决** ✅
+- `tests/manifest-validation.test.mjs` 的重复小节号已修（`11.`→`7.`，后续顺延）✅
+- **`docs/HANDOVER.md` 已刷新**（§2 提交脉络、§5 批次 6–10、§6 套件表 19 套件 925 条、
+  §7 SPA 落点、§8 坑位 26–29）；**本文档已降级为批次存档** ✅
+
 
 ## 5. 验证命令（全在本机沙箱可直接跑）
 

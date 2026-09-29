@@ -682,6 +682,46 @@ WordPress 那个坑——用户关掉一个语言，翻译就没了。**只隐�
 
 ---
 
+## 插件系统三支柱（§4）
+
+插件**不能携带可执行代码**（Workers 禁 `eval` / `new Function` / 动态 import 用户代码）。
+所以插件只声明**意图**（数据），宿主负责**实现**——同一个依赖倒置模式用了三次：
+
+| 声明 | 宿主生成 |
+|---|---|
+| `tables[].fields[]` | CRUD 表单与列表（`table-list` / `table-edit`） |
+| `channels[].configSchema[]` | 渠道设置表单（`renderChannelConfig`） |
+| `adminPages[].blocks[]` | **整个后台页面**（`renderPluginPage`） |
+
+| # | 规则 |
+|---|---|
+| 48 | 插件 manifest **不得含可执行代码**。`hooks` 是**名字**（`DECLARABLE_HOOKS` 的子集），实现永远在宿主的 `HOOK_IMPLS` 里——校验器拒绝任何越界的 hook 名 |
+| 49 | `adminPages[].blocks[].type` 是**闭集合**（`ALLOWED_PAGE_BLOCKS = [table, stats, form]`）。每加一种类型必须同时改三处：契约列表、`public/admin/js/plugin-page.js` 的 `RENDERED_BLOCK_TYPES`、渲染器 switch——**架构测试按集合比对**，漏一处是 FAIL 而不是 200 的空面板。`stats` 的 `aggregate` 同样是闭集合（`ALLOWED_AGGREGATES`），且 `sum` 必须给 `field` |
+| 50 | 菜单 `screen: "plugin-page:<id>"` **必须指向该插件真实声明的 `adminPages[].id`**（安装期校验，`validateAdminMenus` 的第 5 参 `declaredPages`）。运行期由 SPA 的 `findPage` 按 `enabled` 过滤——"禁用"意味着页面不可达，不是页面被删 |
+| 51 | 渠道 `code` ∈ `HOST_CHANNEL_CODES`（当前只有 `webhook`）；`configSchema[].type` ∈ `ALLOWED_CHANNEL_FIELD_TYPES`。两侧都由 `tests/architecture.test.mjs` 与 SPA 导出的 `RENDERED_CHANNEL_FIELD_TYPES` / `RENDERED_AGGREGATES` **双向核对**——声明了却没人实现正是这条要抓的分歧 |
+
+**为什么是"导出列表对比"而不是"解析 switch"**：守卫解析源码文本（正则扫 `case "table":`）
+是**猜结构**，写同一意图的另一种写法就能骗过它——这正是「同一意图的两种写法」那条坑。
+渲染器 `export`s 一份列表、架构测试把它与契约列表按**集合**比对，是**被告知结构**。
+
+**规则 3 的落地（插件声明自有表）**：`plugin/` **不能** import `theme/`。
+`registerPluginTables` 只声明一个 `PluginTableSync` 接口，DDL 生成实现
+（`syncOwnerTables`）由 `index.ts` 在 boot 时用 `setPluginTableSync(...)` 注入——
+与 `setHostHooks` / `setPackProviders` 是同一个模式。插件表**按站点扇出**
+（`theme_table_defs` 按 `site_id` 键控），插件菜单**写一次 `ALL_SITES`**。
+
+**加字段前先找它的消费点**：本仓库「声明了但没人读」的缺陷族已出现**七次**
+（200 + 内容错：插件 `adminMenus`、死掉的 `DECLARABLE_HOOKS`、`routes[].resolve.table`
+与 `routes[].template`、插件列表 API 把数组存成 JSON 字符串、渲染器读错字段路径、
+`tableAggregate` 忽略 `status`）。**一个新字段如果找不到运行时消费点，就不要加。**
+
+**观测面铁律（批次 10 实测）**：渲染器读错 `data.def.fields` 的缺陷，
+在**服务端断言里根本不可见**——注入后 `admin-spa`（只查模块图）与 `plugin-pages`
+（只查 API/DB）双双全绿，直到给 `plugin-pages` 加了**一条把响应渲染成 HTML 再读回来**
+的断言（§9）。**一条守卫只能证它观测的那一层**；"测试全绿"不等于"这个缺陷有人看着"。
+
+---
+
 ## 允许做的事
 
 - ✅ 加新的 `screen` 类型（同时更新 `ALLOWED_ADMIN_SCREENS`、`docs/ARCHITECTURE.md` §3.5，

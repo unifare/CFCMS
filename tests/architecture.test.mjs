@@ -18,6 +18,7 @@ import { langPackProblems, themeManifestProblems } from "./_extension-rules.mjs"
 // The field-type classification is imported, never re-listed: the validator and
 // the scaffolder read the same source, so "is this field prose?" has one answer.
 import {
+  ALLOWED_AGGREGATES,
   ALLOWED_PAGE_BLOCKS,
   ALLOWED_TABLE_FIELD_TYPES,
   LANGUAGE_NEUTRAL_FIELD_TYPES,
@@ -831,6 +832,23 @@ const pageBlockProblems = [];
         `renderer/contract mismatch — contract: ${JSON.stringify([...ALLOWED_PAGE_BLOCKS])}, renderer: ${JSON.stringify(rendered)}`
       );
     }
+
+    // The `stats` aggregate list is a second closed set with the same failure
+    // shape: the validator refuses a name the renderer cannot draw, and the
+    // renderer draws a name the server cannot compute. All three read
+    // `ALLOWED_AGGREGATES`; this compares the renderer's exported copy so a
+    // one-sided edit fails here instead of shipping a "cannot compute" panel.
+    const aggMatch = src.match(/export const RENDERED_AGGREGATES\s*=\s*\[([\s\S]*?)\]/);
+    const renderedAgg = aggMatch ? [...aggMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+    if (!renderedAgg.length) {
+      pageBlockProblems.push(
+        "plugin-page.js does not export RENDERED_AGGREGATES — the guard cannot tell what aggregates it draws"
+      );
+    } else if (JSON.stringify([...renderedAgg].sort()) !== JSON.stringify([...ALLOWED_AGGREGATES].sort())) {
+      pageBlockProblems.push(
+        `aggregate mismatch — contract: ${JSON.stringify([...ALLOWED_AGGREGATES])}, renderer: ${JSON.stringify(renderedAgg)}`
+      );
+    }
   }
 
   // And every shipped page may only use block types the contract knows.
@@ -840,6 +858,15 @@ const pageBlockProblems = [];
     let manifest;
     try { manifest = JSON.parse(read(manifestPath)); } catch { continue; }
     const tables = new Set((Array.isArray(manifest.tables) ? manifest.tables : []).map((t) => String(t?.name ?? "")));
+    // The declared numeric fields, so a shipped `sum` can be checked against a
+    // column that actually exists and is summable — the same two conditions the
+    // server-side `tableAggregate` enforces before it will run a query.
+    const numericFields = new Set();
+    for (const t of Array.isArray(manifest.tables) ? manifest.tables : []) {
+      for (const f of Array.isArray(t?.fields) ? t.fields : []) {
+        if (String(f?.type ?? "") === "number") numericFields.add(`${String(t?.name ?? "")}.${String(f?.key ?? "")}`);
+      }
+    }
     for (const page of Array.isArray(manifest.adminPages) ? manifest.adminPages : []) {
       for (const block of Array.isArray(page?.blocks) ? page.blocks : []) {
         const where = `plugins/${name}: page "${page?.id}" block`;
@@ -853,6 +880,21 @@ const pageBlockProblems = [];
           if (!source) pageBlockProblems.push(`${where} ("${type}") has no source`);
           else if (!tables.has(source)) {
             pageBlockProblems.push(`${where} reads table "${source}", which is not in its tables[]`);
+          }
+        }
+        // A shipped `stats` must name an aggregate the host computes, and a
+        // `sum` must point at a declared numeric column.
+        if (type === "stats") {
+          const agg = String(block?.aggregate ?? "count");
+          if (!(ALLOWED_AGGREGATES).includes(agg)) {
+            pageBlockProblems.push(`${where} has unknown aggregate "${agg}"`);
+          }
+          if (agg === "sum") {
+            const field = String(block?.field ?? "");
+            if (!field) pageBlockProblems.push(`${where} sums with no field`);
+            else if (!numericFields.has(`${String(block?.source ?? "")}.${field}`)) {
+              pageBlockProblems.push(`${where} sums "${field}", which is not a declared numeric field`);
+            }
           }
         }
       }
@@ -1258,7 +1300,11 @@ function finish(tag = "", extraFailures = 0) {
       "\nThese are architecture rules, not style preferences. See docs/ARCHITECTURE.md §5 and §10."
     );
   }
-  console.log(`${total ? "1" : "0"} failure(s)`);
+  // No second summary line. This suite used to also print
+  // `${total ? "1" : "0"} failure(s)` — a different spelling of the same fact,
+  // which is how a grep-based checker reads the wrong line and misses a failure
+  // (AGENTS.md "false green" type 6). The `${pass} passed, ${fail} failed` line
+  // printed above is the only summary.
   process.exit(total ? 1 : 0);
 }
 process.on("uncaughtException", (e) => {

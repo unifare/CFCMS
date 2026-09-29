@@ -58,14 +58,38 @@ export async function pluginPageScreen(c, pageId) {
   // Load the data each block asked for. A block whose table fails to load must
   // not take the page down: the renderer draws an explanation for that block
   // and the others still appear, so the reader can tell which part is missing.
+  //
+  // A `stats` block asks the same table endpoint for an *aggregate* rather than
+  // rows, so the request carries `aggregate`/`field`/`groupBy` from the block.
+  // Every block on one source shares the row payload; the stats requests are
+  // separate and keyed by source too, so a page that shows both a table and a
+  // count of the same table gets both.
   const sources = [...new Set(blocks.map((b) => String(b?.source ?? "")).filter(Boolean))];
   const dataBySource = {};
   await Promise.all(
     sources.map(async (source) => {
+      const forSource = blocks.filter((b) => String(b?.source ?? "") === source);
+      const statsBlocks = forSource.filter((b) => String(b?.type ?? "") === "stats");
+      // Rows are only needed when a non-stats block reads this table; a
+      // stats-only page should not pull 100 rows it will never draw.
+      const needsRows = forSource.some((b) => String(b?.type ?? "") !== "stats");
       try {
-        dataBySource[source] = await api(scoped(`theme-tables/${encodeURIComponent(source)}?limit=100`));
+        dataBySource[source] = needsRows
+          ? await api(scoped(`theme-tables/${encodeURIComponent(source)}?limit=100`))
+          : null;
       } catch {
         dataBySource[source] = null;
+      }
+      for (const b of statsBlocks) {
+        const q = new URLSearchParams({ aggregate: String(b.aggregate ?? "count") });
+        if (b.field) q.set("field", String(b.field));
+        if (b.groupBy) q.set("groupBy", String(b.groupBy));
+        try {
+          dataBySource[source] = await api(scoped(`theme-tables/${encodeURIComponent(source)}?${q}`));
+        } catch {
+          // Leave whatever the row read produced (or null) so the block still
+          // renders its own explanation instead of vanishing.
+        }
       }
     })
   );

@@ -1,4 +1,4 @@
-import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,latestPosts,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
+import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,latestPosts,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setPluginTableSync}from "./extensions/plugin/menus";import{syncOwnerTables}from "./extensions/theme/tables";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo,listSites}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
 import{resolveLocale,langFromUrl,langFromCookie,langCookie}from "./platform/i18n/resolve";import{setPackProviders}from "./platform/i18n/packs";import{themePackProvider}from "./extensions/theme/packs";import{pluginPackProvider}from "./extensions/plugin/packs";
 // A theme-owned table is read through the same facade the admin screens use.
 // `resolveTableForSite` lives there precisely so that this route and the
@@ -95,6 +95,19 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  // here — the one module allowed to know every layer. Without them the stack is
  // core + overrides, which reads exactly like "nothing is translating".
  setPackProviders({ theme: themePackProvider, plugin: pluginPackProvider });
+ // Third application of the same trick: a plugin *declares* `tables[]`, but the
+ // DDL generator lives in `theme/tables.ts` and rule 3 forbids `plugin/` from
+ // importing `theme/`. So the plugin layer exposes the hook and this module —
+ // the only one allowed to know both — supplies the implementation. It fans out
+ // over the active sites because a plugin's tables are per site (the registry
+ // is keyed by `site_id`), unlike its menus which are install-wide.
+ setPluginTableSync(async(env2,pluginName,manifest)=>{
+   let total=0;
+   for(const site of await listSites(env2)){
+     total+=(await syncOwnerTables(env2,"plugin",pluginName,manifest,site.id)).length;
+   }
+   return total;
+ });
  const u=new URL(request.url);
  if(u.pathname.startsWith("/api/"))return handleApi(env,request);
  // Sandboxed theme Workers read data exclusively through this endpoint.

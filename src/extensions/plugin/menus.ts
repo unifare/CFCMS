@@ -85,3 +85,57 @@ export async function listPluginMenus(
 ): Promise<AdminMenuRow[]> {
   return listOwnerMenus(env, siteId, "plugin", pluginName);
 }
+
+/**
+ * Materialise a plugin's declared `tables[]` for every active site.
+ *
+ * ## Why this is a provider, not an import
+ *
+ * The DDL generator lives in `extensions/theme/tables.ts`, and rule 3 forbids
+ * `plugin/` from importing `theme/` — the guard resolves real paths, so the
+ * import would fail the architecture test rather than sail through. The exact
+ * pattern the repo already uses twice (`setHostHooks`, `setPackProviders`)
+ * applies: the plugin layer declares the *interface* it needs, and `index.ts`
+ * — the one module allowed to know every layer — injects the implementation at
+ * boot. Without an injection, `syncTables` is null and registration is a no-op,
+ * which is precisely "the plugin declares tables and nothing materialises them"
+ * — the state before this function existed, made explicit rather than silent.
+ *
+ * ## Why per site (and not the `ALL_SITES` trick menus use)
+ *
+ * A plugin's *menus* are install-wide because `plugin_installs.enabled` is a
+ * single flag with no per-site answer. A plugin's *tables* are not: the
+ * generated table is per site (`theme_table_defs` is keyed by `site_id`, and
+ * `resolveTableForSite` looks up by the request's site). One shared table would
+ * put every site's rows in one place with no `site_id` to separate them. So
+ * this fans out over the active sites, per site, like theme activation does.
+ */
+export async function registerPluginTables(
+  env: Env,
+  pluginName: string,
+  manifest: { tables?: unknown }
+): Promise<number> {
+  const decls = Array.isArray(manifest?.tables) ? manifest.tables : [];
+  if (!decls.length || !syncTables) return 0;
+  return syncTables(env, pluginName, manifest);
+}
+
+/**
+ * The table-sync implementation, injected by `index.ts`.
+ *
+ * `ownerType` is fixed to `"plugin"` by the shape of this hook, so an
+ * implementation cannot accidentally materialise a plugin's tables under the
+ * theme namespace — the mismatch that `generatedTableName` exists to prevent.
+ */
+export type PluginTableSync = (
+  env: Env,
+  pluginName: string,
+  manifest: { tables?: unknown }
+) => Promise<number>;
+
+let syncTables: PluginTableSync | null = null;
+
+/** Install the plugin table-sync implementation. Called once from `index.ts`. */
+export function setPluginTableSync(fn: PluginTableSync | null): void {
+  syncTables = fn;
+}

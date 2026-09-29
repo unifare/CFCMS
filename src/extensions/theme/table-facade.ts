@@ -253,6 +253,19 @@ async function tableOne(
  * Unknown keys are dropped rather than rejected: a theme that sends an extra
  * property should not fail the save, but it must not be able to name a column
  * either — that is what keeps a caller's JSON from becoming DDL.
+ *
+ * ## `slug` may be derived, but the derivation is the caller's job
+ *
+ * A row is slug-addressable, so a save with no slug is meaningless — and the
+ * built-in table screens always supply one, because the author types it. A
+ * plugin page's `form` block, however, offers only the fields the *manifest*
+ * declared; a plugin cannot be forced to declare a `slug` field, and asking it
+ * to would leak the platform's addressing scheme into every plugin's schema.
+ * So the *API* derives a slug from the submitted content before calling here
+ * (`deriveSlug` below), and this function still refuses a slugless save: the
+ * requirement is real, the caller is what changed. A function that silently
+ * invented a slug would make `tableSave` non-deterministic for every legacy
+ * caller that forgot one.
  */
 export async function tableSave(
   env: Env,
@@ -422,4 +435,135 @@ function normaliseValue(v: unknown): unknown {
   if (typeof v === "boolean") return v ? 1 : 0;
   if (typeof v === "number" || typeof v === "string") return v;
   return JSON.stringify(v);
+}
+
+/**
+ * One aggregate over an owner's own table, for a plugin page's `stats` block.
+ *
+ * ## Why this is server-side and template-free
+ *
+ * The block declares `{aggregate, field?, groupBy?}`. Both the aggregate *name*
+ * and the *column* are attacker-adjacent (they arrive from a manifest, which
+ * arrives from an uploaded zip), so neither may be interpolated into SQL. The
+ * aggregate is a closed set and the column must be one the table actually
+ * declares — anything else returns `null` rather than a query, and the caller
+ * reports "cannot compute" instead of a fabricated zero.
+ *
+ * ## `sum` returns null, not 0, on an empty table
+ *
+ * `SELECT SUM(x)` over no rows is SQL `NULL`, which means "no rows to add up"
+ * — not the number zero. Reporting 0 would be inventing a data point. The
+ * renderer already draws a value verbatim, so `null` surfaces as "—".
+ */
+export interface TableAggregateResult {
+  aggregate: string;
+  field: string | null;
+  groupBy: string | null;
+  /** Present when no `groupBy` was requested. */
+  value: number | null;
+  /** Present when `groupBy` was requested. */
+  groups: Array<{ key: string; value: number | null }> | null;
+}
+
+const AGGREGATES = new Set(["count", "sum"]);
+
+export async function tableAggregate(
+  env: Env,
+  def: ThemeTableDef,
+  opts: { aggregate: string; field?: string | null; groupBy?: string | null; status?: string | null }
+): Promise<TableAggregateResult | null> {
+  const aggregate = String(opts.aggregate || "");
+  if (!AGGREGATES.has(aggregate)) return null;
+
+  const declared = new Set(def.fields.map((f) => String(f.key)));
+  // Only a declared numeric column may be summed. `count` needs no column.
+  const field = opts.field ? String(opts.field) : null;
+  if (aggregate === "sum") {
+    if (!field || !declared.has(field)) return null;
+    const spec = def.fields.find((f) => String(f.key) === field);
+    if (spec && String(spec.type ?? "text") !== "number") return null;
+  }
+
+  const groupBy = opts.groupBy ? String(opts.groupBy) : null;
+  if (groupBy && !declared.has(groupBy)) return null;
+
+  const expr = aggregate === "count" ? "COUNT(*)" : `SUM(m.${field})`;
+  // `status` is a platform column on every generated table, so it is filtered
+  // the same way `tableList` filters it. Dropping it here would make an
+  // aggregate silently ignore the caller's selection — a count over
+  // `status=draft` that counted everything is a number that looks right.
+  const where = ["m.site_id = ?"];
+  const binds: unknown[] = [def.site_id];
+  if (opts.status) {
+    where.push("m.status = ?");
+    binds.push(String(opts.status));
+  }
+  const whereSql = where.join(" AND ");
+
+  try {
+    if (groupBy) {
+      const r = await env.DB.prepare(
+        `SELECT m.${groupBy} AS k, ${expr} AS v FROM ${def.table_name} m
+         WHERE ${whereSql} GROUP BY m.${groupBy} ORDER BY m.${groupBy}`
+      )
+        .bind(...(binds as any[]))
+        .all();
+      return {
+        aggregate,
+        field,
+        groupBy,
+        value: null,
+        groups: ((r.results as any[]) ?? []).map((row) => ({
+          key: row?.k === null || row?.k === undefined ? "—" : String(row.k),
+          value: row?.v === null || row?.v === undefined ? null : Number(row.v),
+        })),
+      };
+    }
+    const row = await env.DB.prepare(
+      `SELECT ${expr} AS v FROM ${def.table_name} m WHERE ${whereSql}`
+    )
+      .bind(...(binds as any[]))
+      .first<any>();
+    return {
+      aggregate,
+      field,
+      groupBy: null,
+      value: row?.v === null || row?.v === undefined ? null : Number(row.v),
+      groups: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Derive a slug for a save that arrived without one.
+ *
+ * Used by the plugin-page `form` write path, where the offered fields come from
+ * the manifest's `form.fields[]` and never include the platform's `slug`. The
+ * derivation is deliberately dull — first non-empty prose-ish field, slugged,
+ * with a short random suffix so two rows with the same label do not collide on
+ * a key that is a UNIQUE `(site_id, slug)`.
+ *
+ * A slug derived from *content* is not stable across edits, which is why this
+ * is only used when the caller supplied none: the built-in screens keep their
+ * explicit, author-chosen slug, and an update that wants to address an existing
+ * row still must pass the slug it was given.
+ */
+export function deriveSlug(def: ThemeTableDef, data: Record<string, unknown>): string {
+  const allowed = new Set(def.fields.map((f) => String(f.key)));
+  let source = "";
+  for (const [k, v] of Object.entries(data ?? {})) {
+    if (!allowed.has(k)) continue;
+    const s = String(v ?? "").trim();
+    if (s) { source = s; break; }
+  }
+  const base = source
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  // A random tail keeps two same-labelled rows from fighting over one slug.
+  const tail = Math.random().toString(36).slice(2, 8);
+  return base ? `${base}-${tail}` : `row-${tail}`;
 }

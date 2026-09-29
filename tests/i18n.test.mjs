@@ -562,7 +562,10 @@ async function main() {
     console.log("\nFailures:");
     for (const f of failures) console.log(`  - ${f}`);
   }
-  console.log(`${fail ? 1 : 0} failure(s)`);
+  // The `${pass} passed, ${fail} failed` line above is the only summary. This
+  // suite used to also print `${fail ? 1 : 0} failure(s)` — two summaries in two
+  // spellings, which is how a grep-based checker reads the wrong one and misses
+  // a failure (AGENTS.md "false green" type 6).
   process.exit(fail ? 1 : 0);
 }
 

@@ -441,5 +441,9 @@ if (failed) {
     "\nThese guard the admin SPA's structure, not its styling. See docs/ARCHITECTURE.md §7.2."
   );
 }
-console.log(`${failed ? "1" : "0"} failure(s)`);
+// One summary line only. The suite used to print `${failed ? "1" : "0"} failure(s)`
+// *in addition* to the standard line — two summaries in two spellings, which is
+// how a checker greps the wrong one and reads a crash as a pass (AGENTS.md
+// "false green" type 6). The standard `${pass} passed, ${fail} failed` line is
+// printed above and is the only one a script is allowed to parse.
 process.exit(failed ? 1 : 0);

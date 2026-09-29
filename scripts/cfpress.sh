@@ -191,6 +191,7 @@ admin-contract|tests/admin-contract.test.mjs
 account|tests/account.test.mjs
 menu-custom|tests/menu-custom.test.mjs
 plugin-hooks|tests/plugin-hooks.test.mjs
+plugin-pages|tests/plugin-pages.test.mjs
 theme-worker|tests/theme-worker.test.mjs
 
 launcher-parity|tests/launcher-parity.test.mjs"
@@ -429,7 +430,7 @@ ${C_BOLD}CFPress launcher${C_RESET}  ${C_DIM}(repo root: $ROOT)${C_RESET}
   ${C_BOLD}SUITES${C_RESET}  ${C_DIM}(for \`test <name>\`)${C_RESET}
     architecture  _schema-scope  manifest-validation  admin-menus  admin-spa
     template-engine  scaffold  theme-integration  theme-fixture  multisite  i18n
-    admin-contract  account  menu-custom  plugin-hooks  theme-worker
+    admin-contract  account  menu-custom  plugin-hooks  plugin-pages  theme-worker
 
   ${C_BOLD}ENV${C_RESET}
     CFP_PORT (default 47913)  CFP_HOST (default 127.0.0.1)   NO_COLOR (disable colour)
