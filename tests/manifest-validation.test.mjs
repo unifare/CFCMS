@@ -175,12 +175,33 @@ rejects(
   }),
   "translatable names a field that does not exist"
 );
+// Multi-language capability is mandatory, in both directions (§10 rule 41).
+// These two pin the *rejection* side: a rule only ever demonstrated by
+// conforming examples is a rule nobody has seen work.
+rejects(
+  v,
+  validTheme({
+    tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }],
+  }),
+  "prose field missing from translatable  ← every readable value carries a language"
+);
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      fields: [{ key: "name", type: "text" }, { key: "price", type: "number" }],
+      translatable: ["name", "price"],
+    }],
+  }),
+  "language-neutral field wrongly declared translatable  ← numbers are formatted, not translated"
+);
 rejects(
   v,
   validTheme({
     tables: [
-      { name: "product", fields: [{ key: "a", type: "text" }] },
-      { name: "product", fields: [{ key: "b", type: "text" }] },
+      { name: "product", fields: [{ key: "a", type: "text" }], translatable: ["a"] },
+      { name: "product", fields: [{ key: "b", type: "text" }], translatable: ["b"] },
     ],
   }),
   "duplicate table name"
@@ -265,7 +286,7 @@ accepts(
 accepts(
   v,
   validTheme({
-    tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }],
+    tables: [{ name: "product", fields: [{ key: "name", type: "text" }], translatable: ["name"] }],
     routes: [{ path: "/p/:slug", template: "single", resolve: { table: "product", by: "slug" } }],
   }),
   "route resolving a declared table by slug"
@@ -413,15 +434,30 @@ accepts(v, validTheme({ locales: [] }), "empty locales array");
 accepts(v, validTheme({ runtime: "worker", entry: "worker.js" }), "worker runtime with entry");
 accepts(
   v,
-  validTheme({ tables: [{ name: "thing", fields: [{ key: "a", type: "text" }] }] }),
-  "table without translatable / without admin screen"
+  validTheme({ tables: [{ name: "thing", fields: [{ key: "a", type: "text" }], translatable: ["a"] }] }),
+  "table without an admin screen is allowed"
+);
+// A prose field must be translatable, so a table carrying one always declares
+// `translatable` now. Completion matters too: the two field-type categories
+// must partition, so this fixture pairs a prose field with a neutral one and
+// marks exactly the prose field.
+accepts(
+  v,
+  validTheme({
+    tables: [{
+      name: "thing",
+      fields: [{ key: "a", type: "text" }, { key: "n", type: "number" }],
+      translatable: ["a"],
+    }],
+  }),
+  "language-neutral fields sit alongside prose without being translatable"
 );
 // The positive side of the batch-3 rules: every new screen must be reachable by
 // a manifest that gets it right, or the rules above would just be a wall.
 accepts(
   v,
   validTheme({
-    tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }],
+    tables: [{ name: "product", fields: [{ key: "name", type: "text" }], translatable: ["name"] }],
     adminMenus: [
       { id: "products", screen: "table-list", args: { table: "product" } },
       { id: "product-form", screen: "table-edit", args: { table: "product" } },

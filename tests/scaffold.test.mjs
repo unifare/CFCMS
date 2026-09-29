@@ -53,6 +53,9 @@ import { langPackProblems, themeManifestProblems } from "./_extension-rules.mjs"
 import { main as makeTheme } from "../scripts/make-theme.mjs";
 import { main as makePlugin } from "../scripts/make-plugin.mjs";
 import { main as makeTable } from "../scripts/make-table.mjs";
+// Imported from the contract, not re-listed: the assertion below asks the same
+// question the validator asks, and must get the same answer by construction.
+import { isProseFieldType } from "../src/extensions/contract/manifest.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -398,6 +401,38 @@ async function main() {
   // worse than a rule that is always predictable. `--translatable` is the way
   // out, and it is exercised positively below.
   check("text fields default to translatable, numbers do not", withTable.tables[0].translatable, ["name", "sku"]);
+
+  // The generator's default must satisfy the *validator's* multi-language rule,
+  // or `make-table` would hand you a manifest that fails to install. Run the
+  // real validator over the real generated manifest rather than asserting the
+  // shape of `translatable` a second time — the point is that the two agree,
+  // and only running both can show that.
+  {
+    const genManifest = JSON.parse(readFileSync(join(themeDir, "theme.json"), "utf8"));
+    let genError = null;
+    try {
+      validateManifest(genManifest, "theme");
+    } catch (e) {
+      genError = e?.message ?? String(e);
+    }
+    check(
+      "the generated manifest passes the real validator's multi-language rule",
+      genError,
+      null
+    );
+    // And state the rule it satisfied, so a regression is legible. Compared as
+    // sets (sorted), not `every()`: `every()` is vacuously true on an empty
+    // `prose`, so a generator that stopped emitting prose fields at all would
+    // still report green.
+    const t0 = genManifest.tables[0];
+    const prose = t0.fields.filter((f) => isProseFieldType(f.type)).map((f) => f.key).sort();
+    checkTruthy("the generator did emit at least one prose field", prose.length > 0);
+    check(
+      "every prose field it generated is translatable",
+      prose.filter((k) => !t0.translatable.includes(k)),
+      []
+    );
+  }
 
   let tableError = null;
   try {

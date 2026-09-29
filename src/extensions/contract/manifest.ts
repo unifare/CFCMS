@@ -50,6 +50,50 @@ export const ALLOWED_FIELD_TYPES = [
 export const ALLOWED_TABLE_FIELD_TYPES = ["text", "longtext", "number", "boolean", "date", "datetime"] as const;
 
 /**
+ * Field types whose value is **prose a human reads**, and which therefore must
+ * be translatable.
+ *
+ * This pairing is the machine-checkable form of a product rule: *every piece of
+ * data in this system carries multi-language capability*. A field holding words
+ * that a visitor reads in their own language has no business being
+ * single-valued — if it is, then enabling a second language silently shows
+ * everyone the first language's text, and the only way to fix it later is a
+ * migration plus a manual retranslation pass.
+ *
+ * The split is total: every entry in `ALLOWED_TABLE_FIELD_TYPES` is in exactly
+ * one of this list and `LANGUAGE_NEUTRAL_FIELD_TYPES` (asserted by
+ * `tests/architecture.test.mjs`, so adding a seventh type cannot silently skip
+ * the decision).
+ */
+export const PROSE_FIELD_TYPES = ["text", "longtext"] as const;
+
+/**
+ * Field types whose value means the same thing in every language.
+ *
+ * A price, a stock count, a boolean flag and a calendar date are not
+ * translated — they are *formatted* per locale at render time. Marking one of
+ * these `translatable` would create an `_i18n` column that editors are invited
+ * to fill with a different number per language, which is a data-integrity
+ * problem dressed as a feature.
+ *
+ * The two lists are complementary and must stay that way — see
+ * `PROSE_FIELD_TYPES` for the totality check.
+ */
+export const LANGUAGE_NEUTRAL_FIELD_TYPES = ["number", "boolean", "date", "datetime"] as const;
+
+/**
+ * Does a field of this type hold translated prose?
+ *
+ * The single answer to "must this field be in `translatable`?" — used by the
+ * runtime validator, the architecture test, and the scaffolder. Anything that
+ * needs to make this decision asks here rather than re-deriving it from a list,
+ * because a second derivation is a second answer waiting to disagree.
+ */
+export function isProseFieldType(type: string): boolean {
+  return (PROSE_FIELD_TYPES as readonly string[]).includes(type);
+}
+
+/**
  * Screen types a declared admin menu may open.
  *
  * `table-list` / `table-edit` (batch 3) are the two that let a theme show a

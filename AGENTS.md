@@ -23,6 +23,9 @@
    `tests/architecture.test.mjs` 与 `docs/ARCHITECTURE.md`。
 5. 如果改了多语言（`src/platform/i18n/`、翻译组、主题自有表），跑
    `node tests/i18n.test.mjs`，并同步 `docs/ARCHITECTURE.md` §2.7 / §5.4①。
+   **如果动了字段分类表（`PROSE_FIELD_TYPES` / `LANGUAGE_NEUTRAL_FIELD_TYPES`）
+   或规则 41 的任一强制点，必须跑 `node tests/_i18n-field-inject.mjs`** ——
+   它注入 6 个缺陷、断言每个都真的变红（含"断言注入确实生效"与"还原也验证"）。
 6. 如果改了后台界面，跑 `node tests/admin-spa.test.mjs`，并跑一次真实浏览器验收
    `node tests/_i18n-browser.cjs` / `node tests/_admin-menus-browser.cjs`
    （需要另开 `npx wrangler dev --port 8787 --ip 127.0.0.1`）。
@@ -31,7 +34,8 @@
    **真实模板引擎**跑生成的骨架——**生成器的缺陷只有渲染一遍才会现形**（见下方规则 4）。
 8. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
-   本仓库已经发生过六种（见下方「守卫失效记录」与「同一意图的两种写法」）。
+   本仓库已经发生过**七种**（见下方「守卫失效记录」与「同一意图的两种写法」）。
+   工具：`node tests/_eshop-inject.mjs`、`node tests/_i18n-field-inject.mjs`。
 
 **当前源码布局**（已重整完毕，新代码必须放对位置）：
 
@@ -247,6 +251,7 @@ await hooks.applyFilters("html", ctx, out);
 | 13b | `lang_group` 可空，**「没有它就是自己」这条规则必须只写一次**：JS 用 `groupOf()`，SQL 用 `GROUP_SQL`（`src/api.ts`），两处共用同一个定义 |
 | 13c | 语言开关（启用/停用/加语言/改默认）改动后**必须刷新后台上下文**（`loadContext()`），否则编辑器的语言版本条会整条不渲染 |
 | 13d | 扩展菜单的 `label_key` 必须带 owner 前缀（`theme.{name}.` / `plugin.{name}.`，规则 11 的延伸——`validateAdminMenus` 用 ownerName 构造正则拒绝越界 key）。**菜单标签的翻译发生在服务端**（`admin-menus` GET 命中字典即替换 `label`），SPA 不做二次翻译 |
+| 41 | **所有数据都必须有多语言能力，不是可选项**。表字段按承载内容分两类，分类表是 `contract/manifest.ts` 的 `PROSE_FIELD_TYPES` / `LANGUAGE_NEUTRAL_FIELD_TYPES`，`isProseFieldType()` 是唯一谓词：散文（`text`/`longtext`）**必须**在 `translatable`，语言中立（`number`/`boolean`/`date`/`datetime`）**必须不在**。两个方向都在安装边界、架构测试、脚手架默认值三处强制 |
 
 规则 11 的后果：`themes/aurora/langs/zh-CN.json` 里写 `"nav.home"` 会让测试失败，
 必须写 `"theme.aurora.nav.home"`。**这不是风格要求**——两个扩展都定义 `nav.home`
@@ -260,6 +265,42 @@ await hooks.applyFilters("html", ctx, out);
 规则 13c 的后果：`state.locales` 是缓存，语言开关是它的事实源。改了开关不刷新缓存，
 `loadVersions()` 会以为站点是单语言的，于是**整个语言版本条不渲染**——
 屏幕上没有任何东西是红的，因为"少一块"不会报错。
+
+### 规则 41：为什么必须"强制"而不是"支持"
+
+多语言能力曾经是**可选**的：`tables[].translatable` 写了就生效，不写就静默退化为单语言。
+缺了它，**安装成功、单语言下渲染完全正确**，直到启用第二种语言才暴露——
+那时修复成本已经是「迁移 + 重译」。这就是「声明先于运行时」缺陷族的又一员：
+**校验器问的是「已声明的字段分对类了吗」，从不问「字段声明了吗」。**
+
+三个消费者共用一处分类，**不得各自重写**（规则 23 精神）：
+
+| 层 | 位置 | 作用 |
+|---|---|---|
+| 安装边界 | `contract/validation.ts` | 第三方 zip 装不进来——架构测试**永远看不到**还没落盘的扩展 |
+| 架构测试 | `tests/architecture.test.mjs` | 已发布主题当场变红，报错指名 `file:table:field` |
+| 脚手架 | `scripts/make-table.mjs` | 新主题天生合规——生成器不守规则，规则第一天就漏 |
+
+**为什么 B 方向（语言中立不得声明）不是多余的**：把 `price` 标成可翻译
+等于**每种语言一个价格**——数据模型错误，但不会崩。**「不报错」和「正确」是两件事。**
+
+**为什么分类表本身也要被守**：规则 41 若只跑已发布主题，新增第七种字段类型时会
+全绿通过（集合里没人用它）。`tests/architecture.test.mjs` 因此额外断言：
+两表不重叠 / 每个允许类型都被分类 / 无幽灵类型 / **扫到的表数 > 0**。
+最后一条是关键——把 `themes/` 改名会让「所有主题都合规」**恒真**。
+**对空集合的检查是空转**（本仓库第三种假绿）。
+
+**标识符不是散文**：SKU、券码、外部 id 必须用 `number`/中性类型，不要用 `text`。
+用 `text` 等于宣称「这段文字值得翻译」。`tests/i18n.test.mjs` 的夹具原本就把 `sku`
+写成 `text` 却在注释里说它跨语言共享——**规则抓出了这个自相矛盾的建模**。
+
+反向验证：`node tests/_i18n-field-inject.mjs`（6 场景，工具不进 `npm test`）。
+清点剩余数据承载类：`node tests/_i18n-data-inventory.mjs`。
+
+> **`settings[]` 为什么不加语言维度**：`theme_settings` 键为 `(theme_name, key)`，
+> 且**前台没有任何读取路径**（`grep` 过 `rendering/`、`runtime-*.ts`、`public/admin/`，
+> 只有后台 `theme-settings` 屏读它）。它是**配置**不是内容。加一个没人读的字段，
+> 正是本轮要消灭的「声明先于运行时」缺陷。**结论记录在案，字段不加。**
 
 ## 主题 / 插件清单（§5.3）
 

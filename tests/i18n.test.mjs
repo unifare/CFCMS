@@ -145,6 +145,13 @@ async function req(worker, env, path, init = {}, host = "localhost") {
  *
  * `price` and `sku` are language-independent; `name` and `description` are
  * translatable. That split is the thing under test.
+ *
+ * `sku` is declared `number` rather than `text` on purpose. Under rule 41 every
+ * `text`/`longtext` field is *prose* and therefore **must** be translatable —
+ * a `text` sku would be rejected at install. A SKU is an identifier, so like a
+ * price it must round-trip unchanged: `number` is the language-neutral type that
+ * says so. `text` would have made this fixture a counter-example to the rule it
+ * is supposed to exercise.
  */
 function buildEshopZip() {
   const manifest = {
@@ -159,7 +166,7 @@ function buildEshopZip() {
         translatable: ["name", "description"],
         fields: [
           { key: "price", type: "number", label: "Price" },
-          { key: "sku", type: "text", label: "SKU" },
+          { key: "sku", type: "number", label: "SKU" },
           { key: "name", type: "text", label: "Name" },
           { key: "description", type: "longtext", label: "Description" },
         ],

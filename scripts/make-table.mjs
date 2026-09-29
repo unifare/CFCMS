@@ -31,6 +31,14 @@ import { join } from "node:path";
 import {
   CliError, ROOT, assertName, isMain, parseArgs, readJson, titleCase, writeJson,
 } from "./_scaffold.mjs";
+// The vocabulary is imported, not re-declared. A local copy is how the
+// scaffolder and the validator come to disagree about what is allowed — and
+// the disagreement only shows up as "the theme it just generated fails to
+// install", which reads like a validator bug rather than a scaffold one.
+import {
+  ALLOWED_TABLE_FIELD_TYPES as ALLOWED_TYPES,
+  isProseFieldType,
+} from "../src/extensions/contract/manifest.ts";
 
 const HELP = `
 Usage: npm run make:table -- <theme> <table> [options]
@@ -62,7 +70,6 @@ function reservedColumns() {
 /** Same shapes `contract/manifest.ts` enforces; see the note above. */
 const TABLE_RE = /^[a-z][a-z0-9_]{1,63}$/;
 const FIELD_RE = /^[a-z0-9_][a-z0-9_-]{0,63}$/i;
-const ALLOWED_TYPES = ["text", "longtext", "number", "boolean", "date", "datetime"];
 
 /**
  * The two declarations, as data.
@@ -103,15 +110,18 @@ export function tableDeclarations({ tableName, fieldsSpec, translatableSpec, lab
   if (new Set(fields.map((f) => f.key)).size !== fields.length) throw new CliError("duplicate field key");
 
   /**
-   * Default translatable set: the text-ish fields.
+   * Default translatable set: every prose field, derived from the same
+   * classification the validator enforces (`isProseFieldType`).
    *
    * `price` must not be translated and `name` must be — a shop that translates
    * its price charges a different amount per language. So the default is
    * deliberately conservative and the flag is there when the guess is wrong.
+   *
+   * The predicate is imported rather than re-spelled as `type === "text" || …`:
+   * a generated theme that got this wrong would be rejected at install by the
+   * validator, so the two must agree by construction.
    */
-  const defaultTranslatable = fields
-    .filter((f) => f.type === "text" || f.type === "longtext")
-    .map((f) => f.key);
+  const defaultTranslatable = fields.filter((f) => isProseFieldType(f.type)).map((f) => f.key);
   const translatable = translatableSpec
     ? String(translatableSpec).split(",").map((s) => s.trim()).filter(Boolean)
     : defaultTranslatable;

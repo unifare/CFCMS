@@ -15,6 +15,14 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
 import { langPackProblems, themeManifestProblems } from "./_extension-rules.mjs";
+// The field-type classification is imported, never re-listed: the validator and
+// the scaffolder read the same source, so "is this field prose?" has one answer.
+import {
+  ALLOWED_TABLE_FIELD_TYPES,
+  LANGUAGE_NEUTRAL_FIELD_TYPES,
+  PROSE_FIELD_TYPES,
+  isProseFieldType,
+} from "../src/extensions/contract/manifest.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -420,6 +428,111 @@ check(
   "theme manifests are internally consistent",
   manifestProblems.length === 0,
   manifestProblems.join("\n       ")
+);
+
+// ---------------------------------------------------------------------------
+section("Every declared field carries multi-language capability (§10 rule 41)");
+// ---------------------------------------------------------------------------
+
+/**
+ * The product rule this section enforces: **all data in this system has
+ * multi-language capability**. A field holding prose must be translatable; a
+ * field holding a number, flag or date must not be.
+ *
+ * Enforced at three levels, deliberately:
+ *   1. the validator (`contract/validation.ts`) — catches third-party zips at
+ *      install time, which the architecture test can never see;
+ *   2. this test — catches *shipped* themes, with a better error message and
+ *      without needing a running Worker;
+ *   3. the scaffolder — so a newly generated theme is born compliant.
+ *
+ * The check below is the structural half: the two type lists must **partition**
+ * the allowed set. Without it, adding a seventh field type would compile, pass
+ * every conformance check (because no shipped theme uses it yet), and quietly
+ * escape the rule — which is exactly how the previous guard generations died.
+ */
+const proseSet = new Set(PROSE_FIELD_TYPES);
+const neutralSet = new Set(LANGUAGE_NEUTRAL_FIELD_TYPES);
+const allowedSet = new Set(ALLOWED_TABLE_FIELD_TYPES);
+
+const overlap = [...proseSet].filter((t) => neutralSet.has(t));
+check(
+  "prose and language-neutral field types do not overlap",
+  overlap.length === 0,
+  overlap.length ? `declared in both lists: ${overlap.join(", ")}` : ""
+);
+
+const uncovered = [...allowedSet].filter((t) => !proseSet.has(t) && !neutralSet.has(t));
+check(
+  "every allowed field type is classified as prose or language-neutral",
+  uncovered.length === 0,
+  uncovered.length
+    ? `unclassified: ${uncovered.join(", ")} — add each to PROSE_FIELD_TYPES or\n` +
+      `       LANGUAGE_NEUTRAL_FIELD_TYPES in contract/manifest.ts. A new type that is\n` +
+      `       in neither list silently escapes the multi-language rule.`
+    : ""
+);
+
+const phantom = [...proseSet, ...neutralSet].filter((t) => !allowedSet.has(t));
+check(
+  "no classification names a field type that does not exist",
+  phantom.length === 0,
+  phantom.length ? `not in ALLOWED_TABLE_FIELD_TYPES: ${phantom.join(", ")}` : ""
+);
+
+/**
+ * Which shipped fields violate the rule — checked directly on the manifests so
+ * the failure names the file and the field, not just "a manifest is bad".
+ *
+ * `isProseFieldType` is imported rather than re-derived here: this is the third
+ * place that needs the same answer, and a third copy of the rule would drift.
+ */
+const langOffenders = [];
+let langTablesChecked = 0;
+for (const dir of ["themes", "plugins"]) {
+  for (const f of walk(join(ROOT, dir), [".json"])) {
+    if (!f.endsWith("theme.json") && !f.endsWith("plugin.json")) continue;
+    let manifest;
+    try {
+      manifest = JSON.parse(read(f));
+    } catch {
+      continue;
+    }
+    for (const t of manifest.tables ?? []) {
+      langTablesChecked++;
+      const declared = new Set((t.translatable ?? []).map(String));
+      for (const field of t.fields ?? []) {
+        const key = String(field?.key ?? "");
+        const type = String(field?.type ?? "text");
+        const prose = isProseFieldType(type);
+        if (prose && !declared.has(key)) {
+          langOffenders.push(`${rel(f)}: table ${t.name}, field "${key}" (${type}) is not in translatable`);
+        }
+        if (!prose && declared.has(key)) {
+          langOffenders.push(`${rel(f)}: table ${t.name}, field "${key}" (${type}) is wrongly marked translatable`);
+        }
+      }
+    }
+  }
+}
+
+// Non-vacuity: a check that iterated zero tables would pass while proving
+// nothing. Fail loudly instead, so a rename that hides the manifests from this
+// walk is caught rather than celebrated.
+check(
+  "the multi-language check actually saw some declared tables",
+  langTablesChecked > 0,
+  langTablesChecked === 0
+    ? `walked themes/ and plugins/ and found no manifest with a tables[] block.\n` +
+      `       Either every extension dropped its tables, or this check is now\n` +
+      `       looking in the wrong place — both need a human.`
+    : ""
+);
+
+check(
+  "shipped themes declare translatable exactly for prose fields",
+  langOffenders.length === 0,
+  langOffenders.join("\n       ")
 );
 
 // ---------------------------------------------------------------------------

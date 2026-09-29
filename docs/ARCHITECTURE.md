@@ -299,7 +299,7 @@ plugin.{slug}.*   插件文案              plugin.seo.meta.title
         { "key": "description", "type": "longtext", "label": "Description" },
         { "key": "price",       "type": "number",   "label": "Price" },
         { "key": "stock",       "type": "number",   "label": "Stock" },
-        { "key": "sku",         "type": "text",     "label": "SKU" }
+        { "key": "sku",         "type": "number",   "label": "SKU" }
       ]
     },
     {
@@ -318,6 +318,14 @@ plugin.{slug}.*   插件文案              plugin.seo.meta.title
 
 > 注意 `translatable` 里的每个 key 都必须在同一张表的 `fields[]` 里声明过（规则 16），
 > 而 `fields[].type` 只有 6 种：`text` / `longtext` / `number` / `boolean` / `date` / `datetime`。
+>
+> ⚠️ **`fields[].type` 同时表达「要不要翻译」**（AGENTS.md 规则 41）：
+> `text` / `longtext` 是**散文**，必须列进 `translatable`；另外四种是**语言中立**，
+> 必须**不在** `translatable` 里。两个方向都在安装时拒绝。
+> 所以上面的 `sku` 声明为 `number`——它是标识符，每种语言一个 SKU 是建模错误；
+> 若写成 `text`，校验器会要求它可翻译，而那是错的。
+> 分类谓词是 `contract/manifest.ts` 的 `isProseFieldType()`，**不要在别处重写**。
+
 > **没有 `integer`**——`number` 就够了。写错类型会在**安装时**被拒（400），不会等到渲染。
 
 平台据此**按需生成**（下面是 `theme_eshop_product` 的实际形状）：
@@ -331,9 +339,9 @@ CREATE TABLE theme_eshop_product (
   lang_group  TEXT NOT NULL,          -- 平台生成：翻译组
   name        TEXT,                   -- 声明式字段（translatable，同时也在主表）
   description TEXT,                   -- 声明式字段（translatable，同时也在主表）
-  price       REAL,                   -- 声明式字段（不随语言变）
-  stock       REAL,
-  sku         TEXT,
+  price       REAL,                   -- 声明式字段（number → 语言中立）
+  stock       REAL,                   -- 声明式字段（number → 语言中立）
+  sku         REAL,                   -- 声明式字段（number → 语言中立；标识符不是散文）
   status      TEXT NOT NULL DEFAULT 'draft',
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
@@ -1993,6 +2001,18 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    删整行与删单语言是两件事，用两个函数表达（`tableDelete` / `tableDeleteTranslation`）
 12c. 主题 Worker 的站点/主题来源（x-cfpress-site / x-cfpress-theme 请求头）是
    **声明不是事实**：必须校验站点存在、且该主题正是本站激活的主题，缺一即拒
+12d. **所有数据都必须有多语言能力，这不是可选项**（AGENTS.md 规则 41）。表字段按承载
+   的内容分两类，分类表是 `contract/manifest.ts` 的 `PROSE_FIELD_TYPES` /
+   `LANGUAGE_NEUTRAL_FIELD_TYPES`（`isProseFieldType()` 是唯一谓词，三处消费者共用，
+   不得各自重写）：
+     · **散文**（`text`/`longtext`，人读的文字）→ **必须**列进 `translatable`
+     · **语言中立**（`number`/`boolean`/`date`/`datetime`）→ **不得**列进 `translatable`
+   两个方向都在**安装边界**校验（第三方 zip 装不进来）、在**架构测试**校验
+   （已发布的主题当场变红）、并由**脚手架默认遵守**（`make-table` 自动标记）。
+   分类表本身也要被守：两表不得重叠、每个允许类型必须被分类、不得有幽灵类型、
+   且**必须断言扫到了非空集合**——对空集合的检查是空转。
+   标识符（SKU、券码）**不是散文**：用 `number`/中性类型存，不要用 `text`——
+   用 `text` 等于宣称"这段文字值得翻译"，而每种语言一个 SKU 是建模错误
 
 【主题/插件】
 13. 主题不得直接写 SQL，只能用 host.table() facade

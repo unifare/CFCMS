@@ -29,8 +29,8 @@
 import {
   ALLOWED_ADMIN_SCREENS, ALLOWED_FIELD_TYPES, ALLOWED_TABLE_FIELD_TYPES,
   FIELD_KEY_RE, IDENT_RE, LOCALE_CODE_RE, RESERVED_COLUMNS, SCOPE_NAME_RE,
-  TABLE_ADMIN_SCREENS, TABLE_NAME_RE, validExtensionName, validTemplateName,
-  validVersion,
+  TABLE_ADMIN_SCREENS, TABLE_NAME_RE, isProseFieldType, validExtensionName,
+  validTemplateName, validVersion,
 } from "./manifest";
 import { isCapability } from "./capabilities";
 import { DECLARABLE_HOOKS } from "./hooks";
@@ -356,6 +356,36 @@ function validateThemeManifest(m: any) {
 
     for (const k of asArray(t.translatable)) {
       if (!fieldKeys.has(String(k))) fail(`table ${tname}: marks "${k}" translatable but declares no such field`);
+    }
+
+    // Multi-language capability is not opt-in (§2.5.3, AGENTS.md rule 41).
+    //
+    // Every field that holds prose a human reads must be translatable, and no
+    // field that is language-neutral may be. This is checked at the install
+    // boundary rather than trusted, for the same reason the field-type check
+    // above is: a theme that omits `translatable` installs cleanly, renders
+    // correctly in one language, and only reveals the problem when a second
+    // language is enabled — by which time the fix is a migration plus a
+    // retranslation pass.
+    //
+    // Direction A: prose must be declared.
+    const declaredTranslatable = new Set(asArray(t.translatable).map(String));
+    for (const f of asArray(t.fields)) {
+      const key = String(f?.key || "");
+      const ft = String(f?.type || "text");
+      if (isProseFieldType(ft) && !declaredTranslatable.has(key)) {
+        fail(
+          `table ${tname}: field "${key}" is type "${ft}" (prose) and must be listed in ` +
+          `translatable — every user-readable value carries multi-language capability`
+        );
+      }
+      // Direction B: language-neutral fields must not be declared.
+      if (!isProseFieldType(ft) && declaredTranslatable.has(key)) {
+        fail(
+          `table ${tname}: field "${key}" is type "${ft}" (language-neutral) and must not be ` +
+          `listed in translatable — numbers, flags and dates are formatted per locale, not translated`
+        );
+      }
     }
 
     // Decision 4 (unified menu registry): a `table-list` / `table-edit` screen

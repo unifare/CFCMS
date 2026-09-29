@@ -239,7 +239,7 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 | per-user 菜单配置：`site_users.menu_prefs`（0013）+ `GET/PUT admin-menus/prefs` + `screens/menu-config.js` | ✅ 规则 38：只影响侧边栏，不授/撤权限；`dashboard` 永远显示 |
 | **站点菜单编辑器**（用户追加需求）：逐语言改名（en/zh-CN）、项排序（箭头+拖拽）、**跨组移动**、分组改名与排序、对所有人隐藏、恢复默认 | ✅ `admin.menu.custom` settings blob + `GET/PUT/DELETE admin-menus/custom`（写需 `settings.manage`，GET 回 `can_manage`） |
 | 应用点收敛：`nav.js` 纯函数 `applyMenuCustom()`（侧栏与编辑器共用） | ✅ 规则 39：改名叠加在服务端翻译之上；稳定排序；**不存在分组=忽略**（反向验证抓到过“项消失”真缺陷）；结构性变更物化整组 order |
-| 新套件 `tests/menu-custom.test.mjs`（40 条：API 契约 + 权限分层 + 校验 400s + 按站隔离 + **纯函数逻辑**） | ✅ 已进 `npm test`（16 套件 665 条） |
+| 新套件 `tests/menu-custom.test.mjs`（40 条：API 契约 + 权限分层 + 校验 400s + 按站隔离 + **纯函数逻辑**） | ✅ 已进 `npm test`（16 套件 682 条） |
 | 浏览器验收 v6 扩到 **47 条**：编辑器 11 条（改名 en/zh、组改名、组序、项序、跨组、站点隐藏、zh 回退、恢复默认） | ✅ 全绿 |
 | 新套件 `tests/account.test.mjs`（27 条，含 **label_key 翻译端到端**：zh-CN →「商品」、en → "Things"、无翻译回退原文） | ✅ 已进 `npm test`（15 套件） |
 | 真浏览器验收 `.wrangler/eshop-verify.cjs` v5（38 条：前台 18 + 界面语言往返 + 服务端翻译菜单 + 菜单隐藏/恢复 + 账户三道闸门） | ✅ 全绿 |
@@ -252,7 +252,7 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 `api()` 非 2xx 时**抛 `Error(data.error)`**（`if (d.error)` 不可达，catch 里要 `explain(err.message)`）；
 `ui_lang` 按用户持久化在 D1（**换浏览器也保持**，验收脚本登录后必须显式重置）。
 
-## 6. 测试与验证（当前全绿：16 套件 / 665 条 / 0 失败）
+## 6. 测试与验证（当前全绿：16 套件 / 682 条 / 0 失败）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -261,16 +261,16 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 15 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、**屏幕集合钉住 / 菜单引用的表存在 / 已退役表不再被引用** |
-| manifest-validation | 63 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、插件拒绝 `tables[]`、**路由 `resolve` 二选一 / `resolve.by` / `query.as` 作用域名**） |
+| architecture | 22 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、**屏幕集合钉住 / 菜单引用的表存在 / 已退役表不再被引用**、**每个声明字段的多语言能力（§10 规则 41，含分类表四道结构守卫）** |
+| manifest-validation | 66 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、插件拒绝 `tables[]`、**路由 `resolve` 二选一 / `resolve.by` / `query.as` 作用域名**、**规则 41 双向：散文必须声明 / 语言中立不得声明**） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
 | admin-spa | 15 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次 |
 | template-engine | 49 | 模板解释器单元（含 **子模板未闭合 section 抛错**、**三层继承最派生者胜**） |
-| **scaffold** | **68** | 生成的 theme/plugin/table 通过**真实** `validateManifest` + **真实**模板引擎 + **真实**架构规则；`@include`/`@extends` 目标存在；每个子模板 section 开闭配对；语言包前缀；拒绝覆盖；非法输入退出码；`--translatable` 正反两面 |
+| **scaffold** | **71** | 生成的 theme/plugin/table 通过**真实** `validateManifest` + **真实**模板引擎 + **真实**架构规则；`@include`/`@extends` 目标存在；每个子模板 section 开闭配对；语言包前缀；拒绝覆盖；非法输入退出码；`--translatable` 正反两面；**生成的清单确实过规则 41** |
 | theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含**表驱动路由**：`resolve.table` / `routes[].template` / `query.as` / 单条未命中 404） |
 | **theme-eshop** | **45** | **范例主题**：`themes/eshop/` 的声明与模板互相自洽——表/翻译字段/菜单↔表配对/路由 `resolve`/`query.as`/语言包，全部过**真实**校验器与**真实**架构规则；六个模板各渲染一次（有数据/无数据）；链接走路由自己的路径；`@first` 绑迭代作用域；**主页接管**（`path: "/"` 声明即前台首页，+4 条） |
 | multisite | 74 | 多站点隔离（含 SEO 端点按站点，第 9b 段） |
-| i18n | 62 | 多语言四层契约（§5.4① 八条全覆盖）+ 翻译组 + 主题自有表 |
+| i18n | 66 | 多语言四层契约（§5.4① 八条全覆盖）+ 翻译组 + 主题自有表 |
 | admin-contract | 32 | 后台 API 契约 |
 | **account** | **27** | **账户自助与菜单偏好（批次 5 新增）**：改密/改名的当前密码闸门（wrong_current 403 / weak 400 / taken 409 / invalid 400）、旧密码失效、`auth/me` 反映改名、menu_prefs 往返/去重/按用户隔离、**label_key 翻译端到端**（zh-CN→「物品」、en→"Things"、无 key 菜单保留原文、`ui_locale` 回显） |
 | **menu-custom** | **40** | **站点菜单编辑器（批次 5 新增）**：`admin-menus/custom` 三端点契约（默认空、往返、按站隔离、DELETE 复位）、权限分层（author 可读不可写、`can_manage` 回显）、10 种结构违规 400 + 未知字段剥离、`applyMenuCustom` 纯函数（双语改名解析/稳定排序/跨组移动/**不存在分组被忽略**/siteHidden/navGroups 过滤语义） |
@@ -289,6 +289,13 @@ node tests/_eshop-inject.mjs list         # 7 个场景
 node tests/_eshop-inject.mjs inject <场景> # 注入（内容哈希证明生效）
 node tests/theme-eshop.test.mjs           # 应红在预期断言
 node tests/_eshop-inject.mjs restore      # 快照还原（assertPristine 双向验证）
+```
+
+第二个反向验证工具，守**规则 41（所有数据都有多语言能力）**：
+
+```bash
+node tests/_i18n-field-inject.mjs      # 6 个场景，注入→断言按名字变红→还原→再断言干净
+node tests/_i18n-data-inventory.mjs    # 清点所有承载数据的声明类，列出还没有语言维度的
 ```
 
 ⚠️ **多套件共享同一个本地 D1**：断言必须按 owner 收窄（`theme_name` / 站点），
