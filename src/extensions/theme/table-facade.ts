@@ -28,7 +28,37 @@ import { Env } from "../../shared/types";
 import { now } from "../../shared/repo";
 import { randomId } from "../../shared/crypto";
 import { siteDefaultLocale } from "../../platform/i18n/locale-registry";
-import { type ThemeTableDef } from "./tables";
+import { listThemeTableDefs, resolveThemeTable, type ThemeTableDef } from "./tables";
+import { activeTheme } from "./runtime-declarative";
+
+/**
+ * Find an extension-owned table by its *logical* name.
+ *
+ * The active theme is tried first — that is the normal case, and it is the only
+ * case where the declaring theme is allowed to *create* rows. Falling back to
+ * any declaration the site knows about keeps data reachable after a theme
+ * switch (§3.4): the table and its rows survive, so the admin listing must
+ * still read them even though the declaring theme is no longer active.
+ *
+ * This lives here rather than in `api.ts` because it has two callers that must
+ * agree: the admin endpoints, and the front-end router (a theme route that
+ * declares `resolve.table`). Two copies would eventually disagree about what
+ * "the table for this site" means, and the symptom would be an admin page and a
+ * public page showing different rows for the same URL.
+ */
+export async function resolveTableForSite(
+  env: Env,
+  siteId: string,
+  logical: string
+): Promise<ThemeTableDef | null> {
+  const theme = await activeTheme(env, siteId).catch(() => null);
+  if (theme?.name) {
+    const def = await resolveThemeTable(env, siteId, theme.name, logical);
+    if (def) return def;
+  }
+  const all = await listThemeTableDefs(env, siteId);
+  return all.find((d) => d.logical_name === logical) ?? null;
+}
 
 export interface TableRow {
   id: string;

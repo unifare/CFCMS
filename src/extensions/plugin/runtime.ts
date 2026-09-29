@@ -1,6 +1,6 @@
 import { Env } from "../../shared/types";
 import { randomId } from "../../shared/crypto";
-import { CAPABILITIES } from "../security";
+import { isCapability } from "../contract/capabilities";
 import { registerPluginMenus } from "./menus";
 
 export type ExtensionContext = {
@@ -51,17 +51,12 @@ export async function applyFilters(name: string, ctx: ExtensionContext, data: an
  * attached when the plugin is enabled for a site.
  */
 
-/** Which runtime hooks a manifest may declare. Order matters for rendering. */
-export const DECLARABLE_HOOKS = [
-  "beforeRender",
-  "html",
-  "head",
-  "beforeSavePost",
-  "afterSavePost",
-  "beforeDeletePost",
-  "shortcode",
-] as const;
-export type DeclarableHook = (typeof DECLARABLE_HOOKS)[number];
+/**
+ * The declarable hook list lives in `contract/hooks.ts` — it is a contract
+ * (both the validator and this file need it, and they must not see each other).
+ * Re-exported here so existing callers keep working.
+ */
+export { DECLARABLE_HOOKS, type DeclarableHook } from "../contract/hooks";
 
 /** A plugin hook implementation attached by the host. `order` breaks ties. */
 type HookImpl = { phase: "action" | "filter"; impl: Hook; order: number };
@@ -340,7 +335,7 @@ export async function capabilityList(env: Env, type: string, name: string) {
   return rows.results as any[];
 }
 export async function capabilityAllowed(env: Env, type: string, name: string, capability: string) {
-  if (!CAPABILITIES.includes(capability as any)) return false;
+  if (!isCapability(capability)) return false;
   const row = await env.DB.prepare("SELECT enabled FROM extension_capabilities WHERE extension_type=? AND extension_name=? AND capability=?").bind(type, name, capability).first<any>();
   return row?.enabled === 1;
 }

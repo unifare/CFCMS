@@ -26,9 +26,12 @@
 6. 如果改了后台界面，跑 `node tests/admin-spa.test.mjs`，并跑一次真实浏览器验收
    `node tests/_i18n-browser.cjs` / `node tests/_admin-menus-browser.cjs`
    （需要另开 `npx wrangler dev --port 8787 --ip 127.0.0.1`）。
-7. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
+7. 如果改了 `src/rendering/template-engine.ts`、`src/extensions/contract/*`、
+   或 `scripts/make-*.mjs`，跑 `node tests/scaffold.test.mjs`。它用**真实校验器**与
+   **真实模板引擎**跑生成的骨架——**生成器的缺陷只有渲染一遍才会现形**（见下方规则 4）。
+8. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
-   本仓库已经发生过三次（见下方「守卫失效记录」与「同一意图的两种写法」）。
+   本仓库已经发生过五种（见下方「守卫失效记录」与「同一意图的两种写法」）。
 
 **当前源码布局**（已重整完毕，新代码必须放对位置）：
 
@@ -43,12 +46,33 @@ src/
 │   └── i18n/             多语言四层：core-pack translate resolve
 │                         locale-registry packs index
 └── extensions/
-    ├── contract/hooks.ts ★ 主题与插件共享的接口（依赖倒置的支点）
-    ├── security.ts       清单校验（安装边界，失败必须抛错）
+    ├── contract/         ★ 主题与插件共享的词汇与接口（依赖倒置的支点）
+    │   ├── hooks.ts         HostHooks + DECLARABLE_HOOKS（宿主提供实现）
+    │   ├── manifest.ts      词汇表：保留列 / 字段类型 / 后台屏幕 / 各种正则
+    │   ├── capabilities.ts  CAPABILITIES 白名单
+    │   └── validation.ts    安装边界：validateManifest（失败必须抛错）
+    ├── security.ts       只剩 safeZipPath / sha256（校验已移入 contract/）
     ├── theme/            runtime-declarative runtime-worker capabilities
     │                     templates tables table-facade packs
     └── plugin/           runtime packs menus
+
+scripts/                  脚手架（生成器必须可被 import，见 tests/scaffold.test.mjs）
+├── _scaffold.mjs         共用：parseArgs / writeTree / CliError / isMain
+├── make-theme.mjs        themeFiles() 纯函数 + main(argv, io)
+├── make-plugin.mjs       pluginFiles() 纯函数 + main(argv, io)
+└── make-table.mjs        tableDeclarations() 纯函数 + main(argv, io)
 ```
+
+**`contract/manifest.ts` 为什么单独存在**：`tests/architecture.test.mjs` 需要**读**这些
+词汇表（后台屏幕白名单、字段类型、保留列）。词汇表住在校验器内部时，唯一的检查办法
+是**抄一份**，而抄本永远先过期。两个地方需要同一个答案时，共享定义，而不是共享结论。
+同一理由把 `tests/_extension-rules.mjs` 抽了出来，供 `architecture.test.mjs` 与
+`scaffold.test.mjs` 共用。
+
+**脚手架必须可被 import**：本机沙箱**无法 spawn 任何子进程**（node 二元文件被锁，
+`spawnSync` 一律 `EBUSY`，与 `tests/run-all.mjs` 报 SKIP 同因）。所以三个生成器都写成
+`main(argv, io)` + 纯内容构造函数 + `isMain()` 守卫，`tests/scaffold.test.mjs` 直接调用。
+只能以命令形式运行的生成器，等于**输出永远没被检查过的**生成器。
 
 `platform/admin-menus.ts` 放在 `platform/` 而不是任一扩展里，理由是**两种扩展都要写它，
 而它们互不 import（规则 3）**——放在任一侧都会逼出一次越界 import。
@@ -136,6 +160,27 @@ await hooks.applyFilters("html", ctx, out);
 写用例时先问一句「我把这一条删了，哪个断言会变红」——答不上来就说明 fixture 没设对。
 （修正后：再加一个**同类型**的第二个 owner，注入后产生 3 个 FAIL。）
 
+### 第五种假绿：断言描述的是上一轮的产物（清理失败被吞掉）
+
+批次 4 在 `tests/scaffold.test.mjs` 上踩到，**不在被测代码里，也不在 fixture 里，
+而在"测试到底在看哪个文件"上**：
+
+> 套件开头 `rmSync(SCRATCH, { recursive: true, force: true })`。Windows 上这一步会因
+> `EBUSY` 失败，而 `force: true` **把错误吞掉**。生成器又刻意拒绝覆盖已存在的文件，
+> 于是残留的旧文件全部存活——整套断言描述的是**这一次根本没有写出来的内容**。
+> 症状极具误导性：套件全绿，而把缺陷注入生成器之后，红的是"另一件事"。
+
+**规则**：**清理之后要验证清理成功**（`if (existsSync(dir)) throw new Error(...)`）。
+凡是"先清空再生成"的套件，都必须能区分"这次生成的"与"上次剩下的"。
+
+同源的第二条，关于**注入脚本自己**：
+
+> 第一次注入脚本打印 `closers removed: 2 -> 2` —— 它什么都没改，
+> 而我把随后出现的红色当成了证据。那次"反向验证"证明的不是我想证明的东西。
+
+**规则**：注入后必须断言"目标确实从 N 变成 M"（`if (left !== 0) throw`），
+恢复后同样断言。**不能证明自己注入成功的注入，不是注入。**
+
 ## 多语言（§10 规则 5、7、8）
 
 | # | 规则 |
@@ -171,6 +216,10 @@ await hooks.applyFilters("html", ctx, out);
 | 18 | `runtime: "worker"` 的主题必须真的提供 `entry` 指向的文件 |
 | 19 | `blocks[].name` 是**纯标识符、不带斜杠**（`property-card` ✅ / `theme/property-card` ❌）。`core/` 前缀是平台内置专用的 |
 | 20 | 内联语言包 `langs{}`：locale 必须是合法代码、value 必须是字符串、key 必须带 `theme.{name}.` / `plugin.{name}.` / `core.` 前缀 |
+| 21 | `routes[].template` 必须**在 `templates[]` 里**、且对应文件真的存在（`runtime: "worker"` 豁免）。渲染器按名字优先选中它 |
+| 22 | `routes[].resolve` 必须**恰好**声明 `type` 或 `table` **之一**——两个都写抛错，一个都不写也抛错 |
+| 23 | `routes[].resolve.by` 只能是 `"slug"` 或 `"id"` |
+| 24 | `routes[].query.as` 必须是合法的**模板作用域名**（`SCOPE_NAME_RE` = `[A-Za-z_$][A-Za-z0-9_$]*`），**不能带连字符** |
 
 **理由**：清单是主题唯一能出错的地方，那就在这里出错。放行会变成渲染期的报错，
 而那个报错会指向渲染器，不指向清单——排查成本高一个数量级。
@@ -179,10 +228,58 @@ await hooks.applyFilters("html", ctx, out);
 所以插件没有 `langs/` 目录可读，只能把语言包内联在清单里。主题有目录
 （`themes/<name>/langs/<locale>.json`，运行时从 R2 读）。两条路径，同一套前缀规则。
 
+**规则 21–24 的共同教训**：这四条对应的四个字段，曾经都是「**声明被校验了、但运行时没人读**」。
+校验器认它、架构测试认它，前台却按 `kind` 猜模板、按 `postType` 猜内容，
+于是**页面返回 200 而内容是错的**——最贵的一类 bug。判据是：
+**一个字段被写进校验器还不够，必须找到它的消费点**；找不到就别加这个字段。
+
+**规则 24 为什么不能用连字符**：`query.as` 会成为模板里的作用域变量名，而表达式分词器
+按 `[A-Za-z_$][A-Za-z0-9_$]*` 切标识符。`my-list` 是合法 JS 属性名，但在模板里
+`{{#each my-list}}` 会被解析成 `my` 减 `list`，而引擎**没有算术运算符**。
+放行等于给出一个**谁都读不到**的绑定。
+
 **校验失败必须抛出、必须让安装失败**，不能警告后继续。写法是 `validateManifest` 抛
 `Error`，`src/api.ts` 的 `uploadExtension()` 捕获后返回 400。一个装不上的主题
-胜过半个能跑的主题。规则 14–20 每一条都在 `tests/manifest-validation.test.mjs` 里
+胜过半个能跑的主题。规则 14–24 每一条都在 `tests/manifest-validation.test.mjs` 里
 有对应的"注入缺陷 → 断言必须抛错"用例；改校验逻辑时那道套件必须跟着改。
+
+---
+
+## 模板语言：写主题前必须知道的五条
+
+**这五条都会让整页渲染抛错、或静默走错分支，而且没有编译期提示。**
+`scripts/make-theme.mjs` 生成的骨架把这五条都演示了一遍，`tests/scaffold.test.mjs`
+用**真实引擎**把它们逐条钉住。
+
+| # | 规则 | 写错的症状 |
+|---|---|---|
+| 1 | helper 用 `f(a, b)` **调用**：`{{len(posts)}}` ✅ / `{{len posts}}` ❌ | 抛 `Trailing tokens` → **整页降级成空白壳层** |
+| 2 | **不支持 `../`**。`{{#each}}` 内部是 `Object.create(scope)`，父级变量**按名字直接可见** | 取到 `undefined`，静默 |
+| 3 | `@first` / `@last` / `@index` 绑在**迭代作用域**，不在 item 上。裸写 `{{#if @first}}` | 分支**永不渲染**，静默 |
+| 4 | **`{{/section}}` 是必须的**（见下） | 子模板的 section 被误判成 slot → 布局渲染空 `<main>`，**HTTP 200、无异常** |
+| 5 | `@extends` 的插槽是 `{{@section "content"}}`，**不是** `{{@block}}` | 内容不出现，静默 |
+
+helper 只有 10 个：`len / default / lower / upper / truncate / join / number / date /
+contains`（外加 `@extends` / `@section` / `@include` / `@query`）。
+支持 `{{#if}}`/`{{#unless}}`/`{{#each … as x}}`/`{{! 注释 }}`、`===`/`!==`/`&&`/`||`/`>`/`<`。
+**没有算术运算符。**
+
+### 规则 4 详解：为什么 `{{/section}}` 不能省
+
+引擎要区分一个 `{{@section "x"}}` 是**定义**（子模板，有 body）还是**插槽**（布局，无 body）。
+判据是**向后扫描有没有配对的 `{{/section}}`**。所以：
+
+- 布局 `parts/layout.html` 里的 `{{@section "content"}}` **故意不闭合** —— 它是插槽。
+- 子模板里**必须闭合**。不闭合时它被当成插槽，不进 `@sections`，布局渲染空内容。
+
+这个猜测有一个**可以证明**的错法，所以引擎现在直接拒绝它：**一个 `@extends` 了的文件
+是子模板，子模板永远不提供插槽**。于是"既 `@extends` 又有未闭合 section"不再是猜测，
+而是**结构性错误**，`parseTemplate` 抛
+`Template @extends "…" but leaves section(s) unclosed: …`。
+判据是文件事实（`extendsName` 是解析结果），不是文本匹配——这正是本仓库反复强调的做法。
+
+> 批次 4 的骨架**真的漏了这四个 `{{/section}}`**，`tests/scaffold.test.mjs` 才发现的。
+> 症状就是上面那行：200、无异常、空白页。**只有真正渲染一遍才会暴露。**
 
 ---
 

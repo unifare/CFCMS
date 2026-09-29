@@ -5,7 +5,9 @@ import { randomId } from "./shared/crypto";
 import { CORE_BLOCKS } from "./rendering/blocks";
 import { installedPlugins, installedThemes, seedBundledExtensions, capabilityList, bootPluginRuntime, applyFilters, doAction, resetPluginRuntime, pluginRuntimeStatus } from "./extensions/plugin/runtime";
 import { unzipSync } from "fflate";
-import { validateManifest, safeZipPath, sha256, CAPABILITIES } from "./extensions/security";
+import { validateManifest } from "./extensions/contract/validation";
+import { CAPABILITIES } from "./extensions/contract/capabilities";
+import { safeZipPath, sha256 } from "./extensions/security";
 import { createRevision, autosave } from "./platform/revisions";
 import { requirePermission, can } from "./platform/permissions";
 import { bumpContentCache } from "./shared/cache";
@@ -45,11 +47,9 @@ import { activeTheme } from "./extensions/theme/runtime-declarative";
 import {
   listThemeTableDefs,
   refreshThemeTableI18n,
-  resolveThemeTable,
   syncThemeTables,
-  type ThemeTableDef,
 } from "./extensions/theme/tables";
-import { tableBySlug, tableDelete, tableList, tableSave } from "./extensions/theme/table-facade";
+import { tableBySlug, tableDelete, tableList, tableSave, resolveTableForSite } from "./extensions/theme/table-facade";
 
 /**
  * Which site does this admin request target? Explicit `?site=` wins; otherwise
@@ -59,29 +59,6 @@ import { tableBySlug, tableDelete, tableList, tableSave } from "./extensions/the
 function requestSiteId(url: URL): string {
   const s = String(url.searchParams.get("site") ?? "").trim();
   return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(s) ? s : DEFAULT_SITE_ID;
-}
-
-/**
- * Find a theme-owned table by its logical name.
- *
- * The active theme is tried first — that is the normal case and it is the only
- * case where the theme is allowed to *create* rows. Falling back to any
- * declaration the site knows about keeps data reachable after a theme switch
- * (§3.4): the table and its rows survive, so an admin listing must still be
- * able to read them even though the declaring theme is no longer active.
- */
-async function resolveTableForSite(
-  env: Env,
-  siteId: string,
-  logical: string
-): Promise<ThemeTableDef | null> {
-  const theme = await activeTheme(env, siteId).catch(() => null);
-  if (theme?.name) {
-    const def = await resolveThemeTable(env, siteId, theme.name, logical);
-    if (def) return def;
-  }
-  const all = await listThemeTableDefs(env, siteId);
-  return all.find((d) => d.logical_name === logical) ?? null;
 }
 
 /**
@@ -353,7 +330,7 @@ async function uploadExtension(env:Env,userId:string,request:Request,type:"plugi
       .bind(`theme_${meta.name}`,meta.name,meta.title,meta.version,0,JSON.stringify(manifest),nowTs,nowTs).run();
   }
   const perms=Array.isArray(manifest.permissions)?manifest.permissions:[];
-  for(const cap of perms.filter((x:string)=>CAPABILITIES.includes(x as any))) await env.DB.prepare("INSERT OR REPLACE INTO extension_capabilities(extension_type,extension_name,capability,enabled) VALUES(?,?,?,1)").bind(type,meta.name,cap).run();
+  for(const cap of perms.filter((x:string)=>(CAPABILITIES as readonly string[]).includes(x))) await env.DB.prepare("INSERT OR REPLACE INTO extension_capabilities(extension_type,extension_name,capability,enabled) VALUES(?,?,?,1)").bind(type,meta.name,cap).run();
   if(type==="plugin" && Array.isArray(manifest.settings)) {
     for(const def of manifest.settings) {
       if(!def?.key) continue;

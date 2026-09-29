@@ -306,6 +306,15 @@ export interface ThemeRenderOptions {
   slug?: string;
   taxonomy?: string;
   term?: string;
+  /**
+   * An explicitly named template, which outranks the hierarchy.
+   *
+   * Set by a theme route (`routes[].template`). Without it a route that
+   * resolves a theme-owned table has nothing to derive a name from — no post
+   * type — and would render the generic `archive`/`single` instead of the
+   * template the theme actually asked for.
+   */
+  template?: string;
   title: string;
   description?: string;
   /** The current object, exposed to templates as `post`. */
@@ -413,6 +422,7 @@ export async function renderThemePage(
     slug: o.slug,
     taxonomy: o.taxonomy,
     term: o.term,
+    template: o.template,
   };
 
   const resolved = await resolveTemplate(ctx, load, () => minimalShell(o));

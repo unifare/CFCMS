@@ -14,6 +14,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
+import { langPackProblems, themeManifestProblems } from "./_extension-rules.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -277,43 +278,19 @@ section("i18n key namespacing (§10 rule 7)");
 // ---------------------------------------------------------------------------
 
 /**
- * Rule 7: every key in an extension's language pack must carry its owner's
- * prefix — `theme.{name}.` or `plugin.{name}.`.
+ * Rule 11 (§10): every key in an extension's language pack must carry its
+ * owner's prefix — `theme.{name}.` or `plugin.{name}.`.
  *
  * Without this, two extensions that both define `nav.home` overwrite each
  * other in the merged dictionary, and which one wins depends on load order.
  * That is a heisenbug with no correct fix at the call site.
+ *
+ * The rule itself lives in `tests/_extension-rules.mjs`, because
+ * `tests/scaffold.test.mjs` asks the same question of a *generated* theme. A
+ * copied rule drifts from the original, and the copy is always the stale one.
  */
-function checkLangPacks(kind) {
-  const baseDir = join(ROOT, kind === "theme" ? "themes" : "plugins");
-  if (!existsSync(baseDir)) return [];
-  const problems = [];
-  for (const owner of readdirSync(baseDir)) {
-    const langDir = join(baseDir, owner, "langs");
-    if (!existsSync(langDir) || !statSync(langDir).isDirectory()) continue;
-    for (const file of readdirSync(langDir)) {
-      if (!file.endsWith(".json")) continue;
-      let dict;
-      try {
-        dict = JSON.parse(read(join(langDir, file)));
-      } catch (e) {
-        problems.push(`${kind}s/${owner}/langs/${file}: invalid JSON (${e.message})`);
-        continue;
-      }
-      const prefix = `${kind}.${owner}.`;
-      for (const key of Object.keys(dict)) {
-        const isCore = key.startsWith("core.");
-        if (!key.startsWith(prefix) && !isCore) {
-          problems.push(`${kind}s/${owner}/langs/${file}: key "${key}" lacks prefix "${prefix}"`);
-        }
-      }
-    }
-  }
-  return problems;
-}
-
 for (const kind of ["theme", "plugin"]) {
-  const problems = checkLangPacks(kind);
+  const problems = langPackProblems(ROOT).filter((p) => p.startsWith(`${kind}s/`));
   check(
     `${kind} language packs are correctly namespaced`,
     problems.length === 0,
@@ -330,102 +307,13 @@ section("Manifest declarations are internally consistent (§5.3)");
  * against a table it never declared, will fail at render time — deep inside a
  * request, with an error that points at the renderer rather than the manifest.
  * Catching it here makes the manifest the single place a theme can be wrong.
+ *
+ * Shared with the scaffold test for the same reason as the rule above: the
+ * documented acceptance criterion for a generated theme is "passes the
+ * architecture test", and running the real rule is the only honest way to say
+ * that.
  */
-const themeDirs = existsSync(join(ROOT, "themes"))
-  ? readdirSync(join(ROOT, "themes")).filter((d) =>
-      statSync(join(ROOT, "themes", d)).isDirectory()
-    )
-  : [];
-
-const manifestProblems = [];
-for (const name of themeDirs) {
-  const dir = join(ROOT, "themes", name);
-  const manifestPath = join(dir, "theme.json");
-  if (!existsSync(manifestPath)) continue; // optional for fixtures
-
-  let manifest;
-  try {
-    manifest = JSON.parse(read(manifestPath));
-  } catch (e) {
-    manifestProblems.push(`themes/${name}/theme.json: invalid JSON (${e.message})`);
-    continue;
-  }
-
-  const templates = Array.isArray(manifest.templates) ? manifest.templates : [];
-  const tableNames = new Set(
-    (Array.isArray(manifest.tables) ? manifest.tables : []).map((t) => String(t?.name ?? ""))
-  );
-
-  // Declared template must exist, either flat or under templates/parts.
-  //
-  // A worker-runtime theme renders from its own code, so `templates[]` there is
-  // a statement about *which kinds it handles*, not a file listing. Only a
-  // declarative theme's template list is a file contract — checking a worker
-  // theme against the filesystem would report failures it can never fix.
-  const tplDir = join(dir, "templates");
-  const isWorkerTheme = manifest.runtime === "worker";
-  if (templates.length && existsSync(tplDir) && !isWorkerTheme) {
-    const present = new Set();
-    for (const f of walk(tplDir, [".html"])) {
-      const base = f.slice(f.indexOf(`${sep}templates${sep}`) + `${sep}templates${sep}`.length);
-      present.add(base.split(sep).join("/").replace(/\.html$/, ""));
-    }
-    for (const t of templates) {
-      if (!present.has(t)) {
-        manifestProblems.push(`themes/${name}: declares template "${t}" but ships no templates/${t}.html`);
-      }
-    }
-  }
-
-  // A route resolving against a table must declare that table.
-  for (const r of Array.isArray(manifest.routes) ? manifest.routes : []) {
-    const tbl = r?.resolve?.table;
-    if (tbl && !tableNames.has(String(tbl))) {
-      manifestProblems.push(
-        `themes/${name}: route "${r.path}" resolves table "${tbl}" which is not declared in tables[]`
-      );
-    }
-  }
-
-  // A route's template must be declared. Same worker exemption as above: a
-  // worker theme's route templates are names its code understands.
-  if (!isWorkerTheme) {
-    for (const r of Array.isArray(manifest.routes) ? manifest.routes : []) {
-      if (r?.template && templates.length && !templates.includes(r.template)) {
-        manifestProblems.push(
-          `themes/${name}: route "${r.path}" uses template "${r.template}" not listed in templates[]`
-        );
-      }
-    }
-  }
-
-  // translatable entries must name declared fields.
-  for (const t of Array.isArray(manifest.tables) ? manifest.tables : []) {
-    const fieldKeys = new Set(
-      (Array.isArray(t?.fields) ? t.fields : []).map((f) => String(f?.key ?? ""))
-    );
-    for (const k of Array.isArray(t?.translatable) ? t.translatable : []) {
-      if (!fieldKeys.has(String(k))) {
-        manifestProblems.push(
-          `themes/${name}: table "${t.name}" marks "${k}" translatable but has no such field`
-        );
-      }
-    }
-  }
-
-  // Tables must not use reserved platform column names.
-  const RESERVED = ["id", "site_id", "slug", "lang_group", "status", "created_at", "updated_at"];
-  for (const t of Array.isArray(manifest.tables) ? manifest.tables : []) {
-    for (const f of Array.isArray(t?.fields) ? t.fields : []) {
-      if (RESERVED.includes(String(f?.key ?? ""))) {
-        manifestProblems.push(
-          `themes/${name}: table "${t.name}" field "${f.key}" collides with a reserved column`
-        );
-      }
-    }
-  }
-}
-
+const manifestProblems = themeManifestProblems(ROOT);
 check(
   "theme manifests are internally consistent",
   manifestProblems.length === 0,
@@ -441,6 +329,10 @@ section("Extension entry points exist");
  * with the site already switched over. Checking the file exists is cheap and
  * turns that into a caught mistake.
  */
+const themeDirs = existsSync(join(ROOT, "themes"))
+  ? readdirSync(join(ROOT, "themes")).filter((d) => statSync(join(ROOT, "themes", d)).isDirectory())
+  : [];
+
 const entryProblems = [];
 for (const name of themeDirs) {
   const manifestPath = join(ROOT, "themes", name, "theme.json");
@@ -499,12 +391,13 @@ section("Declared admin menus are renderable (batch 3)");
  * nothing points back at the manifest. So the shipped extensions are checked
  * against the same list the validator uses.
  *
- * The list is read out of `security.ts` rather than copied, and then compared
- * against a pinned set. Copying it would let the two drift; not pinning it
- * would let someone "fix" a failure by adding a screen nobody implements.
+ * The list is read out of `contract/manifest.ts` rather than copied, and then
+ * compared against a pinned set. Copying it would let the two drift; not
+ * pinning it would let someone "fix" a failure by adding a screen nobody
+ * implements.
  */
-const securitySrc = read(join(ROOT, "src/extensions/security.ts"));
-const allowedBlock = securitySrc.match(/const ALLOWED_ADMIN_SCREENS\s*=\s*\[([\s\S]*?)\]/);
+const manifestSrc = read(join(ROOT, "src/extensions/contract/manifest.ts"));
+const allowedBlock = manifestSrc.match(/const ALLOWED_ADMIN_SCREENS\s*=\s*\[([\s\S]*?)\]/);
 const allowedScreens = allowedBlock
   ? [...allowedBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
   : [];
@@ -596,6 +489,42 @@ check(
   retiredOffenders.length === 0,
   retiredOffenders.join("\n       ")
 );
+
+// ---------------------------------------------------------------------------
+// The hook contract and the hook implementation must name the same hooks
+// ---------------------------------------------------------------------------
+//
+// `DECLARABLE_HOOKS` is what a plugin manifest may declare; `HOOK_IMPLS` is what
+// the host actually supplies. They live in different files on purpose (the
+// contract may not import the implementation), which is exactly why they need a
+// guard: the list is what the manifest validator checks against, so a hook that
+// exists in the implementation but not in the list is undeclarable, and one in
+// the list but not the implementation is a typo trap — the validator accepts it
+// and the runtime silently drops it.
+{
+  const hooksSrc = read(join(ROOT, "src/extensions/contract/hooks.ts"));
+  const implSrc = read(join(ROOT, "src/extensions/plugin/runtime.ts"));
+
+  const declaredBlock = hooksSrc.match(/export const DECLARABLE_HOOKS\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  const declaredHooks = declaredBlock ? [...declaredBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+
+  // `HOOK_IMPLS` is an object literal; take its top-level keys, which are the
+  // hook names the host can attach.
+  const implBlock = implSrc.match(/const HOOK_IMPLS[^=]*=\s*\{([\s\S]*?)\n\};/);
+  const implHooks = implBlock ? [...implBlock[1].matchAll(/^  ([A-Za-z][A-Za-z0-9_]*):\s*\{/gm)].map((m) => m[1]) : [];
+
+  // Both halves must be non-empty, or the comparison below passes vacuously.
+  check(
+    "hook lists were actually parsed (guards against an empty-set pass)",
+    declaredHooks.length > 0 && implHooks.length > 0,
+    `DECLARABLE_HOOKS=${declaredHooks.length} entries, HOOK_IMPLS=${implHooks.length} entries`
+  );
+  check(
+    "every declarable hook is implemented, and every implementation is declarable",
+    JSON.stringify([...declaredHooks].sort()) === JSON.stringify([...implHooks].sort()),
+    `declarable:     ${JSON.stringify([...declaredHooks].sort())}\n       implemented:    ${JSON.stringify([...implHooks].sort())}`
+  );
+}
 
 // ---------------------------------------------------------------------------
 console.log(`\n${"=".repeat(64)}`);

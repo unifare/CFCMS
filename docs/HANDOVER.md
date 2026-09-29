@@ -68,11 +68,21 @@ src/
 │       └── index.ts          barrel
 ├── rendering/                template-engine template-resolver blocks（纯渲染）
 └── extensions/
-    ├── contract/hooks.ts     依赖倒置契约：HostHooks + NULL_HOOKS + 注入槽
-    ├── security.ts           validateManifest —— 安装边界校验，失败必须抛错
+    ├── contract/             ★ 主题/插件共享的词汇与接口
+    │   ├── hooks.ts            HostHooks + NULL_HOOKS + DECLARABLE_HOOKS + 注入槽
+    │   ├── manifest.ts         词汇表：保留列 / 字段类型 / 后台屏幕 / 各种正则
+    │   ├── capabilities.ts     CAPABILITIES 白名单
+    │   └── validation.ts       validateManifest —— 安装边界校验，失败必须抛错
+    ├── security.ts           只剩 safeZipPath / sha256
     ├── theme/                runtime-declarative runtime-worker capabilities templates
     │                         tables（DDL 生成 + theme_table_defs）table-facade packs
     └── plugin/               runtime packs menus
+
+scripts/                      脚手架（生成器可被 import —— 本机沙箱无法 spawn）
+├── _scaffold.mjs             parseArgs / writeTree / CliError / isMain
+├── make-theme.mjs            themeFiles() + main(argv, io)
+├── make-plugin.mjs           pluginFiles() + main(argv, io)
+└── make-table.mjs            tableDeclarations() + main(argv, io)
 ```
 
 **四条红线（`tests/architecture.test.mjs` 机器强制，13 组检查）：**
@@ -163,13 +173,35 @@ src/
 FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen → FAIL；
 `src/` 引用已退役表 → FAIL。
 
-### 批次 4（脚手架 + 文档）—— 未开始
-`make-theme.mjs`/`make-plugin.mjs`、`docs/I18N.md`/`THEME-DEV.md`/`PLUGIN-DEV.md`、`eshop` 示例主题。
-另含两项**已登记的技术债**：`extensions/contract/` 拆出 `manifest.ts`/`validation.ts`/`capabilities.ts`
-（纯结构重构）；**插件自有表** `plugin_{plugin}_{table}`（需要**重建 `theme_table_defs`**，
-因为 SQLite 不能 `ALTER` 主键/UNIQUE，而它现在只有 `theme_name` 一列）。
+### 批次 4（脚手架 + 文档）—— 进行中
 
-## 6. 测试与验证（当前全绿：12 套件 / 0 失败）
+| 项 | 状态 |
+|---|---|
+| `extensions/contract/` 拆出 `manifest.ts`/`validation.ts`/`capabilities.ts` | ✅ |
+| `scripts/make-theme.mjs` / `make-plugin.mjs` / `make-table.mjs` | ✅ |
+| `tests/scaffold.test.mjs`（68 条，真实校验器 + 真实模板引擎） | ✅ 已进 `npm test` |
+| 修复「声明被校验但运行时没人读」第三、四例（`resolve.table` / `routes[].template`） | ✅ |
+| `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md` | ⬜ |
+| `themes/eshop/` 示例主题 | ⬜ |
+| **插件自有表** `plugin_{plugin}_{table}` | ⬜ 已登记：需**重建 `theme_table_defs`**（SQLite 不能 `ALTER` 主键/UNIQUE，而它现在只有 `theme_name` 一列） |
+
+**本轮新增的两条引擎级守卫（都反向验证过）**：
+
+1. **子模板未闭合 `{{@section}}` 直接抛错**。引擎原先靠「向后扫描有没有 `{{/section}}`」
+   猜一个 `{{@section}}` 是定义还是插槽；猜错时子模板的 section 被当成插槽，
+   布局渲染空 `<main>`——**HTTP 200、无异常**。现在用**文件事实**（`@extends` 了就是子模板，
+   子模板永不提供插槽）把它变成结构性错误。
+   ⚠️ 这个缺陷**真实存在于生成的骨架里**（四个子模板全漏了 `{{/section}}`），
+   是 `tests/scaffold.test.mjs` 渲染时才发现的。
+2. **`@extends` 链的 section 合并顺序**。原写法「保留第一次写入，只特判 `i === 0`」在
+   **三层**继承时让**最不派生**的根赢；改成从根向子遍历、后来者覆盖。仓库里目前没有
+   嵌套布局，所以一直没暴露——主题作者一试就会拿到祖父的副本。
+
+**反向验证（本轮 4 项）**：路由运行时改动 → theme-integration FAIL×12；
+7 条新清单守卫 → manifest-validation FAIL×7；i18n 断言收窄 → 强制 `created_i18n_tables: []` 变红；
+生成的骨架去掉 4 个 `{{/section}}` → scaffold 同时被「内容计数」与「引擎守卫」两条独立机制抓到。
+
+## 6. 测试与验证（当前全绿：13 套件 / 0 失败）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -178,18 +210,24 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 13 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、**屏幕集合钉住 / 菜单引用的表存在 / 已退役表不再被引用** |
-| manifest-validation | 54 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、插件拒绝 `tables[]`） |
-| **admin-menus** | **43** | **本轮新增**：注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
+| architecture | 15 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、**屏幕集合钉住 / 菜单引用的表存在 / 已退役表不再被引用** |
+| manifest-validation | 63 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、插件拒绝 `tables[]`、**路由 `resolve` 二选一 / `resolve.by` / `query.as` 作用域名**） |
+| admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
 | admin-spa | 15 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次 |
-| template-engine | 47 | 模板解释器单元 |
-| theme-integration | 46 | 上传→激活→CPT→渲染→切主题保数据，端到端 |
+| template-engine | 49 | 模板解释器单元（含 **子模板未闭合 section 抛错**、**三层继承最派生者胜**） |
+| **scaffold** | **68** | **本轮新增**：生成的 theme/plugin/table 通过**真实** `validateManifest` + **真实**模板引擎 + **真实**架构规则；`@include`/`@extends` 目标存在；每个子模板 section 开闭配对；语言包前缀；拒绝覆盖；非法输入退出码；`--translatable` 正反两面 |
+| theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含**表驱动路由**：`resolve.table` / `routes[].template` / `query.as` / 单条未命中 404） |
 | multisite | 74 | 多站点隔离（含 SEO 端点按站点，第 9b 段） |
 | i18n | 62 | 多语言四层契约（§5.4① 八条全覆盖）+ 翻译组 + 主题自有表 |
 | admin-contract | 32 | 后台 API 契约 |
 | plugin-hooks | 25 | 插件 hook 生命周期 |
 | theme-worker | 28 | L3 沙箱（含 WorkerStub 不可跨请求） |
 | theme-aurora | 19 项 | aurora 主题渲染快照式检查 |
+
+⚠️ **多套件共享同一个本地 D1**：断言必须按 owner 收窄（`theme_name` / 站点），
+别写全局计数。`theme_table_defs` **按设计不随主题停用消失**，所以夹具必须删掉自己的注册行
+**并且** drop 自己生成的表——否则下一套件会看到上一套件留下的东西
+（i18n 套件已经因此假红过一次）。
 
 另有两个**不在 `npm test` 链里**的真实浏览器验收脚本：
 

@@ -158,7 +158,7 @@ function buildThemeZip(name) {
     title: "Real Estate",
     version: "1.0.0",
     supports: ["blocks", "menus"],
-    templates: ["base", "index", "archive-property", "single-property", "404"],
+    templates: ["base", "index", "archive-property", "single-property", "archive-listing", "single-listing", "404"],
     parts: ["header", "footer"],
     postTypes: [{
       name: "property", label: "Property",
@@ -170,12 +170,29 @@ function buildThemeZip(name) {
       { key: "price", label: "Price", type: "number", postTypes: ["property"], required: true },
       { key: "area", label: "Area", type: "number", postTypes: ["property"] },
     ],
+    // A theme-owned table (L3). `translatable` names the fields that move into
+    // `{table}_i18n` once the site serves a second language; while it serves
+    // one they are ordinary main-table columns, which is why the fixture below
+    // can write a row once and read it back in both places.
+    tables: [{
+      name: "listing",
+      label: "Listing",
+      translatable: ["title"],
+      fields: [
+        { key: "title", label: "Title", type: "text", required: true },
+        { key: "price", label: "Price", type: "number" },
+      ],
+    }],
     routes: [
-      { path: "/properties", template: "archive-property", query: { type: "property", limit: 12 } },
+      { path: "/properties", template: "archive-property", query: { type: "property", limit: 12, as: "properties" } },
       { path: "/properties/:slug", template: "single-property", resolve: { type: "property", by: "slug" } },
+      // Routes that read a theme-owned table instead of the post store.
+      { path: "/shop", template: "archive-listing", resolve: { table: "listing" } },
+      { path: "/shop/:slug", template: "single-listing", resolve: { table: "listing", by: "slug" } },
     ],
     adminMenus: [
       { id: "properties", label: "Properties", screen: "content-list", args: { type: "property" } },
+      { id: "listings", label: "Listings", screen: "table-list", args: { table: "listing" } },
       { id: "theme-options", label: "Theme Options", screen: "theme-settings" },
     ],
     // Block names are plain identifiers, not namespaced paths: the platform
@@ -226,6 +243,25 @@ function buildThemeZip(name) {
 
   const notFound = `<!doctype html><html><head><title>Not Found</title></head><body><h1>404 — custom template</h1></body></html>`;
 
+  // These two render a theme-owned table. Note the item link uses `{{p.url}}`,
+  // which the router builds from the *route's own path* — a route exists
+  // because the theme owns that URL space, so a hard-coded `/blog/<slug>` would
+  // send every visitor of `/shop` to a 404.
+  const archiveListing = `{{@extends "base"}}{{@section "content"}}
+<h1>Shop</h1>
+{{#if posts}}
+<ul class="shop">
+{{#each posts as p}}<li data-slug="{{p.slug}}"><a href="{{p.url}}">{{p.title}}</a></li>{{/each}}
+</ul>
+{{else}}<p class="empty">Nothing for sale.</p>{{/if}}
+<p class="count">Total: {{len(posts)}}</p>
+{{/section}}`;
+
+  const singleListing = `{{@extends "base"}}{{@section "content"}}
+{{#if post}}<article data-slug="{{post.slug}}"><h1>{{post.title}}</h1><p class="price">{{number(post.price)}}</p></article>
+{{else}}<h1>Listing not found</h1>{{/if}}
+{{/section}}`;
+
   const index = `{{@extends "base"}}{{@section "content"}}
 <h1>Welcome</h1>
 {{#each posts as post}}<article><a href="{{post.url}}">{{post.title}}</a></article>{{/each}}
@@ -237,6 +273,8 @@ function buildThemeZip(name) {
     "templates/index.html": strToU8(index),
     "templates/archive-property.html": strToU8(archive),
     "templates/single-property.html": strToU8(single),
+    "templates/archive-listing.html": strToU8(archiveListing),
+    "templates/single-listing.html": strToU8(singleListing),
     "templates/404.html": strToU8(notFound),
   };
   return zipSync(files);
@@ -277,6 +315,13 @@ async function main() {
     "DELETE FROM theme_routes WHERE declared_by_theme='realestate'",
     "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='realestate'",
     "DELETE FROM theme_blocks WHERE declared_by_theme='realestate'",
+    "DELETE FROM theme_table_defs WHERE theme_name='realestate'",
+    // `theme_table_defs` deliberately survives theme deactivation (§3.4 — the
+    // rows must stay reachable after a switch), so nothing removes this fixture
+    // for us. Leaving it behind pollutes the shared local D1 that the other
+    // suites read: a site-level "which tables exist" listing picks it up.
+    "DROP TABLE IF EXISTS theme_realestate_listing_i18n",
+    "DROP TABLE IF EXISTS theme_realestate_listing",
   ]) {
     try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
   }
@@ -327,8 +372,9 @@ async function main() {
   check("post types applied", actBody.applied.postTypes, 1);
   check("taxonomies applied", actBody.applied.taxonomies, 1);
   check("fields applied", actBody.applied.fields, 2);
-  check("routes applied", actBody.applied.routes, 2);
-  check("admin menus applied", actBody.applied.adminMenus, 2);
+  check("routes applied", actBody.applied.routes, 4);
+  check("admin menus applied", actBody.applied.adminMenus, 3);
+  check("theme-owned table applied", actBody.applied.tables, 1);
   check("blocks applied", actBody.applied.blocks, 1);
   check("settings applied", actBody.applied.settings, 2);
 
@@ -340,8 +386,9 @@ async function main() {
 
   const menuRes = await req(worker, env, "/api/v1/theme/menus", { headers: authHeaders });
   const menuBody = await menuRes.json();
-  check("admin menus readable", menuBody.items.map((x) => x.menu_id).sort(), ["properties", "theme-options"]);
+  check("admin menus readable", menuBody.items.map((x) => x.menu_id).sort(), ["listings", "properties", "theme-options"]);
   check("admin menu args parsed", menuBody.items.find((x) => x.menu_id === "properties").args, { type: "property" });
+  check("generated table menu names its table", menuBody.items.find((x) => x.menu_id === "listings").args, { table: "listing" });
 
   // -- 4. create CPT content + custom fields -------------------------------
   console.log("\n4. Custom post type content + custom fields");
@@ -406,6 +453,71 @@ async function main() {
     "admin assets are not rendered by the theme",
     adminRes.headers.get("X-CFPress-Template") === null
   );
+
+  // -- 5c. theme routes: declared template, table-backed routes, misses ------
+  //
+  // This section is as much about "a declaration means something" as about
+  // routing. Three things were validated and then ignored:
+  //   * `routes[].resolve.table` — checked against `tables[]` at install and
+  //     never read, so a table-backed route silently listed nothing;
+  //   * `routes[].template` — the architecture test even asserts the name is
+  //     one of the theme's `templates[]`, yet the renderer picked the template
+  //     purely from `kind`/`postType`;
+  //   * the "route matched but found nothing" branch, which could never fire:
+  //     `kind` only became "single" *after* a row had been found, so a miss
+  //     answered with the archive listing and HTTP 200.
+  console.log("\n5c. Theme routes: declared template, table-backed routes, misses");
+
+  // Write a row through the admin API — the same facade the public route reads
+  // through. If the two ever disagreed about what "listing" means, this is the
+  // assertion that would catch it.
+  const rowRes = await req(worker, env, "/api/v1/theme-tables/listing", {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ slug: "oak-desk", title: "Oak Desk", price: 1200 }),
+  });
+  const rowBody = await rowRes.json();
+  check("row saved through the admin facade", rowRes.status, 201);
+  check("saved row carries the declared field", rowBody.row?.title, "Oak Desk");
+
+  // The listing route. `X-CFPress-Template` is the proof that the route's own
+  // `template` was used: with no post type to derive from, the hierarchy can
+  // only ever reach `archive` then `index` — neither of which is shipped here.
+  const shopRes = await req(worker, env, "/en/shop");
+  const shopHtml = await shopRes.text();
+  check("table route uses the declared template, not the hierarchy",
+    shopRes.headers.get("X-CFPress-Template"), "archive-listing");
+  check("table route status", shopRes.status, 200);
+  checkTruthy("table route lists the row", shopHtml.includes("Oak Desk"));
+  checkTruthy("table route counts rows with a helper", shopHtml.includes("Total: 1"));
+  checkTruthy("row link is built from the route path, not /blog/",
+    shopHtml.includes('href="/en/shop/oak-desk"'));
+
+  // The single route, through the same table.
+  const oneRes = await req(worker, env, "/en/shop/oak-desk");
+  const oneHtml = await oneRes.text();
+  check("table single uses the declared template", oneRes.headers.get("X-CFPress-Template"), "single-listing");
+  checkTruthy("table single renders the row", oneHtml.includes("Oak Desk"));
+  checkTruthy("table single formats the numeric field", oneHtml.includes("1,200"));
+
+  // A miss is a 404, not the archive with a 200.
+  const missRes = await req(worker, env, "/en/shop/no-such-listing");
+  const missHtml = await missRes.text();
+  check("a route that resolves one row 404s on a miss", missRes.status, 404);
+  check("miss renders the 404 template", missRes.headers.get("X-CFPress-Template"), "404");
+  checkTruthy("miss body is the 404 page", missHtml.includes("404 — custom template"));
+
+  // The post-backed routes must still behave, and their item links must also
+  // come from their own path.
+  const propRes = await req(worker, env, "/en/properties/sea-view-villa");
+  check("post-backed route still resolves", propRes.headers.get("X-CFPress-Template"), "single-property");
+  const propMiss = await req(worker, env, "/en/properties/no-such-property");
+  check("post-backed route 404s on a miss", propMiss.status, 404);
+
+  const listRes = await req(worker, env, "/en/properties");
+  const listHtml = await listRes.text();
+  check("post-backed listing uses its declared template", listRes.headers.get("X-CFPress-Template"), "archive-property");
+  checkTruthy("post-backed listing renders its rows", listHtml.includes("Sea View Villa"));
 
   // -- 6. engine features inside a real rendered page ----------------------
   console.log("\n6. Engine features in production rendering");

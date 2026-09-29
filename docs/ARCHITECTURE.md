@@ -546,7 +546,14 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
   ],
 
   // ---- 前台路由 ----
+  //
+  // `template` 直接指定模板（优先级高于层级）；`resolve` 决定读文章还是读表；
+  // `query.as` 决定列表绑到哪个作用域变量（默认 posts）。三者都会被运行时消费，
+  // 详见 §3.2.2。
   "routes": [
+    { "path": "/products",      "template": "archive-product",
+      "resolve": { "table": "product" },
+      "query":   { "limit": 24, "as": "products" } },
     { "path": "/products/:slug", "template": "product-detail",
       "resolve": { "table": "product", "by": "slug" } }
   ],
@@ -591,6 +598,30 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
 原因：`blocks[].name` 走的是 `IDENT_RE = /^[a-z][a-z0-9_-]{0,63}$/i`，与 `postTypes[].name` / `taxonomies[].name` / `fields[].key` 同一条规则。这个字段会落成 `theme_blocks` 表里的一行、并以 `UNIQUE(site_id, name)` 去重，斜杠既不合法也没必要 —— `core/` 前缀表达的是"谁内置的"，而主题区块的来源已经由 `declared_by_theme` 列记录。
 
 **这条规则此前只存在于校验器里、没有写进文档**，是 2026-09 加校验时才被实测暴露出来的：仓库自带的集成测试当时用了 `theme/property-card`。修法是改测试（不是放宽校验），因为**拒绝是正确的**。
+
+#### 3.2.2 前台路由：声明必须被消费（`routes[]`）
+
+`routes[]` 的字段**曾经校验得比用得严**：`resolve.table` 在安装时被检查是否已声明、`template` 被架构测试断言必须是 `templates[]` 的一员，而运行时两个都没读 —— 路由只看 `kind`/`postType` 推模板，只把查询结果绑成固定的 `posts`。三种情况的症状完全一样：**页面渲染成功、HTTP 200、内容是错的**。现在每个字段都有明确消费点，且每一个都在 `tests/theme-integration.test.mjs` 第 5c 段有活断言（把路由改回旧写法会让那一段 12 条断言变红）。
+
+| 字段 | 语义 | 不写 / 不读会怎样 |
+|---|---|---|
+| `template` | **直接指定模板，优先级高于模板层级**（层级仍作为兜底） | 按 `kind`/`postType` 推；表路由没有 post type 可推 → 只能落到泛化的 `archive`/`single` |
+| `resolve.table` | 该路由读**主题自有表**，不是文章 | 只读文章 → 表里的行在前台永远不可见 |
+| `resolve.type` + `by` | 读文章（CPT），`by` 只能是 `slug`/`id` | —— |
+| `query.as` | 列表绑到哪个作用域变量，**默认 `posts`** | 模板写 `{{#each properties}}` 会静默走 `{{else}}` 空分支 |
+
+三条硬规则（`validateManifest` 拒绝安装）：
+
+1. **`resolve` 必须二选一**：`type` 或 `table`。两个都写会被拒 —— 不是洁癖，是路由必须有唯一答案：两条分支都会给 `post` 赋值，后跑的那条静默覆盖前一条。
+2. **`resolve.by` 只能是 `"slug"` / `"id"`**。写成 `"ID"` 会**静默按 slug 读**。
+3. **`query.as` 必须匹配 `SCOPE_NAME_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/`**。比 `IDENT_RE` 紧：模板表达式把标识符 token 化成 `[A-Za-z_$][A-Za-z0-9_$]*`，而 `my-list` 在 JS 里是合法属性名、在模板里却是 `my` 减 `list`（模板**没有算术运算符**）—— 绑定存在，但没有任何模板读得到它。**同一个 `as` 语义在 `{{@query ... as="x"}}` 里已经存在**，两处共用一套拼法，不新造词汇。
+
+两条路由行为约定：
+
+- **"地址指向一个对象、但没找到" 是 404，不是列表页。** 这条以前写不出来：`kind` 只在找到行之后才变成 `"single"`，所以 `!post && kind==="single"` **恒假**，`/products/no-such` 返回**列表页 + 200**。现在用独立的 `wantSingle` 记录"URL 指向一个对象"，与 `post` 解耦。
+- **列表项的链接由路由自身路径拼**，不是硬编码 `/blog/`。路由存在的意义就是主题拥有那段 URL 空间 —— `/writing`、`/products` 的每一项都链到 `/blog/<slug>` 会全部 404。
+
+**表路由与后台读的是同一张表**：`resolveTableForSite()` 放在 `extensions/theme/table-facade.ts`（不是 `api.ts`），因为它有两个必须一致的调用方 —— 管理 API 与前台路由。两份实现早晚会对"本站的 `product` 是哪张表"给出不同答案，症状就是后台列表与前台页面显示不同的行。
 
 ### 3.3 主题自有表：为什么用声明而不是让主题自己建表
 
@@ -852,6 +883,11 @@ export async function findContent(
                           'custom'                 → args.view 必填且必须是相对路径
                           其余 screen              → args 允许为空对象
 - routes[].resolve.table 必须已声明
+- routes[].resolve       必须二选一（type | table），不能都写也不能都不写
+- routes[].resolve.by    只能是 "slug" / "id"（写错会静默按 slug 读）
+- routes[].resolve.type  必须是标识符
+- routes[].template      必须是合法模板名（它现在真的会去选模板）
+- routes[].query         必须是对象；query.as 必须匹配 SCOPE_NAME_RE
 - locales[]             必须是合法语言代码格式
 - 所有 key 前缀           语言包文件里的 key 必须匹配 L2 命名规范（见 §5.5）
 - langs{}               内联语言包：locale 必须是合法代码、value 必须是字符串、
@@ -1169,11 +1205,11 @@ cfpress/
 │   │
 │   ├── extensions/               # ── 扩展层（主题 + 插件）──
 │   │   ├── contract/             # 两层共享的契约
-│   │   │   ├── hooks.ts          # ✅ 已落地：HostHooks 接口 + NULL_HOOKS + 注入槽
-│   │   │   ├── manifest.ts       # ⏳ 批次 4：声明模型
-│   │   │   ├── validation.ts     # ⏳ 批次 4：清单校验（§5.3）
-│   │   │   └── capabilities.ts   # ⏳ 批次 4：能力枚举
-│   │   ├── security.ts           # ✅ 已落地：能力清单 + 清单字段校验 + 内联语言包 + adminMenus 校验
+│   │   │   ├── hooks.ts          # ✅ HostHooks 接口 + NULL_HOOKS + 注入槽 + DECLARABLE_HOOKS
+│   │   │   ├── manifest.ts       # ✅ 词汇表（屏幕/字段类型/保留列/名字正则）+ 声明模型
+│   │   │   ├── validation.ts     # ✅ 安装边界：validateManifest（§5.3）
+│   │   │   └── capabilities.ts   # ✅ 能力枚举 + isCapability() 守卫
+│   │   ├── security.ts           # ✅ 只剩 safeZipPath / sha256
 │   │   ├── theme/
 │   │   │   ├── runtime-declarative.ts  # ✅ 声明式渲染
 │   │   │   ├── runtime-worker.ts       # ✅ L3 沙箱（含 table/* 端点）
@@ -1187,8 +1223,8 @@ cfpress/
 │   │   │   ├── runtime.ts        # ✅ 已落地：hook 注册表 + 运行时装配 + 启用插件时注册菜单
 │   │   │   ├── menus.ts          # ✅ 插件菜单（写一次 site_id='*'）
 │   │   │   ├── packs.ts          # ✅ 插件内联语言包提供者
-│   │   │   ├── hooks.ts          # ⏳ 批次 4：hook 目录拆分
-│   │   │   └── facade.ts         # ⏳ 批次 4：能力门面拆分
+│   │   │   ├── hooks.ts          # ✖ 不再需要：hook 目录统一在 contract/hooks.ts（单一事实源）
+│   │   │   └── facade.ts         # ✖ 不再需要：能力门面就是 runtime.ts 的导出
 │   │
 │   └── shared/                   # 纯工具，无业务依赖
 │       ├── types.ts  crypto.ts  repo.ts  cache.ts  scheduler.ts
@@ -1243,15 +1279,18 @@ cfpress/
 │   ├── _apply-migrations.mjs     # 本地迁移（**别用 wrangler CLI**，见 HANDOVER）
 │   └── run-all.mjs
 ├── scripts/
-│   ├── make-theme.mjs            # ⏳ 批次 4 脚手架
-│   ├── make-plugin.mjs
+│   ├── _scaffold.mjs             # ✅ 脚手架共用件（名字校验 / 写树不覆盖 / 参数解析）
+│   ├── make-theme.mjs            # ✅ 生成主题骨架（刻意不声明 tables[]，见下）
+│   ├── make-plugin.mjs           # ✅ 生成插件骨架
+│   ├── make-table.mjs            # ✅ 生成 tables[] + adminMenus 片段，可 --write 合并
 │   ├── deploy-theme.mjs
 │   └── seed-demo-content.mjs
 ├── docs/
 │   ├── ARCHITECTURE.md           # 本文
-│   ├── I18N.md                   # 多语言详解（从本文 §2 展开）
-│   ├── THEME-DEV.md              # 主题开发指南
-│   ├── PLUGIN-DEV.md             # 插件开发指南
+│   ├── HANDOVER.md               # 交接文档
+│   ├── I18N.md                   # ⏳ 待写（批次 4，从本文 §2 展开）
+│   ├── THEME-DEV.md              # ⏳ 待写（批次 4）
+│   ├── PLUGIN-DEV.md             # ⏳ 待写（批次 4）
 │   └── THEME-ARCHITECTURE-PLAN.md  # 历史方案（保留）
 ├── public/                       # 纯静态资源（favicon 等）
 └── wrangler.jsonc
@@ -1271,7 +1310,7 @@ cfpress/
 | 主题加 `assets/` | CSS/JS 散在模板里 | 主题资源有归属 | ⏳ 待做（批次 2/4） |
 | 主题加 `langs/` | 无 | 多语言必需 | ⏳ 待做（批次 2） |
 | 测试分 `contract/` `integration/` | 全平铺 | 契约 vs 集成，失败时知道查哪 | ⏳ 待做 |
-| 新增 `scripts/make-*.mjs` | 无 | 脚手架（§5.5） | ⏳ 待做（批次 4） |
+| 新增 `scripts/make-*.mjs` | 无 | 脚手架（§5.5） | ✅ **批次 4 已完成**（生成器可被 import，见 §8 批次 4.2） |
 
 > **为什么 `public/admin/` 没有搬到仓库根的 `admin/`**：`wrangler.jsonc` 的
 > `assets.directory` 只接受**一个**目录，而 `/admin/*` 这个 URL 空间必须保留
@@ -1557,7 +1596,7 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
 | 2. `table-list` / `table-edit` 屏幕 | ✅ | `public/admin/js/table-form.js` + `screens/table-list.js` + `screens/table-edit.js` |
 | 2b. `plugin-settings` 屏幕 | ✅ | 批次 3 新增（原清单没列，但插件菜单需要它才有落点），`screens/theme-menu.js` 统一分发 |
 | 3. 插件菜单 | ✅ | `src/extensions/plugin/menus.ts`，写入 `ALL_SITES`（见 §4.4 坑 2） |
-| 4. `extensions/contract/` 补齐 | ⏳ **推迟到批次 4** | 见下方「本轮未做」 |
+| 4. `extensions/contract/` 补齐 | ✅ | 批次 4 完成，见 §8 批次 4.1 |
 
 **本轮未做（明确登记，不静默放行）**
 
@@ -1623,9 +1662,141 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 1. `scripts/make-theme.mjs` / `make-plugin.mjs`
 2. `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md`
 3. 示例主题 `eshop`（作为声明能力的活文档）
+4. `extensions/contract/` 拆分（批次 3 登记的技术债）
+5. 插件自有表（批次 3 登记的技术债）
 
 **验收**
 - `npm run make:theme -- demo` 生成的骨架：`tsc` 过、架构测试过、能激活、能渲染
+
+#### 4.1 已完成：`extensions/contract/` 拆分 + 路由消费契约收口
+
+**拆分**（纯结构调整，行为不变）。`extensions/security.ts` 原本混了三件事，现在按"谁读它"拆开：
+
+| 文件 | 内容 | 为什么单独存在 |
+|---|---|---|
+| `contract/manifest.ts` | 词汇表（屏幕 / 字段类型 / 保留列 / 名字正则）+ 声明模型接口 | **`tests/architecture.test.mjs` 会读这个文件**去检查已装主题有没有用未知屏幕。列表住在校验器里时，唯一的检查办法是抄一份 —— 而抄本会漂移 |
+| `contract/capabilities.ts` | `CAPABILITIES` + `isCapability()` 类型守卫 | 同上；顺带让调用点不再写 `CAPABILITIES.includes(x as Capability)` |
+| `contract/validation.ts` | 安装边界（`validateManifest`） | 只做判断，不定义词汇 |
+| `extensions/security.ts` | 只剩 `safeZipPath` / `sha256` | 名字终于和内容一致 |
+
+**同时修掉了第三个"声明先于运行时"的缺口**（§3.2.2）：`routes[].resolve.table`、`routes[].template`、`query.as`。前两个被校验、被架构测试断言，却从不被读取；第三个根本不存在，于是路由查询结果永远只能叫 `posts`。
+
+**新增的架构守卫**：`DECLARABLE_HOOKS`（可声明 hook 名单）原本是**死代码** —— 插件声明一个拼错的 hook 名照样安装、启用、报告 active，然后什么也不做。名单搬进 `contract/hooks.ts` 后校验器与运行时读同一份，并由 `architecture.test.mjs` 钉住"可声明的 hook 与已实现的 hook 一一对应"。
+
+**验收证据（2026-09-29 实测，连跑两轮一致）**
+
+```
+architecture         15 passed, 0 failed   ← 新增 2 条（DECLARABLE_HOOKS ↔ HOOK_IMPLS）
+manifest-validation  63 passed, 0 failed   ← 新增 9 条（7 条"注入缺陷必须抛错" + 2 条接受）
+admin-menus          43 passed, 0 failed
+admin-spa            15 passed, 0 failed
+template-engine      47 passed, 0 failed
+theme-integration    65 passed, 0 failed   ← 新增 5c 段（表路由 / 模板指定 / 未命中 404 / 链接）
+multisite            74 passed, 0 failed
+i18n                 62 passed, 0 failed
+admin-contract       32 passed, 0 failed
+plugin-hooks         25 passed, 0 failed
+theme-worker         28 passed, 0 failed
+theme-aurora          0 failure(s)
+npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
+```
+
+**反向验证记录（批次 4 新增，逐条注入确认会红）**
+
+| 注入的违规 | 测试的反应 |
+|---|---|
+| 关掉 `routes[].template` 的模板名校验 | ✅ `manifest-validation` FAIL |
+| 关掉 `resolve` 的"二选一"校验 | ✅ `manifest-validation` FAIL ×2 |
+| 关掉 `resolve.type` 的标识符校验 | ✅ `manifest-validation` FAIL |
+| 关掉 `resolve.by` 的枚举校验 | ✅ `manifest-validation` FAIL |
+| 关掉 `query.as` 的作用域名校验 | ✅ `manifest-validation` FAIL |
+| 关掉 `query` 的对象校验 | ✅ `manifest-validation` FAIL |
+| 把路由改回改动前的写法（整段） | ✅ `theme-integration` FAIL ×12 |
+| 让语言开关谎报 `created_i18n_tables: []` | ✅ `i18n` FAIL |
+
+> ⚠️ **本轮又踩到一次"断言随运行顺序变化"。** `theme-integration` 的夹具声明了 `tables[]`，
+> 而 `theme_table_defs` **按设计不随主题停用消失**，于是它留下的注册行让 `i18n` 里一条
+> **站点级**的 `created_i18n_tables` 相等断言多出一项 —— 单跑绿、按 `npm test` 顺序跑红。
+> 修法是把断言收窄到自己那张表，**收窄后再反向验证一次**（谎报 `[]` 仍会红）。
+> 这已经是同一个坑的第三次：**共享 D1 上的断言必须按 owner 收窄，不能用全局计数。**
+
+#### 4.2 已完成：脚手架（`scripts/make-*.mjs`）+ `tests/scaffold.test.mjs`
+
+**生成器是一个承诺**：「从这里开始，你不可能把形状弄错」。这个承诺在没有东西检查它的时候
+一文不值 —— 骨架恰好由一堆**会静默失败**的构造组成（`{{len(posts)}}` 的括号写法、
+`{{{post.html}}}` 的三花括号、`@section` 插槽、必须存在的 `@include` 目标、
+决定碰撞胜负的语言包前缀），没有一条能从空白文件里推出来。
+
+**为什么生成器必须是可 import 的**：本机沙箱**无法 spawn 任何子进程**（`spawnSync` 一律
+`EBUSY`，与 `tests/run-all.mjs` 报 SKIP 同因）。所以三个生成器都拆成
+`main(argv, io)` + 纯内容构造函数（`themeFiles` / `pluginFiles` / `tableDeclarations`）+
+`isMain()` 守卫，用户可见的错误抛 `CliError` 并转成退出码。
+**只能以命令形式运行的生成器，等于输出永远没被检查过的生成器。**
+
+`tests/scaffold.test.mjs`（68 条）用四重独立检查守住这个承诺：
+
+| # | 检查 | 用的什么 |
+|---|---|---|
+| 1 | 生成的清单被**真实**安装边界接受 | `validateManifest`（`contract/validation.ts`） |
+| 2 | 生成的树过**真实**架构规则 | `_extension-rules.mjs` —— 与 `architecture.test.mjs` **同一份函数**，不是副本 |
+| 3 | 每个模板过**真实**模板引擎（有数据 / 无数据各一次） | `renderTemplateSource`（`rendering/template-engine.ts`） |
+| 4 | 每个 `@include`/`@extends` 目标、每个 section 开闭都配得上 | 直接读生成的文件 |
+
+第 2 条之所以共用函数而不是抄一份：**抄本永远先过期**，而且"过了架构测试"这句话就变成了
+声明而非事实。这与 `contract/manifest.ts` 单独存在的理由是同一条。
+
+**它抓到的真实缺陷（这是本节的要点）**
+
+> 骨架的**四个子模板全都漏了 `{{/section}}`**。
+>
+> 引擎判断一个 `{{@section "x"}}` 是**定义**还是**插槽**，靠的是向后扫描有没有配对的
+> `{{/section}}`。漏掉闭合标签 → 子模板的 section 被判定成插槽 → 不进 `@sections` →
+> 布局渲染**空的 `<main>`**。**HTTP 200、零异常、零日志。**
+>
+> 这个缺陷只有在**真的渲染一遍**的时候才会现形。清单校验器说它没问题，架构测试说它没问题。
+
+**由此新增的两条引擎级守卫（都反向验证过）**
+
+| 守卫 | 修什么 | 为什么这么修 |
+|---|---|---|
+| **子模板未闭合 `{{@section}}` 直接抛错** | 上面那个静默空白页 | 猜测有一个**可以证明**的错法：`@extends` 了的文件是子模板，而**子模板永远不提供插槽**。于是"既 `@extends` 又有未闭合 section"不是猜测而是**结构性错误**（`extendsName` 是解析结果，不是文本匹配） |
+| **`@extends` 链的 section 合并顺序** | 三层继承时**最不派生**的根赢 | 原写法「保留第一次写入，只特判 `i === 0`」在两层时正确、三层时反了。仓库里没有嵌套布局，所以一直没暴露 —— 主题作者一试就会拿到祖父的副本。改成从根向子遍历、后来者覆盖 |
+
+**验收证据（2026-09-29 实测）**
+
+```
+architecture         15 passed, 0 failed
+manifest-validation  63 passed, 0 failed
+admin-menus          43 passed, 0 failed
+admin-spa            15 passed, 0 failed
+template-engine      49 passed, 0 failed   ← 新增 2 条（未闭合 section 抛错 / 三层继承最派生者胜）
+scaffold             68 passed, 0 failed   ← 本轮新增，已进 npm test 链
+theme-integration    65 passed, 0 failed
+multisite            74 passed, 0 failed
+i18n                 62 passed, 0 failed
+admin-contract       32 passed, 0 failed
+plugin-hooks         25 passed, 0 failed
+theme-worker         28 passed, 0 failed
+theme-aurora          0 failure(s)
+npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
+```
+
+**本轮新增的反向验证（逐条注入确认会红）**
+
+| 注入的违规 | 测试的反应 |
+|---|---|
+| 把骨架的 4 个 `{{/section}}` 删掉 | ✅ `scaffold` FAIL（内容计数）+ 引擎守卫抛出精确消息 —— **两条独立机制同时抓到** |
+| 关掉"子模板未闭合 section"守卫 | ✅ `template-engine` FAIL（且只有这一条） |
+| 恢复旧的 section 合并写法 | ✅ `template-engine` FAIL（且只有这一条） |
+
+> ⚠️ **本轮的第五种假绿：断言描述的是上一轮的产物。**
+> 套件开头 `rmSync(SCRATCH, {force:true})` 在 Windows 上会因 `EBUSY` 失败，而 `force:true`
+> **把错误吞掉**；生成器又刻意拒绝覆盖已存在的文件，于是残留的旧文件全部存活 ——
+> 整套断言描述的是**这一次根本没有写出来的内容**。
+> 修法：**清理之后验证清理成功**（`if (existsSync(dir)) throw`）。
+> 同源的第二条：第一次注入脚本打印 `closers removed: 2 -> 2` —— 它什么都没改，
+> 而我把随后出现的红色当成了证据。**注入后必须断言"确实从 N 变成 M"。**
+> **不能证明自己注入成功的注入，不是注入。**
 
 ---
 

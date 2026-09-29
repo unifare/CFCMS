@@ -191,6 +191,14 @@ async function main() {
   checkThrows("mixing slots and definitions throws", () =>
     parseTemplate('{{@section "a"}}body{{/section}}{{@section "b"}}')
   );
+  // The slot/definition distinction is guessed by scanning ahead for a closer.
+  // When the guess is wrong the page renders blank with a 200 and no error, so
+  // the one case that can be *proved* wrong is rejected instead of guessed:
+  // a file that `@extends` is a child, and a child never provides slots. This
+  // is the skeleton bug the generator shipped, caught structurally.
+  checkThrows("a child that leaves its section unclosed throws", () =>
+    parseTemplate('{{@extends "layout"}}{{@section "content"}}<p>hi</p>')
+  );
   checkThrows("unexpected closer throws", () => parseTemplate("{{/if}}"));
   checkThrows("cyclic extends throws", () =>
     renderTemplateSource('{{@extends "a"}}', {}, { loadTemplate: async (n) => (n === "a" ? '{{@extends "a"}}' : null) })
@@ -221,6 +229,25 @@ async function main() {
       "three-level inheritance: leaf wins",
       await renderTemplateSource(layoutFiles.leaf, {}, { loadTemplate: load }),
       "<b>LEAF</b>"
+    );
+
+    // The case above cannot see the merge order, because its root (`base`) has
+    // only slots and therefore contributes no definitions: whatever the leaf
+    // says wins by default. The inversion is only observable when the root
+    // *also* defines the section and the leaf does not — then the intermediate
+    // layout must win, and the old "keep the first write except for i === 0"
+    // form handed it to the root instead, i.e. the least-derived copy.
+    const deepFiles = {
+      root: '{{@section "main"}}ROOT{{/section}}',
+      mid: '{{@extends "root"}}{{@section "main"}}MID{{/section}}',
+      leaf: '{{@extends "mid"}}{{@section "side"}}LEAF-SIDE{{/section}}',
+    };
+    check(
+      "an intermediate layout beats the root for a section the leaf does not define",
+      await renderTemplateSource(deepFiles.leaf, {}, {
+        loadTemplate: async (n) => (n in deepFiles ? deepFiles[n] : null),
+      }),
+      "MID"
     );
   }
 

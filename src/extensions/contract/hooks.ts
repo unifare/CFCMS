@@ -31,6 +31,32 @@
  */
 import type { Env } from "../../shared/types";
 
+/**
+ * Which hooks a plugin manifest may declare.
+ *
+ * This is a **contract**, not an implementation detail, which is why it lives
+ * here rather than next to `HOOK_IMPLS`. Two readers depend on it and neither
+ * may see the other: the manifest validator (refusing a hook the host will
+ * never call) and the plugin runtime (which supplies the implementation). A
+ * plugin that declares `beforRender` used to install cleanly, enable cleanly,
+ * and then do nothing at all — the runtime filtered unknown names away and
+ * nothing anywhere said so. The typo is now an install error.
+ *
+ * `tests/architecture.test.mjs` pins this list against `HOOK_IMPLS`, so the
+ * contract and the implementation cannot drift apart.
+ */
+export const DECLARABLE_HOOKS = [
+  "beforeRender",
+  "html",
+  "head",
+  "beforeSavePost",
+  "afterSavePost",
+  "beforeDeletePost",
+  "shortcode",
+] as const;
+
+export type DeclarableHook = (typeof DECLARABLE_HOOKS)[number];
+
 /** Context handed to every hook, mirroring the plugin runtime's own shape. */
 export interface HookContext {
   env: Env;

@@ -1,5 +1,10 @@
 import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,latestPosts,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
 import{resolveLocale,langFromUrl,langFromCookie,langCookie}from "./platform/i18n/resolve";import{setPackProviders}from "./platform/i18n/packs";import{themePackProvider}from "./extensions/theme/packs";import{pluginPackProvider}from "./extensions/plugin/packs";
+// A theme-owned table is read through the same facade the admin screens use.
+// `resolveTableForSite` lives there precisely so that this route and the
+// generated admin list cannot disagree about which physical table a logical
+// name means — see the comment on it in `table-facade.ts`.
+import{resolveTableForSite,tableBySlug,tableById,tableList}from "./extensions/theme/table-facade";
 
 let booted=false;
 
@@ -170,53 +175,115 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
    let query:Record<string,unknown>={};
    try{query=JSON.parse(String(route.query_json||"{}"))}catch{/* ignore */}
 
-   // A route may resolve a single object (by slug/id) before rendering.
-   let post:any=null,kind:"single"|"archive"="archive",postType:string|undefined;
-   const resolve=route.resolve_json?(()=>{try{return JSON.parse(String(route.resolve_json))}catch{return null}})():null;
-   if(resolve&&resolve.type){
-     postType=String(resolve.type);
-     const by=resolve.by==="id"?"id":"slug";
-     const value=rt.params.slug||rt.params.id||Object.values(rt.params)[0];
-     if(value){
-       post=await env.DB.prepare(
-         `SELECT p.*,t.locale,t.title,t.excerpt,t.content FROM posts p JOIN post_translations t ON t.post_id=p.id
-          WHERE p.site_id=? AND p.type=? AND p.${by==="id"?"id":"slug"}=? AND t.locale=? AND p.status='published' LIMIT 1`
-       ).bind(siteId,postType,value,locale).first<any>();
-       if(!post){kind="archive";}
-       else kind="single";
-     } else {
-       // No capture for this route -> it is a listing even if it declares a type.
-       kind="archive";
-     }
-   }
-   // Without an explicit resolver, infer the type from the route's first segment.
-   if(!postType){
-     const pt=await findPostTypeBySlug(env,String(rp.split("/")[0]),siteId);
-     if(pt)postType=pt.name;
-   }
+  // A route may resolve one object (by slug/id) or list many — from either the
+  // post store or a theme-owned table.
+  let post:any=null,kind:"single"|"archive"="archive",postType:string|undefined;
+  let rows:any[]=[];
+  // "This URL addressed one specific object" is tracked separately from `post`.
+  // The two used to be conflated: `kind` only became "single" *after* a row had
+  // been found, so the `!post && kind==="single"` guard that used to sit below
+  // could never fire and `/products/no-such-slug` answered with the archive
+  // listing and HTTP 200. A miss and a listing are different answers, and only
+  // the router is in a position to tell them apart.
+  let wantSingle=false;
+  const resolve=route.resolve_json?(()=>{try{return JSON.parse(String(route.resolve_json))}catch{return null}})():null;
+  const capture=rt.params.slug||rt.params.id||Object.values(rt.params)[0];
 
-   // Run the route's declarative query to populate `posts` for listings.
-   let rows:any[]=[];
-   if(kind==="archive"){
-     const q:Record<string,string|number>={...query,locale:String(query.locale??locale)};
-     if(postType&&!q.type)q.type=postType;
-     rows=await runThemeQuery(env,q,{locale,post} as Record<string,unknown>,siteId);
-   }
+  // A route may resolve rows of a theme-owned table instead of posts (§3.4).
+  //
+  // This is what makes a declared table reachable on the front end. The table
+  // is looked up by its *logical* name through the same facade the generated
+  // admin screens use, so the shop front and the admin list can never disagree
+  // about which physical table "product" means — two copies of that resolution
+  // is exactly how the two views would drift apart.
+  const resolveTable=resolve?.table?String(resolve.table):"";
+  if(resolveTable){
+    const def=await resolveTableForSite(env,siteId,resolveTable);
+    // A capture means the URL named one row, so a miss is a 404 — whether or
+    // not the table itself could be found.
+    if(capture)wantSingle=true;
+    if(def&&capture){
+      post=resolve.by==="id"
+        ?await tableById(env,def,String(capture),locale)
+        :await tableBySlug(env,def,String(capture),locale);
+      if(post)kind="single";
+    }
+    if(def&&!post)rows=await tableList(env,def,{locale,limit:Number(query.limit??50)||50});
+  }
 
-   const r=await renderPage(env,{
-     siteId,locale,path:u.pathname,kind,postType,slug:rt.params.slug,
-     // Title precedence: the resolved object, then the title the theme gave the
-     // route, then the template name. Never fall back to the raw query `type` —
-     // that is an internal slug ("post"), and leaking it heads the page "post".
-     title:post?.title||String(route.title||route.template||"Archive"),
-     description:post?.excerpt||undefined,post:post??undefined,
-     extra:{
-       route:{path:route.path,params:rt.params,query},
-       posts:rows.map(p=>({...p,url:`/${locale}/blog/${p.slug}`})),
-     }
-   },request);
-   if(!post&&kind==="single")return respond(r.html,"404",404);
-   return respond(r.html,r.template,r.status);
+  if(resolve&&resolve.type){
+    postType=String(resolve.type);
+    const by=resolve.by==="id"?"id":"slug";
+    if(capture){
+      wantSingle=true;
+      post=await env.DB.prepare(
+        `SELECT p.*,t.locale,t.title,t.excerpt,t.content FROM posts p JOIN post_translations t ON t.post_id=p.id
+         WHERE p.site_id=? AND p.type=? AND p.${by==="id"?"id":"slug"}=? AND t.locale=? AND p.status='published' LIMIT 1`
+      ).bind(siteId,postType,capture,locale).first<any>();
+      if(post)kind="single";
+    }
+    // No capture for this route -> it is a listing even if it declares a type.
+  }
+
+  // A route that named one object and found nothing renders the 404 template.
+  // Doing it here rather than after the render avoids building a whole archive
+  // page only to discard it and answer 404 with a listing in the body.
+  if(wantSingle&&!post){
+    const miss=await renderPage(env,{siteId,locale,path:u.pathname,kind:"404",title:"Not Found"},request);
+    return respond(miss.html,miss.template,404);
+  }
+
+  // Without an explicit resolver, infer the type from the route's first segment.
+  if(!postType){
+    const pt=await findPostTypeBySlug(env,String(rp.split("/")[0]),siteId);
+    if(pt)postType=pt.name;
+  }
+
+  // Run the route's declarative query to populate the listing variable. A table
+  // route already filled `rows` from its own table; running the post query on
+  // top would replace them with an empty list.
+  if(kind==="archive"&&!resolveTable){
+    const q:Record<string,string|number>={...query,locale:String(query.locale??locale)};
+    // `as` names the binding, it is not a query parameter.
+    delete q.as;
+    if(postType&&!q.type)q.type=postType;
+    rows=await runThemeQuery(env,q,{locale,post} as Record<string,unknown>,siteId);
+  }
+
+  // Which scope variable the listing lands in.
+  //
+  // `query.as` is the route-level spelling of the `as` attribute on
+  // `{{@query ... as="x"}}` — one concept, one name, so a theme author learns it
+  // once. The default `posts` is what every existing theme template iterates.
+  // Before this existed the binding was hard-coded, so a template written for a
+  // `property` listing (`{{#each properties}}`) silently rendered its `{{else}}`
+  // empty branch with HTTP 200 — the shape of failure this whole area produces.
+  const listVar=String(query.as??"posts")||"posts";
+
+  // Item links are built from the route's own path, never from a hard-coded
+  // `/blog/`. A route exists precisely because the theme owns that URL space,
+  // so linking every row to `/blog/<slug>` sent each visitor of `/writing` or
+  // `/products` to a 404. Static segments are kept; captures are not.
+  const routeBase="/"+rp.split("/").filter(s=>s&&!s.startsWith(":")).join("/");
+  const itemUrl=(slug:string)=>`/${locale}${routeBase==="/"?"":routeBase}/${slug}`;
+
+  const r=await renderPage(env,{
+    siteId,locale,path:u.pathname,kind,postType,slug:rt.params.slug,
+    // The template the route named outranks the hierarchy. Without this a table
+    // route has no post type to derive a name from and can only reach the
+    // generic `archive`/`single`.
+    template:String(route.template||"")||undefined,
+    // Title precedence: the resolved object, then the title the theme gave the
+    // route, then the template name. Never fall back to the raw query `type` —
+    // that is an internal slug ("post"), and leaking it heads the page "post".
+    title:post?.title||String(route.title||route.template||"Archive"),
+    description:post?.excerpt||undefined,post:post??undefined,
+    extra:{
+      route:{path:route.path,params:rt.params,query},
+      [listVar]:rows.map(p=>({...p,url:itemUrl(String(p.slug??""))})),
+    }
+  },request);
+  return respond(r.html,r.template,r.status);
  }
 
  // Built-in post permalink

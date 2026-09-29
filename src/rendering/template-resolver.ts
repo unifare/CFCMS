@@ -17,6 +17,22 @@ export interface TemplateContext {
   taxonomy?: string;
   /** Term slug for taxonomy archives. */
   term?: string;
+  /**
+   * An explicitly named template, which wins over the entire hierarchy.
+   *
+   * A theme route names the template it wants (`routes[].template`). Until this
+   * existed the field was *validated* — the architecture test even asserts it
+   * is one of the theme's declared `templates[]` — but never read, so a route
+   * rendered whatever the hierarchy derived from `kind`/`postType`. That
+   * happened to agree for `/products/:slug` (both sides say `single-product`)
+   * and would silently disagree for anything else, including every route that
+   * resolves a theme-owned table, where there is no post type to derive from
+   * and the hierarchy can only reach the generic `archive`/`single`.
+   *
+   * The hierarchy still follows as a fallback, so naming a template that does
+   * not exist degrades to the derived one instead of rendering nothing.
+   */
+  template?: string;
 }
 
 /**
@@ -28,6 +44,10 @@ export function templateCandidates(ctx: TemplateContext): string[] {
   const push = (name: string) => {
     if (!out.includes(name)) out.push(name);
   };
+
+  // An explicit name outranks every derived candidate. It is checked first and
+  // then kept in the list, so the reason it was chosen is visible in `tried`.
+  if (ctx.template) push(ctx.template);
 
   switch (ctx.kind) {
     case "front":

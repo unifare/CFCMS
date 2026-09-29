@@ -286,7 +286,15 @@ async function main() {
     body: JSON.stringify({ code: "zh-CN", name: "Simplified Chinese", native_name: "简体中文" }),
   })).json();
   check("locale enabled", en.ok, true);
-  check("the switch created the translation table", en.created_i18n_tables, [I18N_TABLE]);
+  // Same scoping reason as `table is registered` above: the switch walks
+  // *every* table the site knows about, so this is a site-wide list and a
+  // sibling suite's leftover declaration would appear in it. Filtering to our
+  // own table keeps the assertion exactly as strong — it still fails if the
+  // mechanism does not run, or runs twice for the same table — while making the
+  // result independent of which suite ran before this one.
+  check("the switch created the translation table",
+    en.created_i18n_tables.filter((t) => t === I18N_TABLE), [I18N_TABLE]);
+
   checkTruthy("translation table now exists", tableNames().includes(I18N_TABLE));
 
   const after = await (await req(worker, env, "/api/v1/i18n/locales", { headers: auth })).json();

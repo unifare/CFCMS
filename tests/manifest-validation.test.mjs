@@ -47,7 +47,7 @@ function bad(name, detail) {
 async function loadSecurity() {
   const esbuild = require("esbuild");
   const out = await esbuild.build({
-    entryPoints: [join(root, "src/extensions/security.ts")],
+    entryPoints: [join(root, "src/extensions/contract/validation.ts")],
     bundle: true,
     format: "esm",
     target: "es2022",
@@ -208,6 +208,67 @@ rejects(
     ],
   }),
   "duplicate route path"
+);
+
+// -- a route's `resolve` / `template` / `query.as` must mean something -------
+//
+// These three were validated more loosely than they were used: `resolve.table`
+// was checked at install and never read, `routes[].template` was checked
+// against `templates[]` by the architecture test and never selected a template,
+// and the query result was bound to a hard-coded `posts` no matter what the
+// route said. Every one of those produced the same symptom — a page that
+// renders, returns 200, and shows the wrong content — so each hole gets a case
+// here, and each has a live assertion in `theme-integration.test.mjs`.
+rejects(
+  v,
+  validTheme({ routes: [{ path: "/p", template: "../escape" }] }),
+  "route template name can leave the theme package"
+);
+rejects(
+  v,
+  validTheme({ routes: [{ path: "/p", template: "single", resolve: {} }] }),
+  "resolve declares neither type nor table  ← the router would read nothing"
+);
+rejects(
+  v,
+  validTheme({
+    tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }],
+    routes: [{ path: "/p", template: "single", resolve: { type: "product", table: "product" } }],
+  }),
+  "resolve declares both type and table  ← only one can decide what the route reads"
+);
+rejects(
+  v,
+  validTheme({ routes: [{ path: "/p", template: "single", resolve: { type: "Not An Identifier" } }] }),
+  "resolve.type is not an identifier"
+);
+rejects(
+  v,
+  validTheme({ routes: [{ path: "/p/:slug", template: "single", resolve: { type: "post", by: "ID" } }] }),
+  "resolve.by has a silent fallback to slug"
+);
+rejects(
+  v,
+  validTheme({ routes: [{ path: "/p", template: "single", query: { type: "post", as: "my-list" } }] }),
+  "query.as is not a name the expression parser can tokenise"
+);
+rejects(
+  v,
+  validTheme({ routes: [{ path: "/p", template: "single", query: ["type"] }] }),
+  "query is an array, not an object"
+);
+accepts(
+  v,
+  validTheme({ routes: [{ path: "/p", template: "single", query: { type: "post", as: "properties" } }] }),
+  "query.as naming a real scope variable"
+);
+accepts(
+  v,
+  validTheme({
+    tables: [{ name: "product", fields: [{ key: "name", type: "text" }] }],
+    routes: [{ path: "/p/:slug", template: "single", resolve: { table: "product", by: "slug" } }],
+  }),
+  "route resolving a declared table by slug"
 );
 rejects(
   v,

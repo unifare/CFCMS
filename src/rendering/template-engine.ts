@@ -650,7 +650,7 @@ export function parseTemplate(src: string): ParsedTemplate {
   const ctx = { extendsName: null, sections: {} as Record<string, TplNode[]>, currentSection: null };
   const { nodes, stop } = parseNodes(st, [], ctx);
   if (stop) throw new TemplateError(`Unclosed block: ${stop}`);
-  validateSections(nodes, ctx.sections);
+  validateSections(nodes, ctx.sections, ctx.extendsName);
   const parsed: ParsedTemplate = { nodes, extendsName: ctx.extendsName, sections: ctx.sections };
   if (parseCache.size > 500) parseCache.clear();
   parseCache.set(src, parsed);
@@ -662,8 +662,17 @@ export function parseTemplate(src: string): ParsedTemplate {
  * layout. A template that mixes both forms, or that emits an unknown section
  * name, is almost always a typo — catch it here rather than silently emitting
  * an empty page.
+ *
+ * `extendsName` is what makes the slot/definition distinction decidable. The
+ * parser guesses by scanning ahead for a matching `{{/section}}`, and when the
+ * guess is wrong the failure is invisible: an unclosed section in a child reads
+ * as a slot, contributes nothing to `@sections`, and the layout renders its slot
+ * empty — HTTP 200, no exception, a blank page. But a child that `@extends`
+ * *cannot* be a layout, so "this file extends something and still has slots" is
+ * not a style problem, it is proof the closer is missing. That is a fact about
+ * the file, not a text match, so it is safe to reject.
  */
-function validateSections(nodes: TplNode[], defined: Record<string, TplNode[]>): void {
+function validateSections(nodes: TplNode[], defined: Record<string, TplNode[]>, extendsName: string | null): void {
   const slots: string[] = [];
   const walk = (list: TplNode[]) => {
     for (const n of list) {
@@ -685,6 +694,12 @@ function validateSections(nodes: TplNode[], defined: Record<string, TplNode[]>):
   // A file may not be both a child (defines sections) and a layout (has slots),
   // and a slot must correspond to something a child could provide.
   const hasDefinitions = Object.keys(defined).length > 0;
+  if (slots.length > 0 && extendsName) {
+    throw new TemplateError(
+      `Template @extends "${extendsName}" but leaves section(s) unclosed: ${slots.join(", ")} — ` +
+        `a child defines sections and never provides slots, so {{/section}} is missing`
+    );
+  }
   if (slots.length > 0 && hasDefinitions) {
     throw new TemplateError(
       `Template mixes section slots (${slots.join(", ")}) with section definitions — a file is either a layout or a child, not both`
@@ -813,10 +828,18 @@ async function renderParsed(parsed: ParsedTemplate, scope: Scope, opts: RenderOp
     chain.push(current);
   }
   // Merge sections: the most-derived definition of each name wins.
+  //
+  // `chain` is ordered child-first, so walk it *backwards* (root first) and let
+  // every later write overwrite. That puts the child last, which is the one that
+  // must win. The previous form kept the first write instead and only special-
+  // cased `i === 0`, so with three levels — `base` -> `layout` -> `single` — the
+  // *root's* section beat the intermediate one, i.e. the least-derived won.
+  // Nothing in the repo nests layouts yet, which is exactly why it went
+  // unnoticed; a theme author trying it would have got the grandparent's copy.
   const merged: Record<string, TplNode[]> = {};
   for (let i = chain.length - 1; i >= 0; i--) {
     for (const [name, nodes] of Object.entries(chain[i].sections)) {
-      if (i === 0 || !(name in merged)) merged[name] = nodes;
+      merged[name] = nodes;
     }
   }
   const rootScope = Object.create(scope) as Scope;
