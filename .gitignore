@@ -24,6 +24,11 @@ theme-previews/
 *.p12
 *.pfx
 
+# Local deploy config: wrangler.jsonc with this account's D1 / KV ids filled in.
+# The committed wrangler.jsonc keeps REPLACE_WITH_* placeholders so a public
+# clone does not publish account-scoped resource ids. Deploy with `-c`.
+wrangler.local.jsonc
+
 # Editor / OS noise
 .vscode/
 .idea/
