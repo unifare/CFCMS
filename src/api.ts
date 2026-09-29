@@ -1083,7 +1083,17 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
     const rows=await env.DB.prepare("SELECT * FROM plugin_installs ORDER BY title").all();
     const runtime=await pluginRuntimeStatus(env).catch(()=>[]);
     const wired=Object.fromEntries(runtime.map(r=>[r.name,r.hooks]));
-    return ok({items:((rows.results as any[])??[]).map(r=>({...r,hooks_wired:wired[r.name]??[]}))});
+    return ok({items:((rows.results as any[])??[]).map(r=>{
+      // The manifest is stored as a JSON string; the admin SPA renders plugin
+      // pages and channel forms straight from the declaration, so the two
+      // arrays it needs are surfaced parsed rather than left for every caller
+      // to JSON.parse. Nobody read the raw string — it was shipped but unusable.
+      let m:any={};try{m=JSON.parse(String(r.manifest||"{}"))}catch{}
+      return {...r,manifest:m,
+        adminPages:Array.isArray(m.adminPages)?m.adminPages:[],
+        channels:Array.isArray(m.channels)?m.channels:[],
+        hooks_wired:wired[r.name]??[]};
+    })});
   }
   const pm=path.match(/^extensions\/plugins\/([^/]+)\/(enable|disable)$/);
   if(pm&&method==="POST"){

@@ -27,6 +27,16 @@ export const state = {
   themeMenus: [],
   /** Menus contributed by enabled plugins. Install-wide, so they show on every site. */
   pluginMenus: [],
+  /**
+   * Installed plugins with their manifests, as the API returns them.
+   *
+   * A plugin's `adminPages[]` and `channels[]` are what the plugin-declared
+   * screens render from, so this is the page declarations' single source of
+   * truth in the SPA — the same list the Plugins screen shows. Kept here rather
+   * than fetched per screen so a disabled plugin stops offering its pages and
+   * its channels in the same breath as the enable toggle.
+   */
+  plugins: [],
   /** The unified menu list (theme + plugin + core) the API returned. */
   adminMenus: [],
   /** The same rows grouped by owner, for the sidebar's section headings. */
@@ -115,6 +125,13 @@ export async function loadContext() {
   }
   state.themeMenus = state.adminMenus.filter((m) => m.owner_type === "theme");
   state.pluginMenus = state.adminMenus.filter((m) => m.owner_type === "plugin");
+  // Installed plugins with their declarations. The plugin-page screen and the
+  // channel settings form render from this; the API parses the manifest, so
+  // adminPages[] / channels[] arrive as real arrays.
+  try {
+    const d = await api("extensions/plugins");
+    state.plugins = Array.isArray(d.items) ? d.items : [];
+  } catch { state.plugins = []; }
   try { state.fields = (await api(scoped("theme/fields"))).items ?? []; } catch { state.fields = []; }
   // The languages this site serves. The editor needs them to offer a locale
   // picker and a language-version bar, and to know which locale a new piece of

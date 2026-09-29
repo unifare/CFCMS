@@ -137,10 +137,11 @@ export function pageHead({ title, sub = "", actions = "", crumbs = null }) {
 }
 
 /**
- * Resolve a page name to a screen. Four prefixes are dynamic:
+ * Resolve a page name to a screen. Five prefixes are dynamic:
  * `cpt:<name>` (a theme-declared post type), `menu:<id>` (a declared admin
- * menu), and the two table pages — `table:<table>` for the list and
- * `table-edit:<table>[:<slug>]` / `table-new:<table>` for the form.
+ * menu), the two table pages — `table:<table>` for the list and
+ * `table-edit:<table>[:<slug>]` / `table-new:<table>` for the form — and
+ * `plugin-page:<id>` (a plugin-declared page, ARCHITECTURE.md §5.3).
  *
  * The table pages use three distinct prefixes rather than one prefix plus an
  * optional segment. An earlier version used `table:<table>[:<slug>]`, which
@@ -166,6 +167,12 @@ async function renderScreen(c, page) {
   }
   if (page.startsWith("table:")) {
     return screens.get("table-list")(c, page.slice("table:".length) || null);
+  }
+  if (page.startsWith("plugin-page:")) {
+    // A plugin-declared admin page. The id is the manifest's own `adminPages[].id`,
+    // validated at install time to exist — so a page that cannot be found here
+    // means the plugin was disabled after its menu was written, not a bad link.
+    return screens.get("plugin-page")(c, page.slice("plugin-page:".length) || null);
   }
   const screen = screens.get(page);
   if (!screen) {

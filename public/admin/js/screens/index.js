@@ -25,6 +25,7 @@ import account from "./account.js";
 import menuConfig from "./menu-config.js";
 import { tableListScreen } from "./table-list.js";
 import { tableEditScreen } from "./table-edit.js";
+import { pluginPageScreen } from "./plugin-page.js";
 
 export const SCREENS = {
   dashboard,
@@ -54,4 +55,8 @@ export const SCREENS = {
   "theme-menu": themeMenuScreen,
   "table-list": tableListScreen,
   "table-edit": tableEditScreen,
+  // The target of the dynamic `plugin-page:<id>` prefix, resolved by the
+  // shell. Registered directly as well so the structure test renders it;
+  // reached without an id it shows an explanatory panel.
+  "plugin-page": pluginPageScreen,
 };
