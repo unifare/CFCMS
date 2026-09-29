@@ -161,6 +161,44 @@ export async function isMultilingual(env: Env, siteId: string): Promise<boolean>
   return (await siteLocales(env, siteId)).length >= 2;
 }
 
+/**
+ * Resolve the locale a *content* read/write should use, from an optional hint.
+ *
+ * This is the single definition of the content-locale fallback ladder, and it
+ * exists because that ladder had been written out by hand at four call sites
+ * (`api.ts` search, revisions read/write, autosave read/write) — each as
+ * `|| "en"`. Two of them had already been fixed to consult the site default
+ * while the other four still said `"en"`, so the *same* question had two
+ * answers in one file. On a site whose default is `zh-CN`, the stragglers read
+ * and wrote English rows: the multi-language fact was silently lost at exactly
+ * the places nobody re-read.
+ *
+ * The ladder is deliberately the same shape as `table-facade`'s
+ * `COALESCE(tr.x, dflt.x, m.x)` projection:
+ *
+ *   hint (current locale) -> site default -> terminal locale
+ *
+ * Notes on the edges:
+ *  - A hint that is not a well-formed code is ignored rather than rejected —
+ *    a garbage `?locale=` should not 400 a read.
+ *  - Unlike `resolveLocale` (which parses a *request*), this does not decide
+ *    404-vs-fallback: content reads never 404 on a locale miss.
+ *  - It never throws. Callers treat the result as "the best available answer",
+ *    which is why the last resort is the terminal locale and not an error.
+ */
+export async function resolveContentLocale(
+  env: Env,
+  siteId: string,
+  hint?: string | null
+): Promise<string> {
+  const h = typeof hint === "string" ? hint.trim() : "";
+  const enabled = (await siteLocales(env, siteId)).map((l) => l.code);
+  if (h && enabled.includes(h)) return h;
+  const dflt = await siteDefaultLocale(env, siteId);
+  if (enabled.includes(dflt)) return dflt;
+  return TERMINAL_LOCALE;
+}
+
 export async function enabledLocaleCount(env: Env, siteId: string): Promise<number> {
   return (await siteLocales(env, siteId)).length;
 }

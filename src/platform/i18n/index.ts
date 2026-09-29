@@ -16,6 +16,7 @@ export {
   siteLocaleRows,
   siteLocaleCodes,
   siteDefaultLocale,
+  resolveContentLocale,
   isMultilingual,
   enabledLocaleCount,
   siteServesLocale,

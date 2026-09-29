@@ -53,6 +53,21 @@ function walk(dir, exts, out = []) {
 const read = (f) => readFileSync(f, "utf8");
 const rel = (f) => relative(ROOT, f).split(sep).join("/");
 
+/**
+ * Replace comments with same-length whitespace, preserving newlines.
+ *
+ * Guards below must read *code*, not prose: several of them document the very
+ * pattern they forbid, and a guard that fires on its own explanatory comment is
+ * unusable. Deleting comments outright would work too — but then every reported
+ * line number drifts upward by the size of the comments above it, and an
+ * offender list that points at the wrong line trains people to ignore it.
+ */
+function blankComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/^([ \t]*)\/\/.*$/gm, (m, indent) => indent);
+}
+
 // ---------------------------------------------------------------------------
 section("Layer boundaries (docs/ARCHITECTURE.md §7.3)");
 // ---------------------------------------------------------------------------
@@ -247,9 +262,7 @@ const srcFiles = walk(join(ROOT, "src"), [".ts"]);
 const defaultParamOffenders = [];
 for (const f of srcFiles) {
   const src = read(f);
-  // Strip comments first: prose explaining *why* a default was removed would
-  // otherwise match its own example.
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const code = blankComments(src);
   for (const m of code.matchAll(defaultParamRe)) {
     // Confirm the match sits inside a parameter list: the nearest unmatched
     // `(` before it must not be a call to something else. A cheap, reliable
@@ -270,6 +283,95 @@ check(
   defaultParamOffenders.length === 0,
   defaultParamOffenders.length
     ? `make the parameter required and fix the call sites instead:\n       ${defaultParamOffenders.join("\n       ")}`
+    : ""
+);
+
+/**
+ * Rule 4, second form: *fallback expressions* that produce the same effect as a
+ * parameter default.
+ *
+ * The check above matches `siteId = "default"`. It does **not** match
+ * `o.siteId ?? "default"` — and that is not a technicality. When this guard was
+ * first written it caught the `=` spelling and the constant spelling; by
+ * v0.7.1 two `??`/`||` fallbacks had quietly reappeared
+ * (`runtime-declarative.ts` `o.siteId ?? "default"`, `api.ts` `|| "en"`).
+ * **The problem had not been eliminated — it had been pushed from `=` into
+ * `??`.** A guard that matches one spelling of an intent teaches the next
+ * author to use the other.
+ *
+ * So this matches the *operator* forms: `??` and `||` whose right-hand side is
+ * a site/locale literal. Together with the parameter check above, every way of
+ * spelling "silently fall back to the default" is now covered.
+ *
+ * Legitimate carve-outs, and why they do not match:
+ *  - `requestSiteId(url)` returns `DEFAULT_SITE_ID` — but as a `return`, not as
+ *    a `??`/`||` operand. That is the one place the choice has to be made.
+ *  - `x || y` where `y` is a *variable* (e.g. `const next = enabled.find(...)`)
+ *    is not a hardcoded default and does not match.
+ *  - Reading `?site=` and validating with a regex does not match: the fallback
+ *    is inside `requestSiteId`.
+ */
+const fallbackLiteralRe =
+  /(?:^|[^\w$])(?:siteId|locale)\b[^\n]{0,120}?(\?\?|\|\|)\s*(?:"(?:default|en)"|'(?:default|en)'|DEFAULT_SITE_ID)/g;
+
+/**
+ * An exemption marker, deliberately spelled as a comment so it can be grepped
+ * and reviewed. There is exactly one legal site/locale fallback in the
+ * codebase — `resolveSite()` in `platform/sites.ts` — and this is how that file
+ * declares it. Any other caller that wants one must come here and argue for it
+ * in review, rather than quietly typing `?? "default"`.
+ *
+ * Why a marker instead of an exception list in this test: a list here would be
+ * invisible from the source file. A marker lives next to the code it excuses,
+ * so a reader of `sites.ts` sees why it is allowed, and a reader of this test
+ * sees that only one marker is expected.
+ */
+const EXEMPT_MARKER = "ARCH-RULE-EXEMPT: site-default";
+
+const fallbackOffenders = [];
+const exemptFiles = [];
+for (const f of srcFiles) {
+  const raw = read(f);
+  const hasMarker = raw.includes(EXEMPT_MARKER);
+  if (hasMarker) exemptFiles.push(rel(f));
+  // Same comment-stripping rationale as above: this file's own prose quotes
+  // the offending forms, and a guard that trips on its own documentation is a
+  // guard nobody can keep.
+  //
+  // Strip comments by replacing them with *newlines equal to their length*, so
+  // offsets still line up with the original file. Blanking with "" would shift
+  // every reported line number, and a guard that points at the wrong line is a
+  // guard people learn to ignore.
+  const code = blankComments(raw);
+  for (const m of code.matchAll(fallbackLiteralRe)) {
+    if (hasMarker) continue;
+    const line = code.slice(0, m.index).split("\n").length;
+    fallbackOffenders.push(`${rel(f)}:${line}  ${m[0].trim()}`);
+  }
+}
+
+check(
+  "no `siteId`/`locale` fallback to a hardcoded default (`??` / `||`)",
+  fallbackOffenders.length === 0,
+  fallbackOffenders.length
+    ? `resolve the value at its source instead of falling back here; if this is\n` +
+      `       genuinely the one place the choice is made, spell it as an explicit\n` +
+      `       branch in requestSiteId()/resolveSite():\n       ${fallbackOffenders.join("\n       ")}`
+    : ""
+);
+
+// The exemption must stay narrow. Count *markers*, not "files where a marker
+// happened to matter" — an earlier version of this check only counted a marker
+// when the same file also contained an offence, so a second file could claim
+// the exemption for free as long as it had nothing to exempt. A guard whose
+// scope depends on the absence of violations cannot see scope creep.
+check(
+  "the fallback exemption is confined to the documented single site",
+  exemptFiles.length <= 1,
+  exemptFiles.length > 1
+    ? `${exemptFiles.length} files carry "${EXEMPT_MARKER}": ${exemptFiles.join(", ")}.\n` +
+      `       Only resolveSite() in src/platform/sites.ts may. If this is\n` +
+      `       intentional, update §10 rule 4 and this test in the same commit.`
     : ""
 );
 

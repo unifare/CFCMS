@@ -1975,14 +1975,24 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
 4. platform/ 与 rendering/ 不得 import extensions/（要扩展就反转依赖：注入接口）
 
 【多语言】
-5. 任何数据访问函数必须显式接收 locale 与 siteId，不得有默认值
-6. 语言查询的回退顺序：当前语言 → 站点默认 → 空。不抛错
+5. 任何数据访问函数必须显式接收 locale 与 siteId，不得有默认值——
+   **`?? "default"` / `|| "en"` 这类兜底表达式同样违规**，不只是参数默认值。
+   唯一的例外是 `resolveSite()`（它必须给出兜底），用注释标记
+   `ARCH-RULE-EXEMPT: site-default` 声明，且全库只允许一处
+6. 语言查询的回退顺序：当前语言 → 站点默认 → 空。不抛错。
+   内容语言的回退阶梯只能有一份定义（`resolveContentLocale()`），
+   不得在任何调用点写 `|| "en"`——它会让 zh-CN 站点读写英文行
 7. 显式语言的 URL（/en/x）找不到时返回 404，不回退
 8. 语言包 key 必须带前缀：core. / theme.{slug}. / plugin.{slug}.
 9. 界面语言与内容语言是两件事，不得混用
 10. lang_group 可空，「没有它就是自己」只能有一份定义（JS + SQL 共用）
 11. 改了语言开关必须刷新后台上下文（loadContext），否则界面会静默少一块
 12. {table}_i18n 只在站点服务 ≥2 种语言时创建；语言停用后永不 drop、永不清回 NULL
+12b. {table}_i18n **没有 site_id 列**（键是 row_id + locale）。因此对它的任何删除
+   都必须在主表先验 site_id 归属，否则 `WHERE row_id=?` 会跨站误删；
+   删整行与删单语言是两件事，用两个函数表达（`tableDelete` / `tableDeleteTranslation`）
+12c. 主题 Worker 的站点/主题来源（x-cfpress-site / x-cfpress-theme 请求头）是
+   **声明不是事实**：必须校验站点存在、且该主题正是本站激活的主题，缺一即拒
 
 【主题/插件】
 13. 主题不得直接写 SQL，只能用 host.table() facade

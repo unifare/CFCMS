@@ -36,6 +36,7 @@
  */
 import { Env } from "../../shared/types";
 import { setting } from "../../platform/frontend";
+import { listSites } from "../../platform/sites";
 import { siteDefaultLocale, siteLocales } from "../../platform/i18n/locale-registry";
 import { resolveThemeTable } from "./tables";
 import { tableBySlug, tableList, tableSave } from "./table-facade";
@@ -289,21 +290,56 @@ export type ThemeApiCapability = (typeof THEME_API_CAPABILITIES)[number];
  * the theme's declared capabilities decide whether it is allowed.
  *
  * Reached at `/__cfpress/theme-api/*` on the host Worker.
+ *
+ * ## Why `x-cfpress-site` is validated, not trusted
+ *
+ * The host sets this header when it calls into the sandbox, so in the normal
+ * flow it is trustworthy. But this route is matched **before** site resolution
+ * and has no auth of its own — so a caller who reaches the host directly can
+ * set the header to any value and read another site's data. An unvalidated
+ * "which site am I" header is a multi-site hole wearing a trusted name.
+ *
+ * A header is therefore treated as a **claim**: it must name a site that
+ * actually exists. A missing or unknown value is rejected rather than quietly
+ * defaulting — silently serving the default site is the exact failure mode
+ * this rule exists to prevent (see the `activeTheme()` defect, v0.7.0).
  */
 export async function handleThemeApi(env: Env, request: Request): Promise<Response> {
   const url = new URL(request.url);
   const rest = url.pathname.replace(/^\/__cfpress\/theme-api\/?/, "");
   const themeName = request.headers.get("x-cfpress-theme") ?? "";
-  const siteId = request.headers.get("x-cfpress-site") ?? "default";
-
-  const caps = await themeCapabilities(env, themeName);
-  const allow = (cap: ThemeApiCapability) => caps.includes(cap);
 
   const json = (data: unknown, status = 200) =>
     new Response(JSON.stringify(data), {
       status,
       headers: { "Content-Type": "application/json;charset=UTF-8" },
     });
+
+  const claimed = String(request.headers.get("x-cfpress-site") ?? "").trim();
+  if (!claimed) {
+    return json({ error: "site_not_specified", hint: "x-cfpress-site header is required" }, 400);
+  }
+  const known = await listSites(env);
+  if (!known.some((s) => s.id === claimed)) {
+    return json({ error: "unknown_site", site: claimed }, 404);
+  }
+  const siteId = claimed;
+
+  // The theme header is a claim too, and a weaker one than the site: without
+  // this check a caller could name *any installed* theme and inherit its
+  // capabilities. A sandbox may only speak for the theme actually serving this
+  // site — `themeCapabilities()` looks up capabilities by name alone, so the
+  // binding has to happen here.
+  const active = await activeTheme(env, siteId).catch(() => null);
+  if (!active?.name || active.name !== themeName) {
+    return json(
+      { error: "theme_not_active", theme: themeName, site: siteId },
+      403
+    );
+  }
+
+  const caps = await themeCapabilities(env, themeName);
+  const allow = (cap: ThemeApiCapability) => caps.includes(cap);
 
   const deny = () => json({ error: "capability_not_granted", theme: themeName }, 403);
 

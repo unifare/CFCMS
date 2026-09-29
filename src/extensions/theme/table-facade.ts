@@ -335,13 +335,86 @@ export async function tableSave(
   return saved;
 }
 
+/**
+ * Delete a whole row, **including every language's translation of it**.
+ *
+ * This is the "the content no longer exists" operation, not "hide/remove one
+ * language". The two are different requests and the table cannot tell them
+ * apart from an id alone — so they get two functions rather than one with a
+ * flag (`tableDeleteTranslation` below does the locale-scoped one).
+ *
+ * ## Why the sidecar delete looks unscoped (and is not)
+ *
+ * `{table}_i18n` has **no `site_id` column** — it is keyed
+ * `(row_id, locale)` and reaches the site only through `row_id`, whose
+ * ownership lives in the main table. So "scope this by site" cannot be
+ * expressed on the sidecar directly.
+ *
+ * That is a real design constraint, not a licence to skip the check: the main
+ * row is deleted with `AND site_id = ?`, so if `id` belonged to another site
+ * the sidecar now deletes *that* site's translations. The fix is to resolve
+ * ownership **before** touching either table — see the guard below.
+ */
 export async function tableDelete(env: Env, def: ThemeTableDef, id: string): Promise<void> {
+  // Resolve ownership first. `_i18n` has no `site_id` of its own, so this is
+  // the only place the site check can actually happen — and it must happen
+  // before the sidecar delete, or that delete is unreachable-by-scope and the
+  // two halves disagree about which row they are removing.
+  const owned = await env.DB.prepare(
+    `SELECT id FROM ${def.table_name} WHERE id = ? AND site_id = ?`
+  )
+    .bind(id, def.site_id)
+    .first<any>();
+  if (!owned) return; // not this site's row — nothing to delete, nothing to leak
+
+  // Sidecar first: if this fails we abort with the main row still present, so
+  // the operation is retryable and never leaves dangling translations.
   if (def.i18n_table) {
-    await env.DB.prepare(`DELETE FROM ${def.i18n_table} WHERE row_id = ?`).bind(id).run().catch(() => {});
+    await env.DB.prepare(`DELETE FROM ${def.i18n_table} WHERE row_id = ?`)
+      .bind(id)
+      .run()
+      .catch((e: unknown) => {
+        const msg = String((e as Error)?.message ?? e);
+        // A missing sidecar means there is nothing to delete — treat as done.
+        if (/no such table/i.test(msg)) return;
+        throw e;
+      });
   }
   await env.DB.prepare(`DELETE FROM ${def.table_name} WHERE id = ? AND site_id = ?`)
     .bind(id, def.site_id)
     .run();
+}
+
+/**
+ * Delete one language's translation of a row, keeping the row and its other
+ * languages. Returns the number of translation rows removed.
+ *
+ * Ownership is re-checked against the main table for the same reason as
+ * `tableDelete`: the sidecar cannot scope itself to a site.
+ *
+ * Unlike `tableDelete`, this does **not** refuse the default locale. Removing
+ * the default locale's translation is a legitimate "make this language fall
+ * back" edit — the main table still holds the default value (§2.5.3), so the
+ * row keeps rendering. Refusing it here would invent a rule the schema does not
+ * have.
+ */
+export async function tableDeleteTranslation(
+  env: Env,
+  def: ThemeTableDef,
+  id: string,
+  locale: string
+): Promise<number> {
+  if (!def.i18n_table) return 0;
+  const owned = await env.DB.prepare(
+    `SELECT id FROM ${def.table_name} WHERE id = ? AND site_id = ?`
+  )
+    .bind(id, def.site_id)
+    .first<any>();
+  if (!owned) return 0;
+  const r = await env.DB.prepare(`DELETE FROM ${def.i18n_table} WHERE row_id = ? AND locale = ?`)
+    .bind(id, locale)
+    .run();
+  return Number((r as any)?.meta?.changes ?? 0);
 }
 
 function normaliseValue(v: unknown): unknown {

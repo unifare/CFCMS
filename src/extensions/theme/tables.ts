@@ -320,7 +320,12 @@ export async function refreshThemeTableI18n(env: Env, siteId: string): Promise<s
   const ts = now();
   for (const def of defs) {
     if (def.i18n_table || !def.translatable.length) continue;
-    const i18nName = `${def.table_name}_i18n`;
+    // Derive the sidecar name from the canonical function, not by appending
+    // `_i18n` to the stored table name. Both happen to agree today, but they
+    // are two expressions of one rule (§10 rule 30): if the naming scheme ever
+    // changes, the hand-rolled one silently produces a name the resolver does
+    // not know. `themeI18nTableName` is the function everything else calls.
+    const i18nName = themeI18nTableName(def.theme_name, def.logical_name);
     const existed = await tableExists(env, i18nName);
     await env.DB.prepare(i18nTableDdl(i18nName, def.translatable)).run();
     if (!existed) created.push(i18nName);

@@ -127,6 +127,14 @@ export async function resolveSite(
   }
 
   // 3. Explicit default, else the first site.
+  //
+  // This is the ONE place a site fallback is legitimate (§10 rule 4): a request
+  // has to belong to *some* site, and this function is where that choice is
+  // made. Every other site/locale fallback in the codebase must resolve here
+  // instead of inventing its own literal — the architecture test enforces that,
+  // and this line is exempt only via the marker below, which is greppable on
+  // purpose so the exemption stays visible and cannot spread silently.
+  // ARCH-RULE-EXEMPT: site-default (see docs/ARCHITECTURE.md §10 rule 4)
   const fallback = all.find((s) => s.is_default === 1) ?? all[0] ?? null;
   return {
     siteId: fallback?.id ?? DEFAULT_SITE_ID,

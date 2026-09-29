@@ -36,6 +36,7 @@ import {
   loadUiPacks,
   mergePacks,
   platformLocales,
+  resolveContentLocale,
   resolveUiLocale,
   setSiteDefaultLocale,
   siteDefaultLocale,
@@ -712,7 +713,18 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
     const code = localeMatch[1];
     if (method === "PATCH" || method === "PUT") {
       const b = await jsonBody(request);
-      if (b.is_default === true) await setSiteDefaultLocale(env, siteId, code);
+      if (b.is_default === true) {
+        // The route regex is wider than `isLocaleCode` (`12` passes both),
+        // so a malformed code reaches here. `setSiteDefaultLocale` rejects it
+        // by throwing — which, uncaught, surfaced as a 500. Answer 400 like the
+        // sibling DELETE branch instead: the client sent a bad code, that is
+        // not a server fault.
+        try {
+          await setSiteDefaultLocale(env, siteId, code);
+        } catch (e: any) {
+          return ok({ error: e?.message || "cannot set default locale" }, 400);
+        }
+      }
       await activity(env, user.id, "update", "locale", code, { site: siteId });
       return ok({ ok: true, default: await siteDefaultLocale(env, siteId) });
     }
@@ -1024,7 +1036,7 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
   }
 
   if (path === "search" && method === "GET") {
-    const q=String(url.searchParams.get("q")||"").trim(); const locale=String(url.searchParams.get("locale")||"en");
+    const q=String(url.searchParams.get("q")||"").trim(); const locale=await resolveContentLocale(env,siteId,url.searchParams.get("locale"));
     if(!q)return ok({items:[]});
     const r=await env.DB.prepare(`SELECT p.id,p.type,p.slug,p.status,t.locale,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.status='published' AND t.locale=? AND (t.title LIKE ? OR t.excerpt LIKE ? OR t.content LIKE ?) ORDER BY p.updated_at DESC LIMIT 50`).bind(siteId,locale,`%${q}%`,`%${q}%`,`%${q}%`).all();
     return ok({items:r.results});
@@ -1083,7 +1095,15 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
     const rows=await env.DB.prepare("SELECT * FROM theme_installs ORDER BY title").all();
     const active=await env.DB.prepare("SELECT site_id,value FROM settings WHERE key='theme.active'").all();
     const bySite=Object.fromEntries(((active.results as any[])??[]).map(r=>[r.site_id,r.value]));
-    const activeForSite=bySite[siteId]??"default";
+    // Per-site reporting reads the `theme.active` row and nothing else.
+    //
+    // Deliberately NOT `activeTheme()` here: that function exists to answer
+    // "which theme should *render* this site" — it probes R2 and will name a
+    // theme that merely happens to be installed. For a *report* that would be
+    // wrong: a theme installed for another site would show as active on this
+    // one. This endpoint's contract is "what did this site choose", so an
+    // unset row must report empty rather than borrowed.
+    const activeForSite=bySite[siteId] ?? "";
     return ok({
       items:((rows.results as any[])??[]).map(r=>({...r,active:r.name===activeForSite?1:0})),
       active:activeForSite,
@@ -1204,10 +1224,10 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
   if(capm&&method==="GET") return ok({items:await capabilityList(env,capm[1]==="plugins"?"plugin":"theme",capm[2])});
   const revm=path.match(/^(posts|pages)\/([^/]+)\/revisions$/);
   if(revm&&method==="GET") {const r=await env.DB.prepare("SELECT * FROM post_revisions WHERE post_id=? ORDER BY locale,version DESC LIMIT 200").bind(revm[2]).all();return ok({items:r.results});}
-  if(revm&&method==="POST") {const b=await jsonBody(request);const v=await createRevision(env,revm[2],user.id,String(b.locale||"en"),String(b.title||""),String(b.excerpt||""),typeof b.content==="string"?b.content:JSON.stringify(b.content||[]));return ok({version:v},201);}
+  if(revm&&method==="POST") {const b=await jsonBody(request);const v=await createRevision(env,revm[2],user.id,await resolveContentLocale(env,siteId,b.locale),String(b.title||""),String(b.excerpt||""),typeof b.content==="string"?b.content:JSON.stringify(b.content||[]));return ok({version:v},201);}
   const am=path.match(/^(posts|pages)\/([^/]+)\/autosave$/);
-  if(am&&method==="GET"){const locale=url.searchParams.get("locale")||"en";const r=await env.DB.prepare("SELECT * FROM post_autosaves WHERE post_id=? AND user_id=? AND locale=?").bind(am[2],user.id,locale).first();return ok({item:r||null});}
-  if(am&&method==="POST"){const b=await jsonBody(request);await autosave(env,am[2],user.id,String(b.locale||"en"),b);return ok({ok:true,updated_at:now()});}
+  if(am&&method==="GET"){const locale=await resolveContentLocale(env,siteId,url.searchParams.get("locale"));const r=await env.DB.prepare("SELECT * FROM post_autosaves WHERE post_id=? AND user_id=? AND locale=?").bind(am[2],user.id,locale).first();return ok({item:r||null});}
+  if(am&&method==="POST"){const b=await jsonBody(request);await autosave(env,am[2],user.id,await resolveContentLocale(env,siteId,b.locale),b);return ok({ok:true,updated_at:now()});}
   const restore=path.match(/^(posts|pages)\/([^/]+)\/revisions\/([^/]+)\/restore$/);
   if(restore&&method==="POST"){
     const r=await env.DB.prepare("SELECT * FROM post_revisions WHERE id=? AND post_id=?").bind(restore[3],restore[2]).first<any>();

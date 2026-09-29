@@ -10,6 +10,7 @@
 import { Env } from "../../shared/types";
 import { esc, setting, siteInfo, menu, locales, renderBlocks, latestPosts } from "../../platform/frontend";
 import { resolveTemplate, templateCandidates, type TemplateContext } from "../../rendering/template-resolver";
+import { resolveContentLocale } from "../../platform/i18n/locale-registry";
 import { renderTemplateSource, TemplateError, type RenderOptions } from "../../rendering/template-engine";
 import { NULL_HOOKS, hostHooks, type HostHooks } from "../contract/hooks";
 
@@ -222,7 +223,15 @@ export async function runThemeQuery(
   siteId: string
 ): Promise<QueryRow[]> {
   const type = params.type ? String(params.type) : "post";
-  const locale = params.locale ? String(params.locale) : String(scope.locale ?? "en");
+  // `siteId` is a required parameter, so the site default is reachable — the
+  // locale ladder itself lives in `resolveContentLocale` (one definition).
+  // Note there is deliberately no `?? "en"` here: a hardcoded terminal locale
+  // is exactly the "silently read the wrong language" bug this rule guards.
+  const locale = params.locale
+    ? String(params.locale)
+    : scope.locale
+      ? String(scope.locale)
+      : await resolveContentLocale(env, siteId);
   const status = params.status ? String(params.status) : "published";
   const limit = Math.min(100, Math.max(1, Number(params.limit ?? 10)));
   const offset = Math.max(0, Number(params.offset ?? 0));
@@ -441,7 +450,11 @@ export async function renderThemePage(
   const scope = await buildScope(env, theme, o);
   const opts: RenderOptions = {
     loadTemplate: load,
-    runQuery: (params, sc) => runThemeQuery(env, params, sc, o.siteId ?? "default"),
+    // `o.siteId` is required by `ThemeRenderOptions`, so it is passed straight
+    // through. There used to be an `?? "default"` here: dead under the current
+    // types, but a landmine the moment anyone makes the field optional — it
+    // would silently render another site's data instead of failing to compile.
+    runQuery: (params, sc) => runThemeQuery(env, params, sc, o.siteId),
   };
 
   try {
