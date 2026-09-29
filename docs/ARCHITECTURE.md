@@ -1230,16 +1230,21 @@ cfpress/
 │       ├── types.ts  crypto.ts  repo.ts  cache.ts  scheduler.ts
 │
 ├── themes/                       # 主题（数据包，不是源码）
-│   └── aurora/
-│       ├── theme.json
-│       ├── screenshot.png
-│       ├── templates/
-│       │   ├── layout.html      # 或 parts/layout.html
-│       │   ├── index.html  home.html  single.html  page.html
-│       │   ├── archive.html  404.html
-│       │   └── parts/           # header/footer/tokens
-│       ├── assets/              # css / js / images
-│       └── langs/               # zh-CN.json / en.json
+│   ├── aurora/
+│   │   ├── theme.json
+│   │   ├── screenshot.png
+│   │   ├── templates/
+│   │   │   ├── layout.html      # 或 parts/layout.html
+│   │   │   ├── index.html  home.html  single.html  page.html
+│   │   │   ├── archive.html  404.html
+│   │   │   └── parts/           # header/footer/tokens
+│   │   ├── assets/              # css / js / images
+│   │   └── langs/               # zh-CN.json / en.json
+│   └── eshop/                   # ★ 范例（批次 4）：主题自有表 + 生成式后台屏 + 声明式路由
+│       ├── theme.json           #   tables[] / adminMenus[] / routes[].resolve / query.as
+│       ├── templates/           #   archive-product / single-product 走 resolve.table
+│       │   └── parts/           #   layout.html（\@section 插槽）
+│       └── langs/               #   en.json / zh-CN.json，key 全带 theme.eshop. 前缀
 │
 ├── plugins/
 │   └── seo/
@@ -1270,12 +1275,16 @@ cfpress/
 ├── migrations/                   # D1 迁移，编号递增
 ├── tests/
 │   ├── architecture.test.mjs     # ★ 分层与越界检查（13 项）
+│   ├── _extension-rules.mjs      # ★ 架构规则的**唯一**实现，三个套件共用（勿抄一份）
 │   ├── manifest-validation.test.mjs
 │   ├── admin-menus.test.mjs      # ★ 菜单注册表契约（归属隔离 / 安装级可见）
 │   ├── i18n.test.mjs             # ★ 多语言四层契约（§5.4①）
 │   ├── _i18n-browser.cjs         # ★ 真实 Chromium 打真实 wrangler dev
 │   ├── _admin-menus-browser.cjs  # ★ 菜单 + 生成式屏幕的真实浏览器验收
 │   ├── admin-spa.test.mjs        # 后台结构守门人（模块图 + window.* 契约）
+│   ├── scaffold.test.mjs         # ★ 生成器产物过真实校验器 / 引擎 / 架构规则
+│   ├── theme-eshop.test.mjs      # ★ 范例主题：声明与模板互相自洽（41 条）
+│   ├── _eshop-inject.mjs         # ★ 上者的反向验证工具（7 个场景，手工跑）
 │   ├── _apply-migrations.mjs     # 本地迁移（**别用 wrangler CLI**，见 HANDOVER）
 │   └── run-all.mjs
 ├── scripts/
@@ -1288,9 +1297,9 @@ cfpress/
 ├── docs/
 │   ├── ARCHITECTURE.md           # 本文
 │   ├── HANDOVER.md               # 交接文档
-│   ├── I18N.md                   # ⏳ 待写（批次 4，从本文 §2 展开）
-│   ├── THEME-DEV.md              # ⏳ 待写（批次 4）
-│   ├── PLUGIN-DEV.md             # ⏳ 待写（批次 4）
+│   ├── I18N.md                   # ✅ 已写（批次 4）：四层模型 + 三条不变量 + 排查表
+│   ├── THEME-DEV.md              # ✅ 已写（批次 4）：模板语言五条硬规则 + 清单字段
+│   ├── PLUGIN-DEV.md             # ✅ 已写（批次 4）：插件不发代码 + 7 个可声明 hook
 │   └── THEME-ARCHITECTURE-PLAN.md  # 历史方案（保留）
 ├── public/                       # 纯静态资源（favicon 等）
 └── wrangler.jsonc
@@ -1607,8 +1616,9 @@ npx tsc --noEmit    0 错误（仅 node_modules 内的既有 lib 冲突）
   `theme_table_defs` 只有 `theme_name` 列，要支持插件必须把它泛化成 owner 概念——**那是表重建，
   不是加一列**（SQLite 不能 `ALTER` 主键/UNIQUE，见 0009 的教训）。插件声明 `tables[]` 目前
   **被校验器明确拒绝**，而不是被静默忽略。
-- **`eshop` 示例主题本身**仍是批次 4 的产物。本批次用 `menusdemo` 夹具（测试内）与
-  `menusbrowser`（浏览器验收内）验证了同一组能力。
+- ~~**`eshop` 示例主题本身**仍是批次 4 的产物。~~ ✅ **批次 4 已交付**：
+  `themes/eshop/` + `tests/theme-eshop.test.mjs`（41 条），见 §4.3。本批次当时用
+  `menusdemo` 夹具（测试内）与 `menusbrowser`（浏览器验收内）验证了同一组能力。
 
 **验收证据（2026-09-28 实测）**
 
@@ -1659,14 +1669,16 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 ### 批次 4：脚手架 + 文档（P2）
 
 **做什么**
-1. `scripts/make-theme.mjs` / `make-plugin.mjs`
-2. `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md`
-3. 示例主题 `eshop`（作为声明能力的活文档）
-4. `extensions/contract/` 拆分（批次 3 登记的技术债）
-5. 插件自有表（批次 3 登记的技术债）
+1. ✅ `scripts/make-theme.mjs` / `make-plugin.mjs` / `make-table.mjs`（§4.2）
+2. ✅ `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md`（§4.4）
+3. ✅ 示例主题 `eshop`（作为声明能力的活文档）（§4.3）
+4. ✅ `extensions/contract/` 拆分（批次 3 登记的技术债）（§4.1）
+5. ⏳ 插件自有表（批次 3 登记的技术债）——**仍未做**，见 §9 决定 3
 
 **验收**
-- `npm run make:theme -- demo` 生成的骨架：`tsc` 过、架构测试过、能激活、能渲染
+- ✅ `npm run make:theme -- demo` 生成的骨架：`tsc` 过、架构测试过、能激活、能渲染
+  （由 `tests/scaffold.test.mjs` 68 条断言机器证明，而非人工试一遍）
+- ✅ 范例主题 `eshop` 过真实校验器 / 架构规则 / 模板引擎，且**七个注入场景逐条验证会红**
 
 #### 4.1 已完成：`extensions/contract/` 拆分 + 路由消费契约收口
 
@@ -1797,6 +1809,92 @@ npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
 > 同源的第二条：第一次注入脚本打印 `closers removed: 2 -> 2` —— 它什么都没改，
 > 而我把随后出现的红色当成了证据。**注入后必须断言"确实从 N 变成 M"。**
 > **不能证明自己注入成功的注入，不是注入。**
+
+#### 4.3 已完成：`themes/eshop/` 范例主题 + `tests/theme-eshop.test.mjs`
+
+**为什么需要一个真的主题，而不是又一篇文档。** `eshop` 是**声明能力的活文档**：
+主题自有表、生成式后台屏、声明式路由（`resolve.table` / `query.as`）、双语目录 ——
+文档会漂移，而一个**真实校验器、真实架构规则、真实模板引擎都接受的**主题不会。
+
+它也是唯一同时用到这四样东西的地方：`scaffold.test.mjs` 证明生成器产出的骨架合法
+（骨架**不声明任何表和路由**，因为它没有业务逻辑），`theme-integration.test.mjs` 证明
+机制在**内联夹具**上能跑。两者都不会发现 `resolve.table` 与 `translatable` 不再咬合，
+或商品模板在用一个声明里已经消失的字段。
+
+**它声明了什么**：一张 `product` 表（`translatable: ["name","blurb"]`，故意**不含**
+`price` / `stock` —— 价格不属于某个语言）、三个后台菜单（`table-list` / `table-edit` /
+`theme-settings`，**零后台代码**）、三条路由（`/shop` 列表、`/shop/:slug` 单件
+`resolve.by: "slug"`、`/journal`）、两个语言与各自的 `theme.eshop.*` 语言包。
+
+**它的反向验证工具是 `tests/_eshop-inject.mjs`**（手工跑，不进 `npm test` —— 它是个
+**工具**，跟 `_i18n-browser.cjs` 同一性质）。七个场景，每个都断言"确实注入了"再断言
+"红在预期的哪一条"，然后**验证还原成功**：
+
+| 注入 | 预期变红的断言 |
+|---|---|
+| 删掉一个 `{{/section}}` | `every child closes every section it opens`（+ 引擎抛出，套件中止） |
+| 改掉 `query.as` | `the listing route names its scope` |
+| 改掉 `resolve.by` | `the item route resolves the table by slug` |
+| 砍掉 `translatable` 的一项 | `only the text-bearing fields are translatable` |
+| 把模板链接指向 `/blog/` | `archive links to the route's own path` + `…not hard-coded to /blog/` |
+| 藏掉一个已声明的模板文件 | `theme manifest rules report nothing` + `every declared template exists` |
+| 藏掉一个语言包 | `every declared locale ships a pack` |
+
+**本轮新增的第六种假绿：没有摘要行的一跑，被当成了通过。**
+
+> 套件的摘要在 `main()` 末尾打印。模板渲染一旦抛错（比如那个未闭合的 `{{/section}}`），
+> 控制流直接跳出，**`N passed, M failed` 这一行永远不会打印**。
+> 而我的校验脚本用 `grep '^[0-9]+ passed'` 读结果 —— 匹配不到就什么也不输出，
+> 我把"没有输出"读成了"没有失败"。**同一次会话里，这个错误犯了两次。**
+
+修法分两层，缺一不可：
+
+1. **套件侧**：`summary()` 抽成函数，`catch` 分支里也调用它，并把异常计为一条失败。
+   于是**任何一跑都必然有摘要行**，且崩溃会以 `(aborted)` 标注。
+   `theme-aurora.test.mjs` 原本只打印 `${failed} failure(s)`、**没有 passed 计数**，
+   也已统一成同一种摘要 —— 摘要格式不一致，脚本就分不清"绿"和"崩"。
+2. **校验脚本侧**：把"**摘要行缺失**"当作 `FAILED`，而不是跳过。
+   `.wrangler/eshop-rev.sh` 里 `grep -qE '^[0-9]+ passed, [0-9]+ failed'` 失败即 `exit 1`。
+
+> **规则**：**没有摘要 = 失败**。一跑的产出必须能自证它跑完了；`grep` 匹配不到，
+> 是"我不知道"，不是"它没事"。
+
+**另外两个同源陷阱（都在反向验证工具自己身上）**
+
+| 陷阱 | 症状 | 修法 |
+|---|---|---|
+| **字节数守卫看不见等长替换** | `"/shop/"` → `"/blog/"` 长度完全相同，于是守卫打印"什么都没改"，而那次注入其实**生效了** —— 防假阴的工具自己产出了一个假阴 | 比**内容哈希**，不比长度 |
+| **快照取自脏树** | `git checkout -- <path>` **修不了 git 从没见过的文件**（`themes/eshop/` 是全新的），还原静默失败 → 每个场景叠加在上一个之上；更糟的是脏状态被**拍进快照**，于是"还原"忠实还原了损坏，套件连续七轮红在一个**没有任何场景引入过**的缺陷上 | 不用 `git checkout`：快照前 `assertPristine()`，还原后再 `assertPristine()`。**还原也要被验证** |
+
+**验收证据（2026-09-29 实测，`npm test` 全链）**
+
+```
+architecture         15 passed, 0 failed
+manifest-validation  63 passed, 0 failed
+admin-menus          43 passed, 0 failed
+admin-spa            15 passed, 0 failed
+template-engine      49 passed, 0 failed
+scaffold             68 passed, 0 failed
+theme-integration    65 passed, 0 failed
+theme-eshop          41 passed, 0 failed   ← 本轮新增，已进 npm test 链
+multisite            74 passed, 0 failed
+i18n                 62 passed, 0 failed
+admin-contract       32 passed, 0 failed
+plugin-hooks         25 passed, 0 failed
+theme-worker         28 passed, 0 failed
+theme-aurora         14 passed, 0 failed   ← 摘要格式本轮统一（原为 "0 failure(s)"，无 passed 计数）
+npx tsc --noEmit     0 错误（仅 node_modules 内的既有 lib 冲突）
+```
+
+#### 4.4 已完成：三份开发文档
+
+`docs/I18N.md`（四层模型、`resolveLocale` 优先级、三条不变量、排查表）、
+`docs/THEME-DEV.md`（模板语言五条硬规则、`theme.json` 逐字段、症状→成因表）、
+`docs/PLUGIN-DEV.md`（**插件不发代码**的理由、7 个可声明 hook、内联语言包）。
+
+三份都**对着源码写、不是对着记忆写**。核对中改掉了三处文档失实：helper 数量写成 10
+（实为 **9**）、`query.order` 白名单漏了 `published_at`、以及"首次访问自动建表"
+（实际是**主题激活时**由 `applyThemeCapabilities` → `syncThemeTables` 建的）。
 
 ---
 

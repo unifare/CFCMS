@@ -114,6 +114,7 @@ const runQuery = async (params) => {
 const opts = { loadTemplate, runQuery, maxDepth: 12 };
 
 let failed = 0;
+let passed = 0;
 async function check(label, file, scope) {
   const src = readFileSync(join(DIR, file), "utf8");
   try {
@@ -128,6 +129,7 @@ async function check(label, file, scope) {
       console.log(`  FAIL ${label}`);
       for (const i of issues) console.log(`         - ${i}`);
     } else {
+      passed++;
       console.log(`  ok   ${label}  (${html.length} bytes)`);
     }
   } catch (e) {
@@ -142,5 +144,9 @@ for (const [file, scope] of cases) await check(file, file, scope);
 console.log("\nAurora templates — edge cases");
 for (const [label, file, scope] of empties) await check(label, file, scope);
 
-console.log(`\n${failed} failure(s)`);
+// Same summary shape as every other suite: a reader (or a script) must be able
+// to tell "green" from "crashed" without knowing this file's private wording.
+// This suite used to print only `N failure(s)`, so a checker grepping for the
+// standard line saw nothing and could not distinguish a pass from an abort.
+console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

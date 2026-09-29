@@ -173,7 +173,7 @@ scripts/                      脚手架（生成器可被 import —— 本机�
 FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen → FAIL；
 `src/` 引用已退役表 → FAIL。
 
-### 批次 4（脚手架 + 文档）—— 进行中
+### 批次 4（脚手架 + 文档）—— 已完成（插件自有表除外）
 
 | 项 | 状态 |
 |---|---|
@@ -181,8 +181,8 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 | `scripts/make-theme.mjs` / `make-plugin.mjs` / `make-table.mjs` | ✅ |
 | `tests/scaffold.test.mjs`（68 条，真实校验器 + 真实模板引擎） | ✅ 已进 `npm test` |
 | 修复「声明被校验但运行时没人读」第三、四例（`resolve.table` / `routes[].template`） | ✅ |
-| `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md` | ⬜ |
-| `themes/eshop/` 示例主题 | ⬜ |
+| `docs/I18N.md` / `THEME-DEV.md` / `PLUGIN-DEV.md` | ✅（对着源码核对过，详见 ARCHITECTURE §4.4） |
+| `themes/eshop/` 示例主题 + `tests/theme-eshop.test.mjs`（41 条） | ✅ 已进 `npm test`，七个注入场景逐条反向验证（`tests/_eshop-inject.mjs`） |
 | **插件自有表** `plugin_{plugin}_{table}` | ⬜ 已登记：需**重建 `theme_table_defs`**（SQLite 不能 `ALTER` 主键/UNIQUE，而它现在只有 `theme_name` 一列） |
 
 **本轮新增的两条引擎级守卫（都反向验证过）**：
@@ -201,7 +201,18 @@ FAIL×4；关掉插件校验分支 → FAIL×3；已发布主题用未知 screen
 7 条新清单守卫 → manifest-validation FAIL×7；i18n 断言收窄 → 强制 `created_i18n_tables: []` 变红；
 生成的骨架去掉 4 个 `{{/section}}` → scaffold 同时被「内容计数」与「引擎守卫」两条独立机制抓到。
 
-## 6. 测试与验证（当前全绿：13 套件 / 0 失败）
+**反向验证（eshop 主题，7 项）**：`tests/_eshop-inject.mjs` 逐场景注入——未闭合 section /
+改 `query.as` / 改 `resolve.by` / 砍 `translatable` / 模板链接指向 `/blog/` / 藏模板文件 /
+藏语言包——每个场景先断言"确实注入了"（内容哈希比对），再断言红在预期的断言上，
+最后验证还原成功（`assertPristine` 双向把关）。全部符合预期，详见 ARCHITECTURE §4.3。
+
+> ⚠️ **第六种假绿**在本轮暴露：套件渲染抛错时**摘要行不会打印**，
+> 校验脚本把「grep 不到摘要」误读成「没有失败」。修法：套件 `catch` 里也打印摘要
+> （异常计为一条失败，标注 `(aborted)`）；校验脚本把「摘要缺失」当 FAILED。
+> `theme-aurora` 的摘要格式（只打 `N failure(s)`、无 passed 计数）也已统一。
+> 详见 AGENTS.md「第六种假绿」与 ARCHITECTURE §4.3。
+
+## 6. 测试与验证（当前全绿：14 套件 / 0 失败）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -215,14 +226,28 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
 | admin-spa | 15 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次 |
 | template-engine | 49 | 模板解释器单元（含 **子模板未闭合 section 抛错**、**三层继承最派生者胜**） |
-| **scaffold** | **68** | **本轮新增**：生成的 theme/plugin/table 通过**真实** `validateManifest` + **真实**模板引擎 + **真实**架构规则；`@include`/`@extends` 目标存在；每个子模板 section 开闭配对；语言包前缀；拒绝覆盖；非法输入退出码；`--translatable` 正反两面 |
+| **scaffold** | **68** | 生成的 theme/plugin/table 通过**真实** `validateManifest` + **真实**模板引擎 + **真实**架构规则；`@include`/`@extends` 目标存在；每个子模板 section 开闭配对；语言包前缀；拒绝覆盖；非法输入退出码；`--translatable` 正反两面 |
 | theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含**表驱动路由**：`resolve.table` / `routes[].template` / `query.as` / 单条未命中 404） |
+| **theme-eshop** | **41** | **范例主题**：`themes/eshop/` 的声明与模板互相自洽——表/翻译字段/菜单↔表配对/路由 `resolve`/`query.as`/语言包，全部过**真实**校验器与**真实**架构规则；六个模板各渲染一次（有数据/无数据）；链接走路由自己的路径；`@first` 绑迭代作用域 |
 | multisite | 74 | 多站点隔离（含 SEO 端点按站点，第 9b 段） |
 | i18n | 62 | 多语言四层契约（§5.4① 八条全覆盖）+ 翻译组 + 主题自有表 |
 | admin-contract | 32 | 后台 API 契约 |
 | plugin-hooks | 25 | 插件 hook 生命周期 |
 | theme-worker | 28 | L3 沙箱（含 WorkerStub 不可跨请求） |
-| theme-aurora | 19 项 | aurora 主题渲染快照式检查 |
+| theme-aurora | 14 | aurora 主题渲染快照式检查（摘要格式本轮统一为 `N passed, M failed`） |
+
+⚠️ **一跑必须有摘要行**：`theme-eshop` / `theme-aurora` 都遵循「catch 里也打印摘要、
+崩溃标注 `(aborted)`」——脚本判据统一是 `^[0-9]+ passed, [0-9]+ failed`，
+**匹配不到就当失败**（见「第六种假绿」）。
+
+另有一个**不在 `npm test` 链里**的反向验证工具（手工跑）：
+
+```bash
+node tests/_eshop-inject.mjs list         # 7 个场景
+node tests/_eshop-inject.mjs inject <场景> # 注入（内容哈希证明生效）
+node tests/theme-eshop.test.mjs           # 应红在预期断言
+node tests/_eshop-inject.mjs restore      # 快照还原（assertPristine 双向验证）
+```
 
 ⚠️ **多套件共享同一个本地 D1**：断言必须按 owner 收窄（`theme_name` / 站点），
 别写全局计数。`theme_table_defs` **按设计不随主题停用消失**，所以夹具必须删掉自己的注册行

@@ -1,0 +1,32 @@
+{{@extends "parts/layout"}}
+{{@section "content"}}
+
+<p class="crumbs"><a href="/{{locale}}/shop">{{page.title}}</a></p>
+
+{{#if post}}
+  <div class="detail">
+    <article>
+      <p class="eyebrow">{{page.title}}</p>
+      <h1>{{post.name}}</h1>
+      {{#if post.blurb}}<p class="lede">{{post.blurb}}</p>{{/if}}
+    </article>
+
+    <aside class="buy">
+      <span class="price">{{number(post.price)}}</span>
+      {{#if post.in_stock}}
+        <a class="cta" href="/{{locale}}/shop">Buy</a>
+      {{else}}
+        <p class="stock">Currently sold out.</p>
+      {{/if}}
+      <ul class="meta-list">
+        {{#if post.stock}}<li><span>In stock</span><span>{{number(post.stock)}}</span></li>{{/if}}
+        {{#if post.released_on}}<li><span>Released</span><span>{{post.released_on}}</span></li>{{/if}}
+        <li><span>SKU</span><span>{{post.slug}}</span></li>
+      </ul>
+    </aside>
+  </div>
+{{else}}
+  <p class="empty">This product could not be found.</p>
+{{/if}}
+
+{{/section}}

@@ -1,0 +1,90 @@
+{
+  "name": "eshop",
+  "title": "E-Shop",
+  "version": "1.0.0",
+  "author": "CFPress",
+  "description": "A minimal shop built entirely from declarations: no PHP, no build step, no admin code. Demonstrates theme-owned tables, a generated admin screen, declarative front-end routes and a bilingual product catalogue.",
+  "supports": ["blocks", "menus", "widgets"],
+
+  "templates": [
+    "index",
+    "single",
+    "page",
+    "archive-product",
+    "single-product",
+    "404"
+  ],
+  "parts": ["layout", "header", "footer"],
+
+  "locales": ["en", "zh-CN"],
+
+  "routes": [
+    {
+      "path": "/shop",
+      "template": "archive-product",
+      "title": "Shop",
+      "resolve": { "table": "product" },
+      "query": { "as": "products" }
+    },
+    {
+      "path": "/shop/:slug",
+      "template": "single-product",
+      "resolve": { "table": "product", "by": "slug" }
+    },
+    {
+      "path": "/journal",
+      "template": "index",
+      "title": "Journal",
+      "query": { "type": "post", "limit": 20, "order": "created_at desc", "as": "posts" }
+    }
+  ],
+
+  "tables": [
+    {
+      "name": "product",
+      "label": "Product",
+      "translatable": ["name", "blurb"],
+      "fields": [
+        { "key": "name", "type": "text", "label": "Name", "required": true },
+        { "key": "blurb", "type": "longtext", "label": "Blurb" },
+        { "key": "price", "type": "number", "label": "Price (minor units)" },
+        { "key": "stock", "type": "number", "label": "Stock" },
+        { "key": "in_stock", "type": "boolean", "label": "In stock" },
+        { "key": "released_on", "type": "date", "label": "Released on" }
+      ]
+    }
+  ],
+
+  "adminMenus": [
+    {
+      "id": "eshop-products",
+      "label": "Products",
+      "icon": "box",
+      "screen": "table-list",
+      "args": { "table": "product" },
+      "sortOrder": 20
+    },
+    {
+      "id": "eshop-product-new",
+      "label": "Add product",
+      "icon": "plus",
+      "screen": "table-edit",
+      "args": { "table": "product" },
+      "sortOrder": 21
+    },
+    {
+      "id": "eshop-settings",
+      "label": "Shop settings",
+      "icon": "chart",
+      "screen": "theme-settings",
+      "sortOrder": 22
+    }
+  ],
+
+  "settings": [
+    { "key": "tagline", "label": "Tagline", "type": "text", "default": "Small-batch goods, shipped from the workshop." },
+    { "key": "currency", "label": "Currency symbol", "type": "text", "default": "$" },
+    { "key": "showStock", "label": "Show stock counts", "type": "boolean", "default": "true" },
+    { "key": "perPage", "label": "Products per page", "type": "number", "default": "12" }
+  ]
+}
