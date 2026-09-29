@@ -20,6 +20,8 @@
  * Nothing may re-declare these lists locally.
  */
 
+import type { NotificationChannel } from "./channels";
+
 /**
  * Columns the platform owns on every generated table.
  *
@@ -101,11 +103,62 @@ export function isProseFieldType(type: string): boolean {
  * form is built from `tables[].fields[]`. `plugin-settings` is the plugin
  * counterpart of `theme-settings`: it opens the extension's own declared
  * settings rather than the site's.
+ *
+ * `plugin-page` (batch 10) is the third application of the same idea: a plugin
+ * declares a page as *data* (`adminPages[].blocks[]`) and the host renders it.
+ * The screen name is parameterised — `plugin-page:<id>` — so the menu registry
+ * can tell which declared page it opens; see `pluginPageScreen()`.
  */
 export const ALLOWED_ADMIN_SCREENS = [
   "dashboard", "content-list", "content-edit", "settings", "media", "custom",
   "theme-settings", "plugin-settings", "table-list", "table-edit",
 ] as const;
+
+/**
+ * Prefix for a screen that opens a plugin-declared page.
+ *
+ * A plugin page cannot be a plain member of `ALLOWED_ADMIN_SCREENS` because
+ * there is one per declared page, not one for the feature. So the screen is
+ * `plugin-page:<id>`, where `<id>` must name a page the plugin actually
+ * declared — an id that resolves to nothing would render an empty screen, which
+ * is why the validator (rule 50) checks membership rather than just the prefix.
+ */
+export const PLUGIN_PAGE_SCREEN_PREFIX = "plugin-page:";
+
+/** Build the screen name a menu uses to open a plugin-declared page. */
+export function pluginPageScreen(pageId: string): string {
+  return `${PLUGIN_PAGE_SCREEN_PREFIX}${pageId}`;
+}
+
+/**
+ * Is this screen one of the fixed, unparameterised ones?
+ *
+ * Used by callers that must distinguish "a screen I have a renderer for" from
+ * "a `plugin-page:<id>` I have to resolve first".
+ */
+export function isFixedAdminScreen(screen: string): boolean {
+  return (ALLOWED_ADMIN_SCREENS as readonly string[]).includes(screen);
+}
+
+/**
+ * Block types a plugin-declared page may be built from (rule 49).
+ *
+ * This is the whole mechanism behind "a plugin can have its own admin page"
+ * without shipping code. The reference implementation offered
+ * `sdk.adminPage(path, handler)` — a function the plugin registers, which a
+ * Workers runtime cannot load and would not allow to run even if it could.
+ * `blocks[]` preserves the capability and keeps the trust boundary: the plugin
+ * says *what data, in what shape*, and the host decides how to render it.
+ *
+ * Every type here must have a renderer in `public/admin/js/plugin-page.js`; a
+ * type with no renderer produces a blank section that looks like a failed load.
+ * `tests/architecture.test.mjs` checks the two lists against each other.
+ *
+ *   `table` — rows of one of the plugin's own tables, as a list
+ *   `stats` — one aggregate over that table (count, grouped)
+ *   `form`  — an input form writing through the host's facade
+ */
+export const ALLOWED_PAGE_BLOCKS = ["table", "stats", "form"] as const;
 
 /**
  * Screen types that read an extension-owned table, and therefore must name one.
@@ -289,6 +342,48 @@ export interface SettingDecl {
   default?: string | number | boolean | null;
 }
 
+/**
+ * One section of a plugin-declared admin page.
+ *
+ * The `source` field names one of the plugin's own declared tables — the same
+ * names as `tables[].name`, resolved through the owner-scoped facade. It is a
+ * *logical* name; the plugin never learns the physical one (rule 8).
+ */
+export interface PageBlockDecl {
+  type: PageBlockType;
+  /** A logical table name from this plugin's own `tables[]`. */
+  source?: string;
+  /** `table`: which fields to show. Absent means the declared non-prose fields. */
+  columns?: string[];
+  /** `stats`: the aggregate to compute. */
+  aggregate?: "count" | "sum";
+  /** `stats`: the field to aggregate, and the field to group by. */
+  field?: string;
+  groupBy?: string;
+  /** `form`: which fields to offer for input. */
+  fields?: string[];
+  /** Heading, as a dictionary key (rule 11). */
+  labelKey?: string;
+}
+
+export type PageBlockType = (typeof ALLOWED_PAGE_BLOCKS)[number];
+
+/**
+ * An admin page a plugin declares.
+ *
+ * `path` is a single stable segment under the plugin's own admin URL; the host
+ * owns the surrounding routes. It cannot be absolute and cannot contain `/`,
+ * because a plugin that could choose its route could shadow a platform screen.
+ */
+export interface AdminPageDecl {
+  id: string;
+  path: string;
+  /** Page title and nav label, as dictionary keys (rule 11). */
+  titleKey?: string;
+  title?: string;
+  blocks?: PageBlockDecl[];
+}
+
 /** What both extension kinds declare. */
 export interface ExtensionManifest {
   name: string;
@@ -332,6 +427,29 @@ export interface PluginManifest extends ExtensionManifest {
    * rather than a subscription that never fires.
    */
   subscribes?: string[];
+  /**
+   * Pages this plugin shows in the admin, as declarations (rule 49).
+   *
+   * Deliberately *not* a script path. A no-build Workers runtime cannot load
+   * plugin code, and running it would breach the capability model — so a page
+   * is described as blocks and rendered by the host.
+   */
+  adminPages?: AdminPageDecl[];
+  /**
+   * Notification channels this plugin offers (§2 of the design doc).
+   *
+   * Each declared `code` must be one the host implements
+   * (`HOST_CHANNEL_CODES`); the plugin supplies the configuration *schema*, and
+   * the host supplies the sending. Declaring an unimplemented channel would put
+   * a selectable option in the admin that fails at send time.
+   */
+  channels?: NotificationChannel[];
+  /**
+   * Tables owned by this plugin. Same shape and same language rules as a
+   * theme's `tables[]` — plugin tables get `_i18n` sidecars by default, not as
+   * a special case (batch 10, migration 0014).
+   */
+  tables?: TableDecl[];
 }
 
 /** The normalised result of a successful validation. */

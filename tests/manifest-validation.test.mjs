@@ -706,6 +706,234 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
+console.log("\n8. Plugins declare data, not code — rule 48 (batch 10)");
+// ---------------------------------------------------------------------------
+//
+// The reference implementation loaded `plugin/index.js` and called its
+// `activate()`. A Workers runtime forbids that (`eval` / dynamic import are
+// blocked), and it would mean running third-party code inside the host, which
+// the capability model exists to prevent. So a manifest that asks for code is
+// refused with the reason — not ignored, because ignoring it produces a plugin
+// that installs and does nothing.
+
+for (const key of ["entry", "entryFile", "handler", "main", "script", "activate"]) {
+  rejects(
+    v,
+    validPlugin({ [key]: "index.js" }),
+    `plugin declaring "${key}"`,
+    "plugin"
+  );
+}
+
+// And the capability it is refused for must actually exist without the key.
+accepts(v, validPlugin(), "the same plugin without the code key", "plugin");
+
+// ---------------------------------------------------------------------------
+console.log("\n9. Plugin pages: blocks are a closed set — rule 49");
+// ---------------------------------------------------------------------------
+const pagePlugin = (pageOverrides = {}, manifestOverrides = {}) => ({
+  name: "notify",
+  title: "Notify",
+  version: "1.0.0",
+  tables: [
+    {
+      name: "log",
+      fields: [
+        { key: "message", type: "text" },
+        { key: "ok", type: "boolean" },
+      ],
+      translatable: ["message"],
+    },
+  ],
+  adminPages: [
+    {
+      id: "logs",
+      path: "logs",
+      titleKey: "plugin.notify.page.logs",
+      blocks: [{ type: "table", source: "log", ...pageOverrides }],
+    },
+  ],
+  ...manifestOverrides,
+});
+
+accepts(v, pagePlugin(), "a plugin page with a table block", "plugin");
+
+rejects(
+  v,
+  pagePlugin({ type: "iframe" }),
+  "page block with an unknown type",
+  "plugin"
+);
+rejects(
+  v,
+  pagePlugin({ source: "secret" }),
+  "page block reading a table the plugin did not declare",
+  "plugin"
+);
+rejects(
+  v,
+  pagePlugin({ source: undefined }),
+  "page block with no source table",
+  "plugin"
+);
+rejects(
+  v,
+  pagePlugin({}, { adminPages: [{ id: "logs", path: "a/b" }] }),
+  "page path with a slash (a plugin may not choose a nested route)",
+  "plugin"
+);
+rejects(
+  v,
+  pagePlugin({}, { adminPages: [{ id: "logs", path: "logs", blocks: [], titleKey: "other.notify.x" }] }),
+  "page titleKey outside the plugin's namespace (rule 11)",
+  "plugin"
+);
+rejects(
+  v,
+  pagePlugin({}, {
+    adminPages: [
+      { id: "logs", path: "logs" },
+      { id: "logs", path: "more" },
+    ],
+  }),
+  "two pages sharing an id",
+  "plugin"
+);
+
+// ---------------------------------------------------------------------------
+console.log("\n10. A plugin-page menu must open a declared page — rule 50");
+// ---------------------------------------------------------------------------
+accepts(
+  v,
+  pagePlugin({}, {
+    adminMenus: [{ id: "notify-logs", label: "Logs", screen: "plugin-page:logs" }],
+  }),
+  "menu opening a page the plugin declared",
+  "plugin"
+);
+rejects(
+  v,
+  pagePlugin({}, {
+    adminMenus: [{ id: "notify-logs", label: "Logs", screen: "plugin-page:missing" }],
+  }),
+  "menu opening a page id that does not exist",
+  "plugin"
+);
+rejects(
+  v,
+  pagePlugin({}, {
+    adminMenus: [{ id: "notify-logs", label: "Logs", screen: "plugin-page:" }],
+  }),
+  "menu with the plugin-page prefix but no id",
+  "plugin"
+);
+
+// ---------------------------------------------------------------------------
+console.log("\n11. Plugin-owned tables are validated like a theme's — batch 10 debt paid");
+// ---------------------------------------------------------------------------
+// Batch 4 recorded "only plugin-owned tables remain", and the validator *refused*
+// `tables[]` for plugins until migration 0014 gave them somewhere to register.
+// Now the same rules apply, which is the point: a plugin's prose is translatable
+// by default rather than as a special case.
+accepts(
+  v,
+  {
+    name: "notify",
+    version: "1.0.0",
+    tables: [
+      {
+        name: "log",
+        fields: [
+          { key: "message", type: "longtext" },
+          { key: "sent_at", type: "datetime" },
+        ],
+        translatable: ["message"],
+      },
+    ],
+  },
+  "plugin declaring a table",
+  "plugin"
+);
+rejects(
+  v,
+  {
+    name: "notify",
+    version: "1.0.0",
+    tables: [{ name: "log", fields: [{ key: "message", type: "longtext" }] }],
+  },
+  "plugin table with prose but no translatable list (rule 41 applies to plugins too)",
+  "plugin"
+);
+rejects(
+  v,
+  {
+    name: "notify",
+    version: "1.0.0",
+    // A plugin may now declare tables, so a `table-list` screen is available to
+    // it — but it must still name a table it declares.
+    tables: [{ name: "log", fields: [{ key: "sent_at", type: "datetime" }] }],
+    adminMenus: [{ id: "l", screen: "table-list", args: { table: "other" } }],
+  },
+  "plugin table-list menu naming an undeclared table",
+  "plugin"
+);
+
+// ---------------------------------------------------------------------------
+console.log("\n12. Channels: code and field types are closed sets — rule 51");
+// ---------------------------------------------------------------------------
+const channelPlugin = (channels) => ({ name: "notify", version: "1.0.0", channels });
+
+accepts(
+  v,
+  channelPlugin([
+    {
+      code: "webhook",
+      labelKey: "plugin.notify.channel.webhook",
+      configSchema: [
+        { key: "url", labelKey: "plugin.notify.channel.webhook.url", type: "url", required: true },
+      ],
+    },
+  ]),
+  "a webhook channel with a url field",
+  "plugin"
+);
+rejects(
+  v,
+  channelPlugin([{ code: "telegram", labelKey: "plugin.notify.channel.tg", configSchema: [] }]),
+  "channel the host does not implement",
+  "plugin"
+);
+rejects(
+  v,
+  channelPlugin([
+    {
+      code: "webhook",
+      labelKey: "plugin.notify.channel.webhook",
+      // `richtext` has no channel control — the settings form would draw an
+      // empty input, which reads as broken data rather than a manifest mistake.
+      configSchema: [{ key: "body", labelKey: "plugin.notify.channel.webhook.body", type: "richtext" }],
+    },
+  ]),
+  "channel config field with a type that has no admin control",
+  "plugin"
+);
+rejects(
+  v,
+  channelPlugin([
+    {
+      code: "webhook",
+      labelKey: "plugin.notify.channel.webhook",
+      configSchema: [
+        { key: "url", labelKey: "plugin.notify.channel.webhook.url", type: "url" },
+        { key: "url", labelKey: "plugin.notify.channel.webhook.url2", type: "url" },
+      ],
+    },
+  ]),
+  "channel declaring the same config key twice",
+  "plugin"
+);
+
+// ---------------------------------------------------------------------------
 console.log(`\n${"=".repeat(64)}`);
 console.log(`${pass} passed, ${fail} failed`);
 if (fail) {
@@ -713,5 +941,4 @@ if (fail) {
   for (const f of failures) console.log(`  - ${f}`);
   console.log('\nSee docs/ARCHITECTURE.md §5.3 — validation failure must block install.');
 }
-console.log(`${fail ? "1" : "0"} failure(s)`);
 process.exit(fail ? 1 : 0);

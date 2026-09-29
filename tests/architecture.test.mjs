@@ -18,11 +18,16 @@ import { langPackProblems, themeManifestProblems } from "./_extension-rules.mjs"
 // The field-type classification is imported, never re-listed: the validator and
 // the scaffolder read the same source, so "is this field prose?" has one answer.
 import {
+  ALLOWED_PAGE_BLOCKS,
   ALLOWED_TABLE_FIELD_TYPES,
   LANGUAGE_NEUTRAL_FIELD_TYPES,
+  PLUGIN_PAGE_SCREEN_PREFIX,
   PROSE_FIELD_TYPES,
   isProseFieldType,
 } from "../src/extensions/contract/manifest.ts";
+// The channel contract's closed type set has to agree with the admin control
+// list, the same way the table field types do. Imported, not copied.
+import { ALLOWED_CHANNEL_FIELD_TYPES, HOST_CHANNEL_CODES } from "../src/extensions/contract/channels.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -687,9 +692,26 @@ for (const [kind, dir] of [["theme", "themes"], ["plugin", "plugins"]]) {
     const declaredTables = new Set(
       (Array.isArray(manifest.tables) ? manifest.tables : []).map((t) => String(t?.name ?? ""))
     );
+    // Pages this plugin declared. A `plugin-page:<id>` menu that names an id
+    // which is not here opens a screen with nothing to render — the menu entry
+    // looks fine in the sidebar and the page behind it is blank, which reads as
+    // a load failure rather than a manifest typo. Rule 50.
+    const declaredPages = new Set(
+      (Array.isArray(manifest.adminPages) ? manifest.adminPages : []).map((p) => String(p?.id ?? ""))
+    );
     for (const menu of Array.isArray(manifest.adminMenus) ? manifest.adminMenus : []) {
       const where = `${dir}/${name}: menu "${menu?.id}"`;
       const screen = String(menu?.screen ?? "");
+      if (screen.startsWith(PLUGIN_PAGE_SCREEN_PREFIX)) {
+        const pageId = screen.slice(PLUGIN_PAGE_SCREEN_PREFIX.length);
+        if (!pageId) menuProblems.push(`${where} uses "${screen}" with no page id`);
+        else if (!declaredPages.has(pageId)) {
+          menuProblems.push(
+            `${where} opens page "${pageId}", which is not in its adminPages[] (${[...declaredPages].join(", ") || "none declared"})`
+          );
+        }
+        continue;
+      }
       if (!allowedScreens.includes(screen)) {
         menuProblems.push(`${where} uses unknown screen "${screen}"`);
         continue;
@@ -711,6 +733,204 @@ check(
   "every shipped admin menu uses a known screen and names a real table",
   menuProblems.length === 0,
   menuProblems.join("\n       ")
+);
+
+// ---------------------------------------------------------------------------
+section("Plugins declare data, not code (§10 rule 48)");
+// ---------------------------------------------------------------------------
+
+/**
+ * A plugin may not ship executable code. This is the rule that makes the whole
+ * no-build design honest: a Workers runtime forbids `eval` / `new Function` /
+ * dynamic `import` of user code, so a plugin that "runs" can only be one whose
+ * behaviour the host performs on its behalf.
+ *
+ * Two things would break it:
+ *
+ *   * a `.js`/`.mjs`/`.ts` file inside a shipped plugin directory — even unused,
+ *     its presence says "you may load this", and the next change loads it;
+ *   * a manifest key that names code (`entry`, `entryFile`, `handler`, `main`,
+ *     `script`) — the reference implementation had both `entry` and `entryFile`
+ *     for the same idea, which is two authorities for one fact.
+ *
+ * The check is on shipped directories, not on the contract type: a manifest
+ * arriving as a zip is validated by `validation.ts` (which has the same list),
+ * and this covers the ones in the repo that a reader would copy from.
+ */
+const CODE_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"];
+const CODE_KEYS = ["entry", "entryFile", "handler", "main", "script", "activate", "deactivate"];
+const pluginCodeProblems = [];
+{
+  const pluginBase = join(ROOT, "plugins");
+  if (existsSync(pluginBase)) {
+    for (const name of readdirSync(pluginBase)) {
+      const dir = join(pluginBase, name);
+      let isDir = false;
+      try { isDir = statSync(dir).isDirectory(); } catch { isDir = false; }
+      if (!isDir) continue;
+      for (const f of walk(dir, CODE_EXTENSIONS)) {
+        pluginCodeProblems.push(`plugins/${name}/${relative(dir, f).split(sep).join("/")} is executable code`);
+      }
+      const manifestPath = join(dir, "plugin.json");
+      if (!existsSync(manifestPath)) continue;
+      let manifest;
+      try { manifest = JSON.parse(read(manifestPath)); } catch { continue; }
+      for (const key of CODE_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(manifest, key)) {
+          pluginCodeProblems.push(
+            `plugins/${name}/plugin.json declares "${key}" — a plugin declares data, and the host performs the behaviour`
+          );
+        }
+      }
+    }
+  }
+}
+check(
+  "no shipped plugin ships executable code or a code-bearing manifest key",
+  pluginCodeProblems.length === 0,
+  pluginCodeProblems.join("\n       ")
+);
+
+// ---------------------------------------------------------------------------
+section("Declared plugin pages are renderable (§10 rule 49)");
+// ---------------------------------------------------------------------------
+
+/**
+ * Every `adminPages[].blocks[].type` must have a renderer in the admin SPA.
+ * A block type with no renderer draws nothing where content was promised — a
+ * blank screen at HTTP 200, which is the same shape of failure as a template
+ * slot that never fills.
+ *
+ * The SPA is plain ESM with no build step, so the renderer list is a switch in
+ * `public/admin/js/plugin-page.js`. Rather than parsing that switch (a
+ * structure that could be written several ways), the module exports the list it
+ * renders — one authority, and the check is a set comparison.
+ */
+const pageBlockProblems = [];
+{
+  const pinnedBlocks = ["table", "stats", "form"];
+  check(
+    "ALLOWED_PAGE_BLOCKS contains exactly the pinned set",
+    JSON.stringify([...ALLOWED_PAGE_BLOCKS].sort()) === JSON.stringify([...pinnedBlocks].sort()),
+    `implementation: ${JSON.stringify([...ALLOWED_PAGE_BLOCKS])}\n       pinned:         ${JSON.stringify(pinnedBlocks)}`
+  );
+
+  const rendererPath = join(ROOT, "public", "admin", "js", "plugin-page.js");
+  if (!existsSync(rendererPath)) {
+    pageBlockProblems.push("public/admin/js/plugin-page.js does not exist");
+  } else {
+    const src = read(rendererPath);
+    const match = src.match(/export const RENDERED_BLOCK_TYPES\s*=\s*\[([\s\S]*?)\]/);
+    const rendered = match ? [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+    if (!rendered.length) {
+      pageBlockProblems.push(
+        "plugin-page.js does not export RENDERED_BLOCK_TYPES — the guard cannot tell what it renders"
+      );
+    } else if (JSON.stringify([...rendered].sort()) !== JSON.stringify([...ALLOWED_PAGE_BLOCKS].sort())) {
+      pageBlockProblems.push(
+        `renderer/contract mismatch — contract: ${JSON.stringify([...ALLOWED_PAGE_BLOCKS])}, renderer: ${JSON.stringify(rendered)}`
+      );
+    }
+  }
+
+  // And every shipped page may only use block types the contract knows.
+  for (const name of existsSync(join(ROOT, "plugins")) ? readdirSync(join(ROOT, "plugins")) : []) {
+    const manifestPath = join(ROOT, "plugins", name, "plugin.json");
+    if (!existsSync(manifestPath)) continue;
+    let manifest;
+    try { manifest = JSON.parse(read(manifestPath)); } catch { continue; }
+    const tables = new Set((Array.isArray(manifest.tables) ? manifest.tables : []).map((t) => String(t?.name ?? "")));
+    for (const page of Array.isArray(manifest.adminPages) ? manifest.adminPages : []) {
+      for (const block of Array.isArray(page?.blocks) ? page.blocks : []) {
+        const where = `plugins/${name}: page "${page?.id}" block`;
+        const type = String(block?.type ?? "");
+        if (!(ALLOWED_PAGE_BLOCKS).includes(type)) {
+          pageBlockProblems.push(`${where} has unknown type "${type}"`);
+        }
+        // A block that reads a table must name one of *its own* tables.
+        if (type === "table" || type === "stats" || type === "form") {
+          const source = String(block?.source ?? "");
+          if (!source) pageBlockProblems.push(`${where} ("${type}") has no source`);
+          else if (!tables.has(source)) {
+            pageBlockProblems.push(`${where} reads table "${source}", which is not in its tables[]`);
+          }
+        }
+      }
+    }
+  }
+}
+check(
+  "every page block type has a renderer, and every shipped block is renderable",
+  pageBlockProblems.length === 0,
+  pageBlockProblems.join("\n       ")
+);
+
+// ---------------------------------------------------------------------------
+section("Channel declarations match the host (§10 rule 51)");
+// ---------------------------------------------------------------------------
+
+/**
+ * A channel declaration has two halves that must agree with the host:
+ *
+ *   * `code` must be one the host implements. Declaring an unimplemented
+ *     channel puts a selectable option in the admin that fails at send time.
+ *   * every `configSchema[].type` must have an admin control. The settings form
+ *     is generated from the schema, so an unrenderable type makes an empty
+ *     input that looks like a data problem rather than a manifest one.
+ *
+ * The control list lives in `public/admin/js/plugin-page.js`, which exports it
+ * for the same reason the block renderer exports its list: a guard that parses
+ * a switch statement is guessing at structure it could just be told.
+ */
+const channelProblems = [];
+{
+  const pinnedTypes = ["text", "password", "url", "number", "boolean"];
+  check(
+    "ALLOWED_CHANNEL_FIELD_TYPES contains exactly the pinned set",
+    JSON.stringify([...ALLOWED_CHANNEL_FIELD_TYPES].sort()) === JSON.stringify([...pinnedTypes].sort()),
+    `implementation: ${JSON.stringify([...ALLOWED_CHANNEL_FIELD_TYPES])}\n       pinned:         ${JSON.stringify(pinnedTypes)}`
+  );
+
+  const pageJsPath = join(ROOT, "public", "admin", "js", "plugin-page.js");
+  let controlled = [];
+  if (!existsSync(pageJsPath)) {
+    channelProblems.push("public/admin/js/plugin-page.js does not exist");
+  } else {
+    const src = read(pageJsPath);
+    const match = src.match(/export const RENDERED_CHANNEL_FIELD_TYPES\s*=\s*\[([\s\S]*?)\]/);
+    controlled = match ? [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+    if (!controlled.length) {
+      channelProblems.push("plugin-page.js does not export RENDERED_CHANNEL_FIELD_TYPES");
+    } else if (JSON.stringify([...controlled].sort()) !== JSON.stringify([...ALLOWED_CHANNEL_FIELD_TYPES].sort())) {
+      channelProblems.push(
+        `control/contract mismatch — contract: ${JSON.stringify([...ALLOWED_CHANNEL_FIELD_TYPES])}, controls: ${JSON.stringify(controlled)}`
+      );
+    }
+  }
+
+  for (const name of existsSync(join(ROOT, "plugins")) ? readdirSync(join(ROOT, "plugins")) : []) {
+    const manifestPath = join(ROOT, "plugins", name, "plugin.json");
+    if (!existsSync(manifestPath)) continue;
+    let manifest;
+    try { manifest = JSON.parse(read(manifestPath)); } catch { continue; }
+    for (const ch of Array.isArray(manifest.channels) ? manifest.channels : []) {
+      const where = `plugins/${name}: channel "${ch?.code}"`;
+      if (!(HOST_CHANNEL_CODES).includes(String(ch?.code ?? ""))) {
+        channelProblems.push(`${where} is not implemented by the host (${HOST_CHANNEL_CODES.join(", ")})`);
+      }
+      for (const field of Array.isArray(ch?.configSchema) ? ch.configSchema : []) {
+        const type = String(field?.type ?? "");
+        if (!(ALLOWED_CHANNEL_FIELD_TYPES).includes(type)) {
+          channelProblems.push(`${where} field "${field?.key}" has unknown type "${type}"`);
+        }
+      }
+    }
+  }
+}
+check(
+  "every declared channel and config field matches what the host implements",
+  channelProblems.length === 0,
+  channelProblems.join("\n       ")
 );
 
 // ---------------------------------------------------------------------------

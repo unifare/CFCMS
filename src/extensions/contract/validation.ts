@@ -27,11 +27,12 @@
  * guards anything installed at runtime from a third-party zip.
  */
 import {
-  ALLOWED_ADMIN_SCREENS, ALLOWED_FIELD_TYPES, ALLOWED_TABLE_FIELD_TYPES,
-  FIELD_KEY_RE, IDENT_RE, LOCALE_CODE_RE, RESERVED_COLUMNS, SCOPE_NAME_RE,
+  ALLOWED_ADMIN_SCREENS, ALLOWED_FIELD_TYPES, ALLOWED_PAGE_BLOCKS, ALLOWED_TABLE_FIELD_TYPES,
+  FIELD_KEY_RE, IDENT_RE, LOCALE_CODE_RE, PLUGIN_PAGE_SCREEN_PREFIX, RESERVED_COLUMNS, SCOPE_NAME_RE,
   TABLE_ADMIN_SCREENS, TABLE_LANGUAGE_STRATEGIES, TABLE_NAME_RE, isProseFieldType, validExtensionName,
   validTemplateName, validVersion,
 } from "./manifest";
+import { ALLOWED_CHANNEL_FIELD_TYPES, HOST_CHANNEL_CODES, isChannelFieldType, isHostChannelCode } from "./channels";
 import { isCapability } from "./capabilities";
 import { DECLARABLE_HOOKS } from "./hooks";
 import { isDomainEvent } from "./events";
@@ -66,23 +67,180 @@ export function validateManifest(manifest: any, type: "plugin" | "theme"): Valid
   validateInlineLangs(manifest, type);
 
   if (type === "theme") validateThemeManifest(manifest);
-  else {
-    // Plugins get their menus validated too. Until batch 3 this branch did not
-    // exist, so a plugin's `adminMenus` was silently accepted and never read —
-    // the author saw an installed plugin and no menu, with nothing to explain
-    // the gap.
-    validateAdminMenus(manifest.adminMenus, new Set<string>(), "plugin", String(manifest.name));
-    validateHooks(manifest.hooks);
-    validateSubscriptions(manifest.subscribes);
-    // `tables[]` is not ignored, it is refused. Accepting it would let a plugin
-    // declare a table the platform never creates, and the failure would only
-    // show up later as an empty admin page.
-    if (manifest.tables !== undefined) {
-      fail("tables[] is not supported for plugins yet; plugin-owned tables are registered tech debt (AGENTS.md)");
+  else validatePluginManifest(manifest);
+
+  return { name: String(manifest.name), title: String(manifest.title || manifest.name), version: String(manifest.version), manifest };
+}
+
+/**
+ * The plugin install boundary (rules 48–51).
+ *
+ * Plugins used to be validated much more lightly than themes, and two of the
+ * gaps were the *"declared but never read"* family this repo keeps hitting: a
+ * plugin's `adminMenus` was accepted and dropped (fixed in batch 3), and
+ * `tables[]` was refused outright because the platform had nowhere to register
+ * a plugin's tables (fixed by migration 0014).
+ *
+ * The remaining rules are the ones that make "a plugin is data, not code" true
+ * in a way a machine can check:
+ *
+ *   48. no executable code — no code-bearing key in the manifest, and no
+ *       `.js`/`.ts` file in the package. A Workers runtime cannot load plugin
+ *       code, and running it would breach the capability model, so a manifest
+ *       that asks for it is rejected with the reason rather than ignored.
+ *   49. every `adminPages[].blocks[].type` is one the SPA renders.
+ *   50. a `plugin-page:<id>` menu opens a page the plugin actually declared.
+ *   51. every channel `code` is one the host implements, and every
+ *       `configSchema[].type` has an admin control.
+ */
+function validatePluginManifest(m: any) {
+  const name = String(m.name);
+
+  // Rule 48, first half: a code-bearing key. Each of these appeared in the
+  // reference implementation as a way to register plugin behaviour; accepting
+  // one here would be accepting a promise the runtime cannot keep.
+  for (const key of ["entry", "entryFile", "handler", "main", "script", "activate", "deactivate"]) {
+    if (m[key] !== undefined) {
+      fail(
+        `plugin declares "${key}", which names executable code — a Workers runtime cannot load plugin code, ` +
+        `so plugins declare data and the host performs the behaviour (rule 48)`
+      );
     }
   }
 
-  return { name: String(manifest.name), title: String(manifest.title || manifest.name), version: String(manifest.version), manifest };
+  // Tables are materialised now, so this is real validation rather than the
+  // refusal that used to stand here.
+  const declaredTables = validateTables(m);
+
+  const declaredPages = validateAdminPages(m.adminPages, declaredTables, name);
+  validateChannels(m.channels);
+  validateAdminMenus(m.adminMenus, declaredTables, "plugin", name, declaredPages);
+
+  validateHooks(m.hooks);
+  validateSubscriptions(m.subscribes);
+}
+
+/**
+ * Validate `adminPages[]` (rules 49 and 50) and return the declared page ids.
+ *
+ * A page is a *declaration*: an id, a path, and a list of blocks. Nothing here
+ * can execute, which is the point — the reference implementation's
+ * `sdk.adminPage(path, handler)` cannot exist in this runtime, so the page is
+ * described as data and rendered by the host.
+ */
+function validateAdminPages(pages: unknown, declaredTables: Set<string>, ownerName: string): Set<string> {
+  const seen = new Set<string>();
+  for (const page of asArray(pages)) {
+    if (!page || typeof page !== "object") fail("adminPages entries must be objects");
+
+    const id = String(page.id || "");
+    if (!id) fail("adminPages entries need an id");
+    // The id becomes `plugin-page:<id>` in the menu registry and the SPA's page
+    // key, so it has to survive being an identifier.
+    if (!IDENT_RE.test(id)) fail(`Invalid admin page id: "${id}"`);
+    if (seen.has(id)) fail(`Duplicate admin page id: ${id}`);
+    seen.add(id);
+
+    const path = String(page.path || "");
+    if (!path) fail(`adminPage ${id}: needs a path`);
+    // A single segment, because the host owns the surrounding routes: a plugin
+    // that could choose an absolute path could shadow a platform screen.
+    if (path.includes("/") || path.startsWith(".") || path.includes("..")) {
+      fail(`adminPage ${id}: path must be a single relative segment, got "${path}"`);
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/i.test(path)) {
+      fail(`adminPage ${id}: invalid path "${path}"`);
+    }
+
+    // Titles are dictionary keys under the owner's namespace (rule 11).
+    for (const key of ["titleKey", "labelKey"]) {
+      if (page[key] === undefined || page[key] === null) continue;
+      const value = String(page[key]);
+      if (!value.startsWith(`plugin.${ownerName}.`)) {
+        fail(`adminPage ${id}: ${key} must match "plugin.${ownerName}.<key>" (rule 11), got "${value}"`);
+      }
+    }
+
+    for (const block of asArray(page.blocks)) {
+      if (!block || typeof block !== "object") fail(`adminPage ${id}: blocks entries must be objects`);
+      const type = String(block.type || "");
+      if (!(ALLOWED_PAGE_BLOCKS as readonly string[]).includes(type)) {
+        fail(`adminPage ${id}: unsupported block type "${type}" (allowed: ${ALLOWED_PAGE_BLOCKS.join(", ")})`);
+      }
+      // Every block type reads one of the plugin's *own* tables. A block with
+      // no source would render nothing; one naming a table the plugin never
+      // declared would read another extension's data or an empty result.
+      const source = String(block.source || "");
+      if (!source) fail(`adminPage ${id}: block "${type}" needs a source table`);
+      if (!declaredTables.has(source)) {
+        fail(`adminPage ${id}: block "${type}" reads table "${source}", which is not declared in tables[]`);
+      }
+      if (block.type === "stats" && block.aggregate !== undefined) {
+        const agg = String(block.aggregate);
+        if (agg !== "count" && agg !== "sum") fail(`adminPage ${id}: unsupported aggregate "${agg}"`);
+        if (agg === "sum" && !String(block.field || "")) {
+          fail(`adminPage ${id}: aggregate "sum" needs a field`);
+        }
+      }
+      for (const listKey of ["columns", "fields"]) {
+        if (block[listKey] === undefined) continue;
+        if (!Array.isArray(block[listKey])) fail(`adminPage ${id}: ${listKey} must be an array`);
+      }
+    }
+  }
+  return seen;
+}
+
+/**
+ * Validate `channels[]` (rule 51).
+ *
+ * Two halves, both about the admin form that gets generated from this
+ * declaration: the `code` must be one the host can actually deliver through
+ * (otherwise the admin offers an option that fails at send time), and each
+ * config field's `type` must have exactly one control (otherwise the form draws
+ * an empty input, and an empty input reads as broken data rather than a
+ * manifest mistake).
+ */
+function validateChannels(channels: unknown) {
+  const seenCodes = new Set<string>();
+  for (const ch of asArray(channels)) {
+    if (!ch || typeof ch !== "object") fail("channels entries must be objects");
+    const code = String(ch.code || "");
+    if (!code) fail("channels entries need a code");
+    if (seenCodes.has(code)) fail(`Duplicate channel code: ${code}`);
+    seenCodes.add(code);
+
+    if (!isHostChannelCode(code)) {
+      fail(
+        `channel "${code}" is not implemented by the host (available: ${HOST_CHANNEL_CODES.join(", ")}) — ` +
+        `offering a channel the platform cannot deliver would put an option in the admin that fails at send time`
+      );
+    }
+
+    const labelKey = String(ch.labelKey || "");
+    if (!labelKey) fail(`channel ${code}: needs a labelKey`);
+
+    const seenFields = new Set<string>();
+    for (const field of asArray(ch.configSchema)) {
+      if (!field || typeof field !== "object") fail(`channel ${code}: configSchema entries must be objects`);
+      const key = String(field.key || "");
+      if (!FIELD_KEY_RE.test(key)) fail(`channel ${code}: invalid config field key "${key}"`);
+      if (seenFields.has(key)) fail(`channel ${code}: duplicate config field "${key}"`);
+      seenFields.add(key);
+
+      const type = String(field.type || "");
+      if (!isChannelFieldType(type)) {
+        fail(
+          `channel ${code} field "${key}": unsupported type "${type}" ` +
+          `(allowed: ${ALLOWED_CHANNEL_FIELD_TYPES.join(", ")}) — every type needs exactly one admin control`
+        );
+      }
+      // Same namespacing rule as menu labels: a config label outside the owner's
+      // namespace never resolves, so it would silently stay untranslated.
+      const fieldLabelKey = String(field.labelKey || "");
+      if (!fieldLabelKey) fail(`channel ${code} field "${key}": needs a labelKey`);
+    }
+  }
 }
 
 /**
@@ -189,7 +347,8 @@ function validateAdminMenus(
   menus: unknown,
   declaredTables: Set<string>,
   ownerType: "plugin" | "theme",
-  ownerName: string
+  ownerName: string,
+  declaredPages: Set<string> = new Set<string>()
 ) {
   const seen = new Set<string>();
   // Rule 11 (§10): pack keys are namespaced by owner. A `label_key` outside
@@ -211,7 +370,23 @@ function validateAdminMenus(
     seen.add(id);
 
     const screen = String(menu.screen || "");
-    if (!(ALLOWED_ADMIN_SCREENS as readonly string[]).includes(screen)) {
+
+    // `plugin-page:<id>` opens a page the plugin declared (rule 50). Checked
+    // before the fixed-screen list, because the whole point is that it is
+    // parameterised — it can never be a member of that list.
+    if (screen.startsWith(PLUGIN_PAGE_SCREEN_PREFIX)) {
+      const pageId = screen.slice(PLUGIN_PAGE_SCREEN_PREFIX.length);
+      if (!pageId) fail(`adminMenu ${id}: screen "${screen}" names no page`);
+      if (!declaredPages.has(pageId)) {
+        // An id that resolves to nothing opens a screen with nothing to render:
+        // the sidebar entry looks correct and the page behind it is blank, which
+        // reads as a load failure rather than a manifest typo.
+        fail(
+          `adminMenu ${id}: opens plugin page "${pageId}", which is not in adminPages[]` +
+          (declaredPages.size ? ` (declared: ${[...declaredPages].join(", ")})` : " (none declared)")
+        );
+      }
+    } else if (!(ALLOWED_ADMIN_SCREENS as readonly string[]).includes(screen)) {
       fail(`Unsupported admin screen "${screen}" for menu ${id}`);
     }
 
@@ -237,12 +412,6 @@ function validateAdminMenus(
       : {};
 
     if ((TABLE_ADMIN_SCREENS as readonly string[]).includes(screen)) {
-      // Deliberately before the declared-table lookup, so the message a plugin
-      // author gets says *why*, not "table not declared" for a table they were
-      // never allowed to declare in the first place.
-      if (ownerType === "plugin") {
-        fail(`adminMenu ${id}: screen "${screen}" is not available to plugins yet (plugin-owned tables are not materialised; see AGENTS.md tech debt)`);
-      }
       const table = String(args.table || "");
       if (!table) fail(`adminMenu ${id}: screen "${screen}" requires args.table`);
       if (!declaredTables.has(table)) {
@@ -357,6 +526,71 @@ function validateThemeManifest(m: any) {
   // unrepresentable DDL. Fields and `translatable` are checked against each
   // other because "translate a field that does not exist" is the most likely
   // mistake and produces a silently-empty translation table.
+  const declaredTables = validateTables(m);
+
+  // A route resolving against a table must declare that table. Checked here as
+  // well as in the architecture test: the test guards the *shipped* themes,
+  // this guards anything installed at runtime, including third-party zips.
+  for (const r of asArray(m.routes)) {
+    const tbl = r?.resolve?.table;
+    if (tbl && !declaredTables.has(String(tbl))) {
+      fail(`route ${r?.path}: resolves table "${tbl}" which is not declared in tables[]`);
+    }
+  }
+
+  // Now that `declaredTables` exists, the menus can be checked against it.
+  validateAdminMenus(m.adminMenus, declaredTables, "theme", String(m.name));
+
+  for (const code of asArray(m.locales)) {
+    if (!LOCALE_CODE_RE.test(String(code))) {
+      fail(`Invalid locale code: "${code}" (expected BCP-47 shape, e.g. "en", "zh-CN")`);
+    }
+  }
+
+  for (const b of asArray(m.blocks)) {
+    if (!b || typeof b !== "object") fail("blocks entries must be objects");
+    if (!String(b.name || "")) fail("blocks entries need a name");
+    if (!IDENT_RE.test(String(b.name))) fail(`Invalid block name: ${b.name}`);
+  }
+
+  for (const s of asArray(m.settings)) {
+    if (!s || typeof s !== "object") fail("settings entries must be objects");
+    const skey = String(s.key || "");
+    if (!skey) fail("settings entries need a key");
+    // Dotted keys are the convention (`shop.currency`); a bare identifier also
+    // works. Anything else breaks the settings lookup, which splits on dots.
+    if (!/^[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*$/i.test(skey)) fail(`Invalid setting key: "${skey}"`);
+    if (s.type !== undefined && !(ALLOWED_FIELD_TYPES as readonly string[]).includes(String(s.type))) {
+      fail(`setting ${skey}: unsupported type "${s.type}"`);
+    }
+    if (s.options !== undefined && !Array.isArray(s.options)) fail(`setting ${skey}: options must be an array`);
+    if (s.default !== undefined && typeof s.default === "object" && s.default !== null) {
+      fail(`setting ${skey}: default must be a scalar`);
+    }
+  }
+
+  if (m.runtime !== undefined && !["declarative", "worker"].includes(String(m.runtime))) {
+    fail(`Unsupported runtime: ${m.runtime}`);
+  }
+
+  // A worker-runtime theme renders from code and declares its entry file. Both
+  // halves must agree or activation succeeds and the theme never renders.
+  if (String(m.runtime) === "worker" && !String(m.entry || "")) {
+    fail('runtime "worker" requires an "entry" file name');
+  }
+}
+
+/**
+ * Validate a `tables[]` declaration and return the logical names it declares.
+ *
+ * Shared by themes and plugins. The rules below are about the *declaration*,
+ * not about who made it: the language requirement (prose must be translatable,
+ * language-neutral must not be) and the naming rules apply identically to both
+ * owners, and a second copy would be a second answer waiting to diverge — with
+ * the symptom being a plugin whose prose silently stops being translatable the
+ * day someone fixes one copy only.
+ */
+function validateTables(m: any): Set<string> {
   const declaredTables = new Set<string>();
   for (const t of asArray(m.tables)) {
     if (!t || typeof t !== "object") fail("tables entries must be objects");
@@ -501,55 +735,6 @@ function validateThemeManifest(m: any) {
       fail(`table ${tname}: unsupported admin screen "${listScreen}"`);
     }
   }
-
-  // A route resolving against a table must declare that table. Checked here as
-  // well as in the architecture test: the test guards the *shipped* themes,
-  // this guards anything installed at runtime, including third-party zips.
-  for (const r of asArray(m.routes)) {
-    const tbl = r?.resolve?.table;
-    if (tbl && !declaredTables.has(String(tbl))) {
-      fail(`route ${r?.path}: resolves table "${tbl}" which is not declared in tables[]`);
-    }
-  }
-
-  // Now that `declaredTables` exists, the menus can be checked against it.
-  validateAdminMenus(m.adminMenus, declaredTables, "theme", String(m.name));
-
-  for (const code of asArray(m.locales)) {
-    if (!LOCALE_CODE_RE.test(String(code))) {
-      fail(`Invalid locale code: "${code}" (expected BCP-47 shape, e.g. "en", "zh-CN")`);
-    }
-  }
-
-  for (const b of asArray(m.blocks)) {
-    if (!b || typeof b !== "object") fail("blocks entries must be objects");
-    if (!String(b.name || "")) fail("blocks entries need a name");
-    if (!IDENT_RE.test(String(b.name))) fail(`Invalid block name: ${b.name}`);
-  }
-
-  for (const s of asArray(m.settings)) {
-    if (!s || typeof s !== "object") fail("settings entries must be objects");
-    const skey = String(s.key || "");
-    if (!skey) fail("settings entries need a key");
-    // Dotted keys are the convention (`shop.currency`); a bare identifier also
-    // works. Anything else breaks the settings lookup, which splits on dots.
-    if (!/^[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*$/i.test(skey)) fail(`Invalid setting key: "${skey}"`);
-    if (s.type !== undefined && !(ALLOWED_FIELD_TYPES as readonly string[]).includes(String(s.type))) {
-      fail(`setting ${skey}: unsupported type "${s.type}"`);
-    }
-    if (s.options !== undefined && !Array.isArray(s.options)) fail(`setting ${skey}: options must be an array`);
-    if (s.default !== undefined && typeof s.default === "object" && s.default !== null) {
-      fail(`setting ${skey}: default must be a scalar`);
-    }
-  }
-
-  if (m.runtime !== undefined && !["declarative", "worker"].includes(String(m.runtime))) {
-    fail(`Unsupported runtime: ${m.runtime}`);
-  }
-
-  // A worker-runtime theme renders from code and declares its entry file. Both
-  // halves must agree or activation succeeds and the theme never renders.
-  if (String(m.runtime) === "worker" && !String(m.entry || "")) {
-    fail('runtime "worker" requires an "entry" file name');
-  }
+  return declaredTables;
 }
+
