@@ -50,7 +50,7 @@ function walk(dir, exts) {
 export function langPackProblems(root) {
   const problems = [];
   for (const kind of ["theme", "plugin"]) {
-    const baseDir = join(root, "site", kind === "theme" ? "themes" : "plugins");
+    const baseDir = join(root, "content", kind === "theme" ? "themes" : "plugins");
     if (!existsSync(baseDir)) continue;
     for (const owner of readdirSync(baseDir)) {
       const langDir = join(baseDir, owner, "langs");
@@ -61,13 +61,13 @@ export function langPackProblems(root) {
         try {
           dict = JSON.parse(read(join(langDir, file)));
         } catch (e) {
-          problems.push(`site/${kind}s/${owner}/langs/${file}: invalid JSON (${e.message})`);
+          problems.push(`content/${kind}s/${owner}/langs/${file}: invalid JSON (${e.message})`);
           continue;
         }
         const prefix = `${kind}.${owner}.`;
         for (const key of Object.keys(dict)) {
           if (!key.startsWith(prefix) && !key.startsWith("core.")) {
-            problems.push(`site/${kind}s/${owner}/langs/${file}: key "${key}" lacks prefix "${prefix}"`);
+            problems.push(`content/${kind}s/${owner}/langs/${file}: key "${key}" lacks prefix "${prefix}"`);
           }
         }
       }
@@ -91,7 +91,7 @@ const RESERVED_COLUMNS = [
  * it here makes the manifest the single place a theme can be wrong.
  */
 export function themeManifestProblems(root) {
-  const themesRoot = join(root, "site", "themes");
+  const themesRoot = join(root, "content", "themes");
   const themeDirs = existsSync(themesRoot)
     ? readdirSync(themesRoot).filter((d) => statSync(join(themesRoot, d)).isDirectory())
     : [];
@@ -106,7 +106,7 @@ export function themeManifestProblems(root) {
     try {
       manifest = JSON.parse(read(manifestPath));
     } catch (e) {
-      problems.push(`site/themes/${name}/theme.json: invalid JSON (${e.message})`);
+      problems.push(`content/themes/${name}/theme.json: invalid JSON (${e.message})`);
       continue;
     }
 
@@ -131,7 +131,7 @@ export function themeManifestProblems(root) {
       }
       for (const t of templates) {
         if (!present.has(t)) {
-          problems.push(`site/themes/${name}: declares template "${t}" but ships no templates/${t}.html`);
+          problems.push(`content/themes/${name}: declares template "${t}" but ships no templates/${t}.html`);
         }
       }
     }

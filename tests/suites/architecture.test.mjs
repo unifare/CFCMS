@@ -265,8 +265,8 @@ section("Extensions never touch the database directly (§10 rule 9)");
  */
 const dbWriteRe = /\.prepare\s*\(\s*[`"']\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b/i;
 for (const [label, dirs] of [
-  ["site/themes/", ["site/themes"]],
-  ["site/plugins/", ["site/plugins"]],
+  ["content/themes/", ["content/themes"]],
+  ["content/plugins/", ["content/plugins"]],
 ]) {
   const files = dirs.flatMap((d) => walk(join(ROOT, d), [".js", ".mjs", ".ts"]));
   const offenders = [];
@@ -454,7 +454,7 @@ section("i18n key namespacing (§10 rule 7)");
  * copied rule drifts from the original, and the copy is always the stale one.
  */
 for (const kind of ["theme", "plugin"]) {
-  const problems = langPackProblems(ROOT).filter((p) => p.startsWith(`site/${kind}s/`));
+  const problems = langPackProblems(ROOT).filter((p) => p.startsWith(`content/${kind}s/`));
   check(
     `${kind} language packs are correctly namespaced`,
     problems.length === 0,
@@ -543,7 +543,7 @@ check(
  */
 const langOffenders = [];
 let langTablesChecked = 0;
-for (const dir of ["site/themes", "site/plugins"]) {
+for (const dir of ["content/themes", "content/plugins"]) {
   for (const f of walk(join(ROOT, dir), [".json"])) {
     if (!f.endsWith("theme.json") && !f.endsWith("plugin.json")) continue;
     let manifest;
@@ -598,7 +598,7 @@ section("Extension entry points exist");
  * with the site already switched over. Checking the file exists is cheap and
  * turns that into a caught mistake.
  */
-const themeRoot = join(ROOT, "site", "themes");
+const themeRoot = join(ROOT, "content", "themes");
 const themeDirs = existsSync(themeRoot)
   ? readdirSync(themeRoot).filter((d) => statSync(join(themeRoot, d)).isDirectory())
   : [];
@@ -616,12 +616,12 @@ for (const name of themeDirs) {
   if (manifest.runtime === "worker") {
     const entry = String(manifest.entry ?? "worker.js");
     if (!existsSync(join(themeRoot, name, entry))) {
-      entryProblems.push(`site/themes/${name}: runtime=worker but ${entry} is missing`);
+      entryProblems.push(`content/themes/${name}: runtime=worker but ${entry} is missing`);
     }
   }
 }
 
-const pluginRoot = join(ROOT, "site", "plugins");
+const pluginRoot = join(ROOT, "content", "plugins");
 const pluginDirs = existsSync(pluginRoot)
   ? readdirSync(pluginRoot).filter((d) => statSync(join(pluginRoot, d)).isDirectory())
   : [];
@@ -682,7 +682,7 @@ check(
 
 const TABLE_SCREENS = ["table-list", "table-edit"];
 const menuProblems = [];
-for (const [kind, dir] of [["theme", "site/themes"], ["plugin", "site/plugins"]]) {
+for (const [kind, dir] of [["theme", "content/themes"], ["plugin", "content/plugins"]]) {
   const base = join(ROOT, dir);
   if (!existsSync(base)) continue;
   for (const name of readdirSync(base)) {
@@ -762,7 +762,7 @@ const CODE_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"];
 const CODE_KEYS = ["entry", "entryFile", "handler", "main", "script", "activate", "deactivate"];
 const pluginCodeProblems = [];
 {
-  const pluginBase = join(ROOT, "site", "plugins");
+  const pluginBase = join(ROOT, "content", "plugins");
   if (existsSync(pluginBase)) {
     for (const name of readdirSync(pluginBase)) {
       const dir = join(pluginBase, name);
@@ -852,8 +852,8 @@ const pageBlockProblems = [];
   }
 
   // And every shipped page may only use block types the contract knows.
-  for (const name of existsSync(join(ROOT, "site", "plugins")) ? readdirSync(join(ROOT, "site", "plugins")) : []) {
-    const manifestPath = join(ROOT, "site", "plugins", name, "plugin.json");
+  for (const name of existsSync(join(ROOT, "content", "plugins")) ? readdirSync(join(ROOT, "content", "plugins")) : []) {
+    const manifestPath = join(ROOT, "content", "plugins", name, "plugin.json");
     if (!existsSync(manifestPath)) continue;
     let manifest;
     try { manifest = JSON.parse(read(manifestPath)); } catch { continue; }
@@ -950,8 +950,8 @@ const channelProblems = [];
     }
   }
 
-  for (const name of existsSync(join(ROOT, "site", "plugins")) ? readdirSync(join(ROOT, "site", "plugins")) : []) {
-    const manifestPath = join(ROOT, "site", "plugins", name, "plugin.json");
+  for (const name of existsSync(join(ROOT, "content", "plugins")) ? readdirSync(join(ROOT, "content", "plugins")) : []) {
+    const manifestPath = join(ROOT, "content", "plugins", name, "plugin.json");
     if (!existsSync(manifestPath)) continue;
     let manifest;
     try { manifest = JSON.parse(read(manifestPath)); } catch { continue; }
@@ -1002,13 +1002,13 @@ const retiredOffenders = [];
 for (const f of walk(join(ROOT, "src"), [".ts"])) {
   if (withoutComments(read(f)).includes(RETIRED)) retiredOffenders.push(`${rel(f)} still references ${RETIRED}`);
 }
-const migrationsRoot = join(ROOT, "site", "migrations");
+const migrationsRoot = join(ROOT, "content", "migrations");
 const laterMigrations = readdirSync(migrationsRoot)
   .filter((f) => /^\d+_.*\.sql$/.test(f))
   .filter((f) => Number(f.split("_")[0]) > 12)
   .filter((f) => withoutComments(read(join(migrationsRoot, f))).includes(RETIRED));
 for (const f of laterMigrations) {
-  retiredOffenders.push(`site/migrations/${f} references ${RETIRED} after 0012 retired it`);
+  retiredOffenders.push(`content/migrations/${f} references ${RETIRED} after 0012 retired it`);
 }
 check(
   "no source file or later migration uses the dropped menu table",

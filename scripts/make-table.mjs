@@ -166,7 +166,7 @@ export function main(argv, io = console) {
 
     const themeName = assertName(args._[0], "theme");
     const tableName = String(args._[1]);
-    const outRoot = String(args.out || join(ROOT, "site", "themes"));
+    const outRoot = String(args.out || join(ROOT, "content", "themes"));
     const themeDir = join(outRoot, themeName);
 
     const { tableDecl, menuDecl } = tableDeclarations({

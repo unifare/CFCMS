@@ -110,7 +110,7 @@ async function bundle(entry, outName) {
 }
 
 const THEME = "fixture";
-const themeDir = join(root, "site", "themes", THEME);
+const themeDir = join(root, "content", "themes", THEME);
 
 async function main() {
   const { validateManifest } = await bundle("src/extensions/contract/validation.ts", "fixture-validation.mjs");

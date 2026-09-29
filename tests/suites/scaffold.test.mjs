@@ -79,17 +79,17 @@ function checkTruthy(name, v) {
 function section(t) { console.log(`\n${t}`); }
 
 /**
- * Generated output goes to a scratch tree, *not* to the repo's `site/themes/`.
+ * Generated output goes to a scratch tree, *not* to the repo's `content/themes/`.
  *
- * The scratch root mirrors the repo layout (`<root>/site/themes/<name>/`), because
- * the architecture rules take a root and read `<root>/site/themes` — that is what
+ * The scratch root mirrors the repo layout (`<root>/content/themes/<name>/`), because
+ * the architecture rules take a root and read `<root>/content/themes` — that is what
  * lets this suite apply the real rules to a tree the repo never sees.
  */
 const SCRATCH = join(root, ".wrangler", "scaffold-probe");
 const THEME = "probe-theme";
 const PLUGIN = "probe-plugin";
-const themesRoot = join(SCRATCH, "site", "themes");
-const pluginsRoot = join(SCRATCH, "site", "plugins");
+const themesRoot = join(SCRATCH, "content", "themes");
+const pluginsRoot = join(SCRATCH, "content", "plugins");
 const themeDir = join(themesRoot, THEME);
 const pluginDir = join(pluginsRoot, PLUGIN);
 

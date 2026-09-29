@@ -26,7 +26,7 @@ function walk(dir, out = []) {
 }
 
 const rows = [];
-for (const f of [...walk(join(ROOT, "site", "themes")), ...walk(join(ROOT, "site", "plugins"))]) {
+for (const f of [...walk(join(ROOT, "content", "themes")), ...walk(join(ROOT, "content", "plugins"))]) {
   if (!/[\\/](theme|plugin)\.json$/.test(f)) continue;
   let m;
   try { m = JSON.parse(readFileSync(f, "utf8")); } catch { continue; }

@@ -272,7 +272,7 @@ export function main(argv, io = console) {
 
     const name = assertName(args._[0], "theme");
     const title = String(args.title || titleCase(name));
-    const outRoot = String(args.out || join(ROOT, "site", "themes"));
+    const outRoot = String(args.out || join(ROOT, "content", "themes"));
     const dir = join(outRoot, name);
 
     const { files } = themeFiles({ name, title });

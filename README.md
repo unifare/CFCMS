@@ -33,7 +33,7 @@ Uploaded extension JavaScript is **not executed in the main Worker**. This is in
 
 ## Migrations
 
-Apply migrations in order with Wrangler D1 migrations. v0.7 adds `site/migrations/0007_v070.sql`.
+Apply migrations in order with Wrangler D1 migrations. v0.7 adds `content/migrations/0007_v070.sql`.
 
 ## Default admin
 
@@ -70,7 +70,7 @@ tests/
   tools/      injectors, diagnostics and migration appliers — run by hand
   fixtures/   shared test harness code imported by suites
 public/admin/ the no-build admin SPA (served as static assets)
-site/         everything that gets *loaded* into a running install
+content/      everything that gets *loaded* into a running install
   themes/       shipped themes (`default`, `fixture`)
   plugins/      shipped plugins (`notify`)
   migrations/   ordered D1 migration stream
@@ -78,10 +78,10 @@ scripts/      scaffolder (make-*), deploy helpers, the launcher pair
 docs/         see the documentation map above
 ```
 
-`site/` groups the content an install consumes — themes, plugins and the
+`content/` groups the content an install consumes — themes, plugins and the
 migration stream — so the repository root stays code-and-config only. Theme and
-plugin scaffolds default into `site/themes` and `site/plugins`; `wrangler.jsonc`
-points `migrations_dir` at `site/migrations`.
+plugin scaffolds default into `content/themes` and `content/plugins`; `wrangler.jsonc`
+points `migrations_dir` at `content/migrations`.
 
 ## Development
 
@@ -117,7 +117,7 @@ sh scripts/cfpress.sh            # Linux / macOS / Git Bash
 ```bash
 sh scripts/cfpress.sh dev                  # start the local dev server
 sh scripts/cfpress.sh migrate:local        # apply migrations locally
-sh scripts/cfpress.sh theme site/themes/eshop  # upload + activate a theme
+sh scripts/cfpress.sh theme content/themes/eshop  # upload + activate a theme
 sh scripts/cfpress.sh test                 # run every suite, one process each
 sh scripts/cfpress.sh test multisite       # run one suite
 sh scripts/cfpress.sh typecheck            # tsc --noEmit

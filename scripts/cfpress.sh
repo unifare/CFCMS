@@ -152,7 +152,7 @@ act_dev() {
 
 act_theme_deploy() {
   require_wrangler
-  theme="${1:-site/themes/default}"
+  theme="${1:-content/themes/default}"
   [ -d "$theme" ] || die "theme directory not found: $theme"
   head1 "deploy theme: $theme"
   dim "requires a running dev server at http://$DEV_HOST:$DEV_PORT (menu 1)"
@@ -368,7 +368,7 @@ act_doctor() {
     warn "config     $CONFIG MISSING"
   fi
 
-  n=$(ls site/migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
+  n=$(ls content/migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
   say "  migrations $n file(s)"
   s=$(ls tests/suites/*.test.mjs 2>/dev/null | wc -l | tr -d ' ')
   say "  suites     $s test suite(s)"
@@ -505,7 +505,7 @@ menu_loop() {
     case "$choice" in
       1) act_dev ;;
       2) act_migrate_local ;;
-      3) theme=$(menu_read "  theme dir [site/themes/default]: "); act_theme_deploy "${theme:-site/themes/default}" ;;
+      3) theme=$(menu_read "  theme dir [content/themes/default]: "); act_theme_deploy "${theme:-content/themes/default}" ;;
       4) act_test ;;
       5) act_typecheck ;;
       6) act_audit ;;

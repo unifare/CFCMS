@@ -4,7 +4,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { zipSync } from "fflate";
 
-const themeDir = process.argv[2] ?? "site/themes/default";
+const themeDir = process.argv[2] ?? "content/themes/default";
 const base = process.argv[3] ?? "http://127.0.0.1:47913";
 const siteId = process.argv[4] ?? "default";
 

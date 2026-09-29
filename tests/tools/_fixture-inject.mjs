@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const THEME_DIR = join(root, "site", "themes", "fixture");
+const THEME_DIR = join(root, "content", "themes", "fixture");
 const SNAP = join(root, ".wrangler", "fixture-snapshot");
 
 const hash = (s) => createHash("sha256").update(s).digest("hex").slice(0, 16);

@@ -9,7 +9,7 @@
       "binding": "DB",
       "database_name": "cfpress",
       "database_id": "REPLACE_WITH_D1_DATABASE_ID",
-      "migrations_dir": "site/migrations"
+      "migrations_dir": "content/migrations"
     }
   ],
   "r2_buckets": [

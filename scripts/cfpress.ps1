@@ -219,7 +219,7 @@ function Invoke-Dev {
 }
 
 function Invoke-ThemeDeploy {
-    param([string]$Theme = 'site/themes/default')
+    param([string]$Theme = 'content/themes/default')
     Assert-Node
     if (-not (Test-Path $Theme)) { Die "theme directory not found: $Theme" }
     Write-Head "deploy theme: $Theme"
@@ -591,8 +591,8 @@ function Start-MenuLoop {
             '^1$' { $null = Invoke-Dev }
             '^2$' { $null = Invoke-MigrateLocal }
             '^3$' {
-                $t = Read-MenuInput '  theme dir [site/themes/default]: '
-                if (-not $t) { $t = 'site/themes/default' }
+                $t = Read-MenuInput '  theme dir [content/themes/default]: '
+                if (-not $t) { $t = 'content/themes/default' }
                 $null = Invoke-ThemeDeploy $t
             }
             '^4$' { $null = Invoke-Test }

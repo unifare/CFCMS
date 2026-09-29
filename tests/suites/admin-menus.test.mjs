@@ -162,10 +162,10 @@ function buildThemeZip() {
 function buildPluginZip() {
   // Read the *shipped* plugin manifest when it exists, so the test proves the
   // real one validates and registers rather than a fixture written to match the
-  // code. `site/plugins/notify` is the reference plugin; until it lands, fall back to
-  // an inline manifest equivalent to the retired `site/plugins/seo` one, so this
+  // code. `content/plugins/notify` is the reference plugin; until it lands, fall back to
+  // an inline manifest equivalent to the retired `content/plugins/seo` one, so this
   // suite keeps its coverage either way.
-  const shipped = join(root, "site", "plugins", PLUGIN, "plugin.json");
+  const shipped = join(root, "content", "plugins", PLUGIN, "plugin.json");
   const manifest = existsSync(shipped)
     ? JSON.parse(readFileSync(shipped, "utf8"))
     : {

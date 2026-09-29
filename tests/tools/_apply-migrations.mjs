@@ -104,7 +104,7 @@ if (isMain) {
   }
   console.log("Database: " + dbPath);
   const db = new DatabaseSync(dbPath);
-  const report = applyMigrations(db, join(root, "site", "migrations"));
+  const report = applyMigrations(db, join(root, "content", "migrations"));
   let bad = 0;
   for (const r of report) {
     const tail = r.errors.length ? `  ERRORS: ${r.errors.length}` : "";

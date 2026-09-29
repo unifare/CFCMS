@@ -129,7 +129,7 @@ export function main(argv, io = console) {
 
     const name = assertName(args._[0], "plugin");
     const title = String(args.title || titleCase(name));
-    const outRoot = String(args.out || join(ROOT, "site", "plugins"));
+    const outRoot = String(args.out || join(ROOT, "content", "plugins"));
     const dir = join(outRoot, name);
 
     const { files } = pluginFiles({ name, title });

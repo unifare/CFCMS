@@ -150,12 +150,12 @@ const dbPath = join(tmp, "schema.sqlite");
 let db;
 try {
   db = new DatabaseSync(dbPath);
-  const files = readdirSync(join(ROOT, "site", "migrations"))
+  const files = readdirSync(join(ROOT, "content", "migrations"))
     .filter((f) => f.endsWith(".sql"))
     .sort();
   let applied = 0;
   for (const f of files) {
-    const sql = readFileSync(join(ROOT, "site", "migrations", f), "utf8");
+    const sql = readFileSync(join(ROOT, "content", "migrations", f), "utf8");
     // Strip `--` comments so a semicolon inside prose cannot split a statement.
     const stripped = sql.replace(/--[^\n]*/g, "");
     for (const stmt of stripped.split(";")) {

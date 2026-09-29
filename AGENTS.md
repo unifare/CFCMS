@@ -67,7 +67,7 @@
 **当前仓库布局**（已重整完毕，新代码必须放对位置）：
 
 ```
-site/                      ★ 被装载的内容（主题 / 插件 / 迁移流）
+content/                   ★ 被装载的内容（主题 / 插件 / 迁移流）
 ├── themes/                已发布主题（default fixture）
 ├── plugins/               已发布插件（notify）
 └── migrations/            有序 D1 迁移流（wrangler.jsonc 的 migrations_dir 指向它）
@@ -118,7 +118,7 @@ scripts/                  脚手架（生成器必须可被 import，见 tests/s
 └── cfpress.ps1           ★ 同上，Windows PowerShell 5.1 版
 ```
 
-**`site/` 与 `src/` 的分界**：`src/` 是**代码**，`site/` 是**被装载的内容**。
+**`content/` 与 `src/` 的分界**：`src/` 是**代码**，`content/` 是**被装载的内容**。
 主题、插件、迁移流都从这里读；仓库根只留代码与配置（`README` `AGENTS`
 `LICENSE` `package.json` `tsconfig.json` `wrangler.jsonc`）。
 `theme-previews/` 是**被 gitignore 的截图产物**，不属于结构的一部分。
@@ -524,7 +524,7 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 **为什么分类表本身也要被守**：规则 41 若只跑已发布主题，新增第七种字段类型时会
 全绿通过（集合里没人用它）。`tests/suites/architecture.test.mjs` 因此额外断言：
 两表不重叠 / 每个允许类型都被分类 / 无幽灵类型 / **扫到的表数 > 0**。
-最后一条是关键——把 `site/themes/` 改名会让「所有主题都合规」**恒真**。
+最后一条是关键——把 `content/themes/` 改名会让「所有主题都合规」**恒真**。
 **对空集合的检查是空转**（本仓库第三种假绿）。
 
 **标识符不是散文**：SKU、券码、外部 id 必须用 `number`/中性类型，不要用 `text`。
@@ -560,7 +560,7 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 
 **规则 20 为什么存在**：`uploadExtension` 把插件包当 zip 原样存进 R2、**从不解包**，
 所以插件没有 `langs/` 目录可读，只能把语言包内联在清单里。主题有目录
-（`site/themes/<name>/langs/<locale>.json`，运行时从 R2 读）。两条路径，同一套前缀规则。
+（`content/themes/<name>/langs/<locale>.json`，运行时从 R2 读）。两条路径，同一套前缀规则。
 
 **规则 21–24 的共同教训**：这四条对应的四个字段，曾经都是「**声明被校验了、但运行时没人读**」。
 校验器认它、架构测试认它，前台却按 `kind` 猜模板、按 `postType` 猜内容，
