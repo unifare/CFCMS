@@ -198,11 +198,86 @@ export interface TableFieldDecl {
   required?: boolean;
 }
 
+/**
+ * How a declared table stores its language dimension (§10 rule 42).
+ *
+ * This exists because `translatable` alone answers *which fields* vary by
+ * language but not *how* the variation is stored — and those are different
+ * facts. A reader (a migration author, a template, the admin editor) needs
+ * both, and inferring the second from the first is how the `_i18n` naming rule
+ * ended up hand-rolled in two places.
+ *
+ * The three strategies:
+ *
+ * - `"none"`     — the table holds no prose; every column is language-neutral.
+ *                  A table of prices and flags. `translatable` must be empty.
+ * - `"sidecar"`  — the default, and the only one v0.8 materialises. Prose moves
+ *                  to a generated `{table}_i18n` keyed `(row_id, locale)` once
+ *                  the site serves ≥2 languages; the main row keeps copies so a
+ *                  second language needs no migration. Mirrors the platform's
+ *                  own L1 design (§2.3).
+ * - `"versioned"`— one full row per language, discriminated by `locale`, with
+ *                  `lang_group` tying the versions together. The shape
+ *                  `posts` + `post_translations` already uses. Declared here
+ *                  for tables an extension manages in that style; v0.8 does not
+ *                  generate these, so declaring one is an install error until
+ *                  it does (see `validation.ts`).
+ */
+export const TABLE_LANGUAGE_STRATEGIES = ["none", "sidecar", "versioned"] as const;
+export type TableLanguageStrategy = (typeof TABLE_LANGUAGE_STRATEGIES)[number];
+
+/**
+ * The language structure of a declared table.
+ *
+ * Written as a nested object rather than three parallel arrays because the
+ * fields are *about each other*: a `fallback` only means something relative to
+ * `translatable`, and a `strategy` of `"none"` makes both meaningless. Nesting
+ * keeps them from drifting apart in a manifest that was hand-edited.
+ */
+export interface TableLanguageDecl {
+  /** How the language dimension is stored. Defaults to `"sidecar"`. */
+  strategy?: TableLanguageStrategy;
+  /**
+   * Field keys that vary by language. Must equal the prose fields of `fields[]`
+   * exactly (rule 41) — this is where that requirement is *stated*, and
+   * `translatable` is kept as the flat spelling of the same list.
+   */
+  translatable?: string[];
+  /**
+   * Locale codes to consult, in order, when the requested language has no
+   * value — after the site default has already been tried.
+   *
+   * Empty/absent means "just the site default", which is the platform contract
+   * (§10 rule 10). A theme may narrow it further but never extend it beyond the
+   * site's enabled languages: promising a fallback the site does not serve
+   * would render the wrong language rather than nothing.
+   */
+  fallback?: string[];
+  /**
+   * Locales this table requires a value for before a row may be published.
+   *
+   * A constraint on *content*, not on schema: the platform creates the columns
+   * either way. Absent means "no requirement", which is the safe default for a
+   * theme that has not thought about it.
+   */
+  requiredLocales?: string[];
+}
+
 export interface TableDecl {
   name: string;
   label?: string;
-  /** Field keys that also live in `{table}_i18n` when the site is multilingual. */
+  /**
+   * Field keys that also live in `{table}_i18n` when the site is multilingual.
+   *
+   * Kept as a flat list because it is the form the generator emits and the
+   * validator checks; `language.translatable` is the same list in context.
+   * When both are present they must agree — the validator rejects a mismatch
+   * rather than picking a winner, because a silent pick means one of them is
+   * stale and nobody can tell which.
+   */
   translatable?: string[];
+  /** Explicit language structure. See `TableLanguageDecl`. */
+  language?: TableLanguageDecl;
   fields?: TableFieldDecl[];
 }
 
@@ -244,6 +319,19 @@ export interface ThemeManifest extends ExtensionManifest {
 
 export interface PluginManifest extends ExtensionManifest {
   hooks?: string[];
+  /**
+   * Domain events this plugin wants delivered (§10 rule 45).
+   *
+   * Distinct from `hooks`, and both are needed: `hooks` says *where the plugin
+   * attaches*, `subscribes` says *which facts it cares about*. A plugin that
+   * declares `hooks: ["afterSavePost"]` has signed up for an implementation
+   * detail; one that declares `subscribes: ["PostPublished"]` has signed up for
+   * a fact that survives the hook being reshaped.
+   *
+   * Validated against `DOMAIN_EVENTS`, so a misspelling is an install error
+   * rather than a subscription that never fires.
+   */
+  subscribes?: string[];
 }
 
 /** The normalised result of a successful validation. */

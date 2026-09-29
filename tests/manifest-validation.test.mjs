@@ -542,6 +542,170 @@ rejects(
 );
 
 // ---------------------------------------------------------------------------
+console.log("\n7. language{} — the explicit language structure (rule 42)");
+// ---------------------------------------------------------------------------
+// A `language` block states HOW language is stored, which `translatable` alone
+// cannot. Each case below is a way the two spellings can disagree, or a claim
+// the manifest cannot back up.
+
+accepts(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      translatable: ["name"],
+      language: { strategy: "sidecar", translatable: ["name"] },
+      fields: [{ key: "name", type: "text" }, { key: "price", type: "number" }],
+    }],
+  }),
+  "language block agreeing with the flat translatable list"
+);
+
+accepts(
+  v,
+  validTheme({
+    tables: [{
+      name: "metric",
+      translatable: [],
+      language: { strategy: "none" },
+      fields: [{ key: "price", type: "number" }, { key: "live", type: "boolean" }],
+    }],
+  }),
+  "strategy:none on a table with no prose"
+);
+
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "metric",
+      translatable: [],
+      language: { strategy: "none" },
+      fields: [{ key: "label", type: "text" }],
+    }],
+  }),
+  "strategy:none on a table that does hold prose (the claim is false)"
+);
+
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      translatable: ["name"],
+      language: { strategy: "sidecar", translatable: ["name", "title"] },
+      fields: [{ key: "name", type: "text" }],
+    }],
+  }),
+  "language.translatable and translatable disagree"
+);
+
+// Only the nested spelling: the flat list is what the generator and facade
+// read, so a manifest carrying one and not the other has no stated authority.
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      language: { strategy: "sidecar", translatable: ["name"] },
+      fields: [{ key: "name", type: "text" }],
+    }],
+  }),
+  "language.translatable without the flat translatable (ambiguous authority)"
+);
+
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      translatable: ["name"],
+      language: { strategy: "versioned" },
+      fields: [{ key: "name", type: "text" }],
+    }],
+  }),
+  "strategy:versioned (declared but not implemented — refuse rather than ignore)"
+);
+
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      translatable: ["name"],
+      language: { strategy: "sideways" },
+      fields: [{ key: "name", type: "text" }],
+    }],
+  }),
+  "an unknown language strategy"
+);
+
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      translatable: ["name"],
+      language: { strategy: "sidecar", translatable: ["name"], fallback: ["not a locale"] },
+      fields: [{ key: "name", type: "text" }],
+    }],
+  }),
+  "language.fallback with an invalid locale code"
+);
+
+rejects(
+  v,
+  validTheme({
+    tables: [{
+      name: "product",
+      translatable: ["name"],
+      language: "sidecar",
+      fields: [{ key: "name", type: "text" }],
+    }],
+  }),
+  "language as a bare string rather than an object"
+);
+
+// ---------------------------------------------------------------------------
+console.log("\n8. subscribes[] — domain event subscriptions (rule 45)");
+// ---------------------------------------------------------------------------
+
+accepts(
+  v,
+  validPlugin({ subscribes: ["PostPublished", "PostDeleted"] }),
+  "plugin subscribing to declared domain events",
+  "plugin"
+);
+
+rejects(
+  v,
+  validPlugin({ subscribes: ["PostPublishd"] }),
+  "plugin subscribing to a misspelled event (never fires, says nothing)",
+  "plugin"
+);
+
+rejects(
+  v,
+  validPlugin({ subscribes: ["afterSavePost"] }),
+  "plugin subscribing to a HOOK name where an EVENT name belongs",
+  "plugin"
+);
+
+rejects(
+  v,
+  validPlugin({ subscribes: ["PostPublished", "PostPublished"] }),
+  "plugin subscribing to the same event twice",
+  "plugin"
+);
+
+rejects(
+  v,
+  validPlugin({ subscribes: "PostPublished" }),
+  "subscribes as a bare string rather than an array",
+  "plugin"
+);
+
+// ---------------------------------------------------------------------------
 console.log(`\n${"=".repeat(64)}`);
 console.log(`${pass} passed, ${fail} failed`);
 if (fail) {

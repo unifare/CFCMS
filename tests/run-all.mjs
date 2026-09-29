@@ -18,6 +18,12 @@ const suites = [
   // Architecture first: it is fast, needs no database, and a failure here means
   // the shape of the code is wrong — which makes every later failure suspect.
   ["architecture rules", "architecture.test.mjs"],
+  // Schema scope: like the architecture rules it needs no shared database (it
+  // builds a throwaway SQLite from the migration stream), and it answers the
+  // question the rules only assert — "does every real table have a tenant and
+  // a language answer?" Run it right after the rules so a shape error and a
+  // scope error are reported next to each other.
+  ["schema scope (tenant+lang)", "_schema-scope.mjs"],
   // Manifest validation is next: like the architecture suite it needs no
   // database, and it guards what a *user uploads* — the shipped themes are
   // already covered by the architecture rules above.

@@ -29,11 +29,12 @@
 import {
   ALLOWED_ADMIN_SCREENS, ALLOWED_FIELD_TYPES, ALLOWED_TABLE_FIELD_TYPES,
   FIELD_KEY_RE, IDENT_RE, LOCALE_CODE_RE, RESERVED_COLUMNS, SCOPE_NAME_RE,
-  TABLE_ADMIN_SCREENS, TABLE_NAME_RE, isProseFieldType, validExtensionName,
+  TABLE_ADMIN_SCREENS, TABLE_LANGUAGE_STRATEGIES, TABLE_NAME_RE, isProseFieldType, validExtensionName,
   validTemplateName, validVersion,
 } from "./manifest";
 import { isCapability } from "./capabilities";
 import { DECLARABLE_HOOKS } from "./hooks";
+import { isDomainEvent } from "./events";
 import type { ValidatedManifest } from "./manifest";
 
 // Intentionally `any[]`: manifest blocks are validated field by field below,
@@ -72,6 +73,7 @@ export function validateManifest(manifest: any, type: "plugin" | "theme"): Valid
     // the gap.
     validateAdminMenus(manifest.adminMenus, new Set<string>(), "plugin", String(manifest.name));
     validateHooks(manifest.hooks);
+    validateSubscriptions(manifest.subscribes);
     // `tables[]` is not ignored, it is refused. Accepting it would let a plugin
     // declare a table the platform never creates, and the failure would only
     // show up later as an empty admin page.
@@ -138,6 +140,32 @@ function validateHooks(hooks: unknown) {
       fail(`Unsupported hook: "${name}" (declarable hooks: ${DECLARABLE_HOOKS.join(", ")})`);
     }
     if (seen.has(name)) fail(`Duplicate hook: ${name}`);
+    seen.add(name);
+  }
+}
+
+/**
+ * Validate a plugin's declared `subscribes` (§10 rule 45).
+ *
+ * Same reasoning as `validateHooks`, and the same failure mode: a subscription
+ * to an event name that does not exist never fires and says nothing. The only
+ * difference is that the vocabulary is larger, which makes a typo *more* likely,
+ * not less.
+ */
+function validateSubscriptions(list: unknown) {
+  if (list === undefined) return;
+  if (!Array.isArray(list)) fail("subscribes must be an array of domain event names");
+  const seen = new Set<string>();
+  for (const s of list) {
+    const name = String(s);
+    if (!isDomainEvent(name)) {
+      fail(
+        `Unknown domain event: "${name}". ` +
+        `Events are declared in src/extensions/contract/events.ts (DOMAIN_EVENTS); ` +
+        `a subscription to a name that is not there never fires and reports nothing.`
+      );
+    }
+    if (seen.has(name)) fail(`Duplicate subscription: ${name}`);
     seen.add(name);
   }
 }
@@ -388,10 +416,88 @@ function validateThemeManifest(m: any) {
       }
     }
 
+    // -- the explicit language structure (rule 42) --------------------------
+    //
+    // `language` states the *strategy*, which `translatable` cannot express.
+    // Everything below is about keeping the two spellings of the same list in
+    // agreement: a manifest may use either, but not both saying different things.
+    const lang = t.language;
+    if (lang !== undefined) {
+      if (!lang || typeof lang !== "object" || Array.isArray(lang)) {
+        fail(`table ${tname}: language must be an object`);
+      } else {
+        const strategy = lang.strategy === undefined ? "sidecar" : String(lang.strategy);
+        if (!(TABLE_LANGUAGE_STRATEGIES as readonly string[]).includes(strategy)) {
+          fail(
+            `table ${tname}: language.strategy "${strategy}" is not one of ` +
+            `${TABLE_LANGUAGE_STRATEGIES.join(" / ")}`
+          );
+        }
+
+        // `strategy: "none"` is a claim that this table holds no prose. If it
+        // does, the claim is false and the table would silently never be
+        // translated — so check the claim rather than trusting it.
+        const proseFields = asArray(t.fields)
+          .filter((f) => isProseFieldType(String(f?.type ?? "text")))
+          .map((f) => String(f?.key ?? ""));
+        if (strategy === "none" && proseFields.length) {
+          fail(
+            `table ${tname}: language.strategy is "none" but fields ${proseFields.join(", ")} ` +
+            `hold prose — those values would never be translatable`
+          );
+        }
+
+        // `versioned` is declared for completeness but not implemented in v0.8.
+        // Rejecting it here beats accepting a declaration the runtime ignores
+        // (the "declared but never read" defect family this repo keeps hitting).
+        if (strategy === "versioned") {
+          fail(
+            `table ${tname}: language.strategy "versioned" is not implemented in this version — ` +
+            `use "sidecar" (the platform's L1-style shape is reserved for posts)`
+          );
+        }
+
+        // Both spellings present => they must agree. Picking one silently means
+        // the other is stale, and no later reader can tell which.
+        if (Array.isArray(lang.translatable)) {
+          const nested = [...new Set(lang.translatable.map(String))].sort();
+          const flat = [...declaredTranslatable].sort();
+          if (!Array.isArray(t.translatable)) {
+            // Only the nested form was written; that is fine, but the flat list
+            // is what the generator and facade read, so it must be populated.
+            fail(
+              `table ${tname}: language.translatable is present but the flat "translatable" is not — ` +
+              `declare both or neither, so there is no ambiguity about which one is authoritative`
+            );
+          } else if (JSON.stringify(nested) !== JSON.stringify(flat)) {
+            fail(
+              `table ${tname}: language.translatable and translatable disagree ` +
+              `([${nested.join(", ")}] vs [${flat.join(", ")}])`
+            );
+          }
+          for (const k of lang.translatable) {
+            if (!fieldKeys.has(String(k))) {
+              fail(`table ${tname}: language.translatable names "${k}", which is not a declared field`);
+            }
+          }
+        }
+
+        for (const k of asArray(lang.fallback)) {
+          if (!LOCALE_CODE_RE.test(String(k))) {
+            fail(`table ${tname}: language.fallback entry "${k}" is not a valid locale code`);
+          }
+        }
+        for (const k of asArray(lang.requiredLocales)) {
+          if (!LOCALE_CODE_RE.test(String(k))) {
+            fail(`table ${tname}: language.requiredLocales entry "${k}" is not a valid locale code`);
+          }
+        }
+      }
+    }
+
     // Decision 4 (unified menu registry): a `table-list` / `table-edit` screen
     // must point at a table this theme actually declares.
-    const listScreen = String(t.admin?.screen || "");
-    if (listScreen && !(ALLOWED_ADMIN_SCREENS as readonly string[]).includes(listScreen)) {
+    const listScreen = String(t.admin?.screen || "");    if (listScreen && !(ALLOWED_ADMIN_SCREENS as readonly string[]).includes(listScreen)) {
       fail(`table ${tname}: unsupported admin screen "${listScreen}"`);
     }
   }

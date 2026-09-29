@@ -55,6 +55,26 @@ async function compileWorker() {
   return import(pathToFileURL(tmp).href + "?t=" + Date.now());
 }
 
+/**
+ * Bundle one non-entry module so the suite can call its exports directly.
+ *
+ * Used to reach `pluginApi`, which is not reachable through the Worker's HTTP
+ * surface — the whole point is that the facade is what plugins hold, and the
+ * defect was inside it.
+ */
+async function compileModule(rel) {
+  const esbuild = require("esbuild");
+  const out = await esbuild.build({
+    entryPoints: [join(root, rel)],
+    bundle: true, format: "esm", target: "es2022", write: false,
+    platform: "neutral", external: ["cloudflare:workers"], logLevel: "silent",
+  });
+  const tmp = join(root, ".wrangler", "plugin-mod-" + rel.replace(/[^a-z0-9]/gi, "_") + ".mjs");
+  mkdirSync(dirname(tmp), { recursive: true });
+  writeFileSync(tmp, out.outputFiles[0].text);
+  return import(pathToFileURL(tmp).href + "?t=" + Date.now());
+}
+
 function makeD1(sqlite) {
   return {
     prepare(sql) {
@@ -298,6 +318,67 @@ async function main() {
   const everyRowHasHooks = (status.items ?? []).every((p) => Array.isArray(p.hooks_wired));
   checkTruthy("every plugin reports its wired hooks", everyRowHasHooks);
 
+  // ---------------------------------------------------------------------
+  console.log("\n8. The plugin API is tenant-scoped (no cross-site reads)");
+  // ---------------------------------------------------------------------
+  //
+  // Regression guard for a real defect: `pluginApi` was constructed at BOOT
+  // with no site, and the hook dispatcher spread `{ ...dispatchCtx, ...bootCtx }`
+  // — so the boot-time context (which had no `siteId`) overwrote the request's.
+  // Every plugin capability was therefore site-blind:
+  //
+  //   readSetting   SELECT value FROM settings WHERE key=?          -> any site
+  //   writeSetting  UPDATE settings SET value=? WHERE key=?          -> EVERY site
+  //   readContent   SELECT * FROM posts WHERE id=?                   -> any tenant
+  //
+  // All three look correct in a single-site install, which is why they survived.
+  // This section creates a second site and proves none of them leak.
+  const { pluginApi } = await compileModule("src/extensions/plugin/runtime.ts");
+
+  const OTHER = "hooksites_probe";
+  for (const sql of [
+    "DELETE FROM settings WHERE site_id IN ('default','" + OTHER + "') AND key LIKE 'probe.%'",
+    "DELETE FROM posts WHERE id LIKE 'hookprobe_%'",
+    "DELETE FROM sites WHERE id='" + OTHER + "'",
+  ]) { try { sqlite.exec(sql); } catch { /* ok */ } }
+  sqlite.exec(
+    "INSERT INTO sites(id,name,host,path_prefix,is_default,status,created_at,updated_at) " +
+    "VALUES('" + OTHER + "','Other Site','other.example.com','',0,'active',0,0)"
+  );
+  sqlite.exec(
+    "INSERT INTO settings(id,site_id,key,value,autoload) VALUES" +
+    "('s_probe_default','default','probe.title','DEFAULT-TITLE',1)," +
+    "('s_probe_other','" + OTHER + "','probe.title','OTHER-TITLE',1)"
+  );
+  sqlite.exec(
+    "INSERT INTO posts(id,site_id,author_id,type,slug,status,created_at,updated_at,lang_group) VALUES" +
+    "('hookprobe_a','default','u1','post','probe-a','draft',0,0,'g1')," +
+    "('hookprobe_b','" + OTHER + "','u1','post','probe-b','draft',0,0,'g2')"
+  );
+
+  const perms = ["settings.read", "settings.write", "content.read"];
+  const apiDefault = pluginApi(env, "plugin", "hooked_seo", perms, "default");
+  const apiOther = pluginApi(env, "plugin", "hooked_seo", perms, OTHER);
+
+  check("readSetting is bound to its own site", await apiDefault.readSetting("probe.title"), "DEFAULT-TITLE");
+  check("readSetting on the other site sees the other value", await apiOther.readSetting("probe.title"), "OTHER-TITLE");
+
+  check("readContent cannot reach another tenant's post", await apiDefault.readContent("hookprobe_b"), null);
+  check("readContent returns its own tenant's post", (await apiDefault.readContent("hookprobe_a"))?.id, "hookprobe_a");
+
+  // The write is the sharpest test: the old form was
+  // `UPDATE settings SET value=? WHERE key=?`, which rewrote every site's row.
+  await apiDefault.writeSetting("probe.title", "WRITTEN-BY-DEFAULT");
+  const afterDefault = sqlite.prepare("SELECT value FROM settings WHERE site_id='default' AND key='probe.title'").get();
+  const afterOther = sqlite.prepare("SELECT value FROM settings WHERE site_id='" + OTHER + "' AND key='probe.title'").get();
+  check("writeSetting changed its own site", afterDefault?.value, "WRITTEN-BY-DEFAULT");
+  check("writeSetting left the other site untouched", afterOther?.value, "OTHER-TITLE");
+
+  // A facade with no site must refuse rather than guess.
+  let noSiteErr = null;
+  try { pluginApi(env, "plugin", "hooked_seo", perms, ""); } catch (e) { noSiteErr = e?.message ?? String(e); }
+  checkTruthy("a plugin API with no site refuses to exist", /siteId/.test(String(noSiteErr)));
+
   // Cleanup
   for (const sql of [
     "DELETE FROM plugin_settings WHERE plugin_id IN (SELECT id FROM plugin_installs WHERE name LIKE 'hooked%')",
@@ -307,6 +388,9 @@ async function main() {
     "DELETE FROM posts WHERE id LIKE 'hookpost_%'",
     "DELETE FROM post_translations WHERE post_id LIKE 'hookpost_%'",
     "DELETE FROM shortcodes WHERE name='year'",
+    "DELETE FROM settings WHERE site_id IN ('default','" + OTHER + "') AND key LIKE 'probe.%'",
+    "DELETE FROM posts WHERE id LIKE 'hookprobe_%'",
+    "DELETE FROM sites WHERE id='" + OTHER + "'",
   ]) { try { sqlite.exec(sql); } catch { /* ok */ } }
 
   console.log(`\n${pass} passed, ${fail} failed`);

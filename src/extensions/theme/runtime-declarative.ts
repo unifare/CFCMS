@@ -485,7 +485,7 @@ async function decorateOutput(env: Env, o: ThemeRenderOptions, template: string,
 
   let out = html;
   try {
-    out = await hooks.renderShortcodes(env, out);
+    out = await hooks.renderShortcodes(env, out, siteId);
   } catch {
     /* a broken shortcode leaves the raw markup in place */
   }

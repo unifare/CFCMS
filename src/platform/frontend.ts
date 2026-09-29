@@ -73,8 +73,13 @@ export async function menu(env:Env,locale:string,siteId:string){
   let m:any=null;
   try{
     m=await env.DB.prepare("SELECT id FROM menus WHERE location='header' AND site_id=? LIMIT 1").bind(siteId).first<any>();
-  }catch{/* menus has no site_id column */}
-  if(!m) m=await env.DB.prepare("SELECT id FROM menus WHERE location='header' LIMIT 1").first<any>();
+  }catch{/* menus predates the site_id column on an unmigrated install */}
+  // The fallback deliberately KEEPS `site_id = ?`. Dropping it to "find any
+  // header menu" would render another tenant's navigation on this site — the
+  // failure mode is cosmetic in a single-site install and a data leak in a
+  // multi-site one. A site with no header menu renders no menu, which is
+  // correct; see §10 rule 6 (no site-blind fallbacks).
+  if(!m) m=await env.DB.prepare("SELECT id FROM menus WHERE location='header' AND site_id=? LIMIT 1").bind(siteId).first<any>();
   if(!m)return[];
   const r=await env.DB.prepare("SELECT * FROM menu_items WHERE menu_id=? AND (locale IS NULL OR locale=?) ORDER BY sort_order,id").bind(m.id,locale).all();
   return r.results as any[];

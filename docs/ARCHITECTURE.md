@@ -2028,4 +2028,241 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
 21. 改了多语言就同步 tests/i18n.test.mjs；改了后台就跑 tests/_i18n-browser.cjs
 22. 新增守卫必须反向验证：注入一次违规，确认它真的会 FAIL
 23. 一个概念要在两处表达时（JS ↔ SQL、字符串 ↔ 常量），让两处共用同一个定义
+
+【系统骨架：schema / 语言结构 / 事件通道】（§11）
+41. **所有数据都必须有多语言能力**（见 12d）。散文进 translatable，语言中立不进
+42. 每张主题/插件表**必须显式声明语言结构**：`tables[].language{strategy,translatable,
+   fallback,requiredLocales}`。`strategy` 只有 `none` / `sidecar`（`versioned` 声明了但
+   未实现 → 校验器**拒绝**而非忽略）。`strategy:"none"` 而表里有散文 = 断言为假，拒绝；
+   `language.translatable` 与扁平的 `translatable` 不一致 = 两个权威，拒绝
+43. 平台 schema 的租户/语言归属**只有一份声明**：`contract/schema.ts` 的 `PLATFORM_SCHEMA`。
+   `TENANT_TABLES` / `PLATFORM_TABLES` / `DERIVED_TENANT_TABLES` / `LOCALE_COLUMN_TABLES`
+   全部**派生**自它，不得手写（手写的一定会和声明漂移）
+44. schema 声明**必须被真实数据库检验**（`tests/_schema-scope.mjs`）：新表没分类 = 红；
+   租户表没有 site_id = 红；平台表有 site_id = 红；`_i18n` 边车有 site_id = 红。
+   **每一条分类都必须写理由**（≥10 字），派生租户必须写明 FK 路径
+45. 领域事件是**独立于 hook 的契约**（`contract/events.ts`）：事件是**事实**（过去式、
+   带 payload 版本、必带 siteId），hook 是**通道**。两者不得互相掺入
+   （hooks 列表里出现事件名 = 红）。插件的 `subscribes[]` 在**安装边界**校验：
+   订阅一个不存在的事件名是 400，不是"永远不触发的 hook"
+
+【越界不变量：查询级】
+46. 表有租户字段 ≠ 查询用它。`tests/_tenant-query-audit.mjs` 列出所有触碰租户表
+   却不带 site_id 的语句；每一处都必须有**书面裁决**（为什么安全）。
+   没裁决的新语句会被标成 NEW —— 它是报告工具，不进 npm test
+47. 平台表（`theme_installs` 等）上的跨站聚合是**设计**，不是泄漏：`active` 的含义是
+   "有站点在用它"。判断泄漏看**声明**（schema.ts），不看表名前缀
 ```
+
+---
+
+## 11. 系统骨架：schema / 语言结构 / 事件通道
+
+第 2～10 章描述的是**功能**。这一章描述**骨架**——那些"不做也能跑，但迟早会在
+多站点或多语言环境里静默出错"的东西。它们的共同点：**在单站点 + 单语言的安装里
+完全看不出来**，而那是唯一有人手工测过的配置。
+
+### 11.1 两个轴：租户与语言
+
+每一个存储行都必须能回答两个问题：
+
+| 轴 | 问题 | 表达方式 |
+|---|---|---|
+| **租户** | 这行属于哪个站点？ | `site_id`（或通过父行的 FK 继承） |
+| **语言** | 这行是分语言的，还是语言中立的？ | `locale` 列 / `lang_group` + `post_translations` / `{table}_i18n` 边车 |
+
+两个轴**互相独立**，而且**都不能从表名推断**：
+
+- `media_files` 看着像全局，实际**必须**带 `site_id`（迁移 0009 才补上，之前
+  静默跨站）；
+- `locales` 看着像"每站的语言"，实际是**平台全局**的语言注册表——每站启用哪些
+  是 `site_locales`（租户表）；
+- `theme_eshop_product_i18n` 既不租户（通过父行继承），也不语言中立。
+
+**这就是为什么归属必须是声明，而不是约定。**
+
+### 11.2 单一权威：`contract/schema.ts`
+
+```ts
+export const PLATFORM_SCHEMA = [
+  { table: "settings", tenant: "site", locale: null,
+    note: "site settings (UNIQUE(site_id,key))" },
+  { table: "post_meta", tenant: "platform", derivedTenant: "post_id → posts.site_id",
+    locale: null, note: "custom post fields; scoped by the post they hang off" },
+  { table: "locales", tenant: "platform", locale: null,
+    note: "language registry shared by all sites" },
+  // …
+] as const;
+```
+
+四条派生清单**全部由它算出**，禁止手写：
+
+```ts
+export const TENANT_TABLES        = PLATFORM_SCHEMA.filter(t => t.tenant === "site")…
+export const PLATFORM_TABLES      = PLATFORM_SCHEMA.filter(t => t.tenant === "platform")…
+export const DERIVED_TENANT_TABLES = PLATFORM_SCHEMA.filter(t => t.derivedTenant)…
+export const LOCALE_COLUMN_TABLES = PLATFORM_SCHEMA.filter(t => t.locale?.kind === "column")…
+```
+
+> **为什么"派生"是硬规则而非风格**：手写的清单会在下一次编辑时与声明漂移，
+> 而**消费脚本会与它读到的那一份一致**——两份清单都说自己对。这正是"共享定义
+> 而不是共享结论"（规则 23）在数据层的应用。
+
+#### 一个真实的假阳性：名字前缀不是判别器
+
+`GENERATED_TABLE_RE = /^(?:theme|plugin)_[a-z][a-z0-9_]*$/` 看着能识别"扩展生成的表"，
+但它同时匹配 `theme_installs` / `theme_settings` / `plugin_installs` / `plugin_settings`
+——这些是**平台注册表**，设计上**没有** `site_id`。首次运行
+`tests/_schema-scope.mjs` 就在这 6 张表上假红了。
+
+修法是让**声明**当权威：`isGeneratedBusinessTable(name)` 先查 `PLATFORM_SCHEMA`，
+不在里面才按前缀认。**名字前缀无法区分"主题声明的表"与"关于主题的平台表"。**
+
+### 11.3 语言结构声明：`tables[].language{}`（规则 42）
+
+主题/插件声明表时，语言能力必须是**显式结构**，不能靠推断：
+
+```jsonc
+{
+  "tables": [{
+    "name": "product",
+    "label": "Product",
+    "translatable": ["name", "description"],       // 扁平式：哪些字段分语言
+    "language": {                                    // 结构化：这张表如何承载语言
+      "strategy": "sidecar",                         // none | sidecar | versioned
+      "translatable": ["name", "description"],       // 必须与扁平式一致
+      "fallback": "zh-CN",                           // 缺翻译时的回退语言
+      "requiredLocales": ["en", "zh-CN"]             // 必须齐全的语言
+    },
+    "fields": [
+      { "key": "name", "type": "text" },
+      { "key": "price", "type": "number" },
+      { "key": "sku", "type": "number" }
+    ]
+  }]
+}
+```
+
+校验器（`contract/validation.ts`，安装边界）拒绝五种情况：
+
+| 声明 | 为什么拒绝 |
+|---|---|
+| `strategy:"none"` 但表里有散文字段 | 断言为假——"这张表不分语言"与"它存着人读的文字"矛盾 |
+| `language.translatable` ≠ 扁平 `translatable` | **两个权威**，读者会信先读到的那一个 |
+| `language.translatable` 有、扁平 `translatable` 没有 | 同上，而且更隐蔽（看起来"声明得更全"） |
+| `strategy:"versioned"` | 声明了但**未实现**。**拒绝比忽略好**——忽略会让作者以为生效了 |
+| `language.fallback` / `requiredLocales` 里的非法 locale 码 | 拼错的 locale 永远不会匹配，且不报错 |
+
+> `versioned` 的取舍值得记下来：这一版只有 `posts` 用 L1 式版本化，扩展表用
+> `sidecar`。把一个**存在但不可用**的选项留在白名单里，等于承诺了没实现的能力。
+
+### 11.4 检测脚本：把声明按到真实数据库上（规则 44）
+
+`tests/_schema-scope.mjs` **不读声明然后说它对**——那证明不了任何事。它：
+
+1. 把 `migrations/*.sql` 应用到**临时目录里的真 SQLite**（不碰 `.wrangler/`：
+   那是本机产物，CI 上没有、新鲜检出时陈旧、每个套件都在改它）；
+2. **驱动真实的** `syncThemeTables()` 生成一对业务表 + `_i18n` 边车；
+3. `PRAGMA table_info` 走一遍**真实 schema**，与声明逐条对照。
+
+> 第 2 步不是装饰。生成的表是**运行时**创建的，迁移流里没有——只走迁移的话，
+> 每一条关于生成表的断言都是**空转**，而且会一直绿。这正是首次运行时
+> "非空性检查"抓到的问题。
+
+它回答的问题与架构测试**互补**：
+
+| | 问题 | 位置 |
+|---|---|---|
+| 架构测试 | 声明**自己**是否自洽、是否派生、是否重复 | `tests/architecture.test.mjs` |
+| schema 守卫 | 声明是否与**真实数据库**一致 | `tests/_schema-scope.mjs` |
+
+### 11.5 查询级不变量（规则 46、47）
+
+表有 `site_id` ≠ 查询用了它。`tests/_tenant-query-audit.mjs` 扫源码，列出所有
+`FROM/INTO/UPDATE <租户表>` 而 6 行窗口内没有 `site_id` 的语句。
+
+它是**报告工具**（不进 `npm test`），因为有些命中是对的：
+
+- `src/shared/scheduler.ts:23` —— `UPDATE posts … WHERE id=?`，而 `site_id`
+  **上一行刚从这一行读出来**；
+- `src/api.ts:1141` —— `UPDATE theme_installs` 带跨站子查询，但 `theme_installs`
+  是**平台表**，`active` 的语义就是"有站点在用它"。
+
+所以每一处都必须有**书面裁决**，写在脚本的 `REVIEWED` 表里。没裁决的语句打印为
+`NEW` ——**新泄漏看起来和旧豁免一样，除非你把它们分开**。
+
+### 11.6 领域事件与消息通道（规则 45）
+
+`hooks.ts` 回答"**哪里可以挂**"，`events.ts` 回答"**发生了什么**"。这是两个不同
+的问题，混起来就是一个 `save_post` 因为触发者不同而有六种含义。
+
+```
+hook   是通道：宿主会调用的名字（beforeRender、html、…）
+event  是事实：过去式的陈述 + payload（PostPublished、LocaleEnabled、…）
+```
+
+一个事件可以走多个通道；一个通道可以承载多个事件。`DOMAIN_EVENTS` 是 21 个事实，
+`DECLARABLE_HOOKS` 是 7 个挂载点——数字不同**不是**缺陷，因为问题不同。
+
+三条让它是**契约**而不只是常量表：
+
+1. **名字只在这里声明一次。** 插件的 `subscribes[]` 在**安装边界**对照
+   `DOMAIN_EVENTS` 校验，拼错 = 400，而不是"永远不触发的 hook"
+   （`beforRender` 拼写错误就是这个病的上一次发作）；
+2. **payload 带版本**（`EVENT_PAYLOAD_VERSIONS`，缺省即 v1）。加字段不用升版本，
+   改名/删字段/改语义要升——**让破坏可评审，而不是静默**；
+3. **事件自带作用域**。`siteId` 在**每一个**事件上不可或缺；`locale` 只在事实
+   本身是分语言时出现（`PostPublished` 是，`SiteCreated` 不是，见
+   `LOCALE_SCOPED_EVENTS`）。如此订阅者不会拿到一个**无法定位**的事实——
+   而站点盲的插件 API 正是靠这一点藏了很久。
+
+**这一版没有**事件总线、队列、重试。投递是宿主的business，今天是同步、进程内、
+出错即丢（抛错的订阅者绝不能 500 掉请求）。**先声明词汇表**，是为了将来加持久化
+投递时，那是**换传输**而不是**换形状**。
+
+---
+
+## 12. 守卫失效记录（八种假绿）
+
+`tests/architecture.test.mjs` 与各套件累计出过**八次**"检查存在但从不触发"。
+它们不都是同一个病，修法也不同——记录在此，因为**第九次一定长得像前八次之一**。
+
+| # | 检查 | 曾经/现在的写法 | 为什么失效 | 修法 |
+|---|---|---|---|---|
+| 1 | `siteId` 默认值 | 只匹配 `= "default"` 字面量 | `siteId = DEFAULT_SITE_ID` 匹配不到，6 处长期漏网 | 同时匹配字符串与常量，锚定到参数列表 |
+| 2 | 主题/插件互不 import | `spec.includes("/extensions/plugin/")` | 真实写法是 `"../plugin/runtime"`，不含 `/extensions/` | 按文件目录**解析路径**再比较 |
+| 3 | 语言包 key 前缀 | 检查存在，但所有 `langs/` 都是空的 | **对空集合的检查是空转** | 先确认集合非空，再断言 |
+| 4 | `clearOwnerMenus` 归属隔离 | fixture 拿主题 owner 对插件 owner | 两个 fixture 的 `owner_type` 本就不同，`owner_name` 是多余的——删掉它测试**依然全绿** | **反向验证的 fixture 必须只有一处差异** |
+| 5 | `tests/scaffold.test.mjs` 清理 | `rmSync(force:true)` | Windows `EBUSY` 失败且**吞掉错误**，生成器拒绝覆盖 → 残留旧文件全存活，**断言描述的是上一轮的产物** | **清理之后要验证清理成功** |
+| 6 | 套件摘要 | 摘要在 `main()` 末尾打印 | 崩溃后控制流跳出，`N passed, M failed` **永远不打印**；脚本把"匹配不到"读成"没失败" | 摘要抽成 `finish()`，`catch` 里也调用并计一条失败；**没有摘要 = 失败** |
+| 7 | 主题渲染断言 | 用 `grep` 数卡片个数 | `__fallback__` / 404 页让卡片数 = 0，与"空列表"无法区分 | 断言要盯**注入缺陷后必然变的那一个值** |
+| 8 | 本文件的断言**拼法** | `check("…", offenders, [])` | `check` 测的是**真值**，空数组恒为真 → **断言不可能失败**。批次 6 新加的 7 条全中，重复的 `MediaUploaded` 躺在磁盘上而测试 40/40 全绿 | 加 `checkEmpty()`；再加一条**元守卫**扫本文件，禁止 `check(…, …, [])` 这种拼法 |
+
+### 第八种的两个推论（都由本轮的注入工具抓到）
+
+**（a）反向验证的工具自己会假绿。** `tests/_skeleton-inject.mjs` 有三个坑，全部踩过：
+
+| 坑 | 症状 | 修法 |
+|---|---|---|
+| **量长度看不见等长替换** | `"site"`→`"sote"` 长度相同，守卫打印"什么都没改"，而注入**其实生效了** | 比**内容哈希** |
+| **快照取自脏树** | 还原静默失败（`git checkout` 修不了 untracked 文件）→ 场景叠加；脏状态拍进快照 → "还原"忠实还原损坏 | 快照前 `assertPristine()`，还原后**再**跑一次 |
+| **用子进程跑套件** | 本沙箱 `spawnSync` 一律 `EBUSY` → 每个场景报"没有摘要"，**跑不起来伪装成没变红** | 用 **Worker 线程**（同进程，无需二元文件），且 ESM 下用 `import()` 而非 `require` |
+
+**（b）"没有摘要"必须双向成立。** 套件侧要保证崩溃也打摘要；**工具侧**要把
+"读不到摘要"当成失败。只修一半，另一半就会把崩溃读成通过——本轮
+`tests/architecture.test.mjs` 自己就犯了这条（摘要原本在文件末尾），
+是注入工具把它抓出来的。
+
+### 判据：什么时候该加守卫
+
+**每次新增守卫，都要注入一次违规确认它会红。** 不能证明自己会红的守卫，是负担
+而不是资产——它会让人以为有保护。
+
+**新守卫的检查清单**：
+
+1. 它断言的是**结构**（路径/AST/类型/真数据库）还是**字符串**？
+   守卫结构就解析结构；只有"某个名字不得出现"这种才是字符串检查（规则 2、5）。
+2. 集合**非空**吗？对空集合的断言是空转（规则 3）。
+3. 断言**有没有可能失败**？`check(…, list, [])` 不可能（规则 8）。
+4. 注入违规后，**变红的是不是那一条**？不是就说明守卫和缺陷对不上。
+5. 还原**被验证**了吗？

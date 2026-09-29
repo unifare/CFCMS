@@ -75,8 +75,15 @@ export interface HostHooks {
   doAction(name: string, ctx: HookContext, data?: any): Promise<void>;
   /** Run a value through a filter chain, returning the transformed value. */
   applyFilters(name: string, ctx: HookContext, data: any): Promise<any>;
-  /** Expand `[shortcode]...[/shortcode]` occurrences in rendered HTML. */
-  renderShortcodes(env: Env, html: string): Promise<string>;
+  /**
+   * Expand `[shortcode]...[/shortcode]` occurrences in rendered HTML.
+   *
+   * `siteId` is required, not optional. A shortcode can resolve site-scoped
+   * data (`[site_title]` reads `settings`), so a call without a site either
+   * renders another tenant's value or silently falls back — and the fallback
+   * is the kind of "looks fine in dev" default §10 rule 6 forbids.
+   */
+  renderShortcodes(env: Env, html: string, siteId: string): Promise<string>;
   /** Ensure the plugin runtime is loaded for this isolate. Idempotent. */
   boot(env: Env): Promise<unknown>;
 }
@@ -94,7 +101,7 @@ export const NULL_HOOKS: HostHooks = {
   async applyFilters(_name, _ctx, data) {
     return data;
   },
-  async renderShortcodes(_env, html) {
+  async renderShortcodes(_env, html, _siteId) {
     return html;
   },
   async boot() {

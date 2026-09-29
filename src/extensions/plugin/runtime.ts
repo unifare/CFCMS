@@ -6,10 +6,20 @@ import { registerPluginMenus } from "./menus";
 export type ExtensionContext = {
   env: Env;
   request?: Request;
+  /**
+   * The site this hook is running for.
+   *
+   * Required whenever `api` is present, because every capability on it is
+   * tenant-scoped. It used to be optional and unset at boot, which made a
+   * plugin's `readSetting`/`readContent` site-blind: `WHERE key = ?` with no
+   * `site_id` returns whichever row the database happens to order first, and
+   * `UPDATE settings SET value = ? WHERE key = ?` rewrites **every** site's
+   * row with that key. Both are invisible in a single-site install.
+   */
   siteId?: string;
   extension?: { type: string; name: string; permissions: string[] };
   /** Capability-gated facade handed to each hook so a plugin cannot touch
-   *  anything its manifest did not declare. */
+   *  anything its manifest did not declare. Bound to the dispatching site. */
   api?: PluginApi;
 };
 type Hook = (ctx: ExtensionContext, data: any) => Promise<any> | any;
@@ -200,22 +210,38 @@ async function loadEnabledPlugins(env: Env): Promise<RuntimePlugin[]> {
 /**
  * Register the host implementations for every enabled plugin. Idempotent per
  * `env`; concurrent callers share one promise so we do not double-register.
+ *
+ * ## The `api` is built per dispatch, not per boot
+ *
+ * `pluginApi` binds a `siteId`, and the site is a property of the *request* —
+ * one isolate serves several sites, and boot happens before any request. So the
+ * facade cannot be constructed here. This function registers a hook that
+ * receives the dispatch-time context and builds the facade from it.
+ *
+ * The previous version spread `{ ...c, ...ctx }`, which let the boot-time `ctx`
+ * (no `siteId`) overwrite the dispatch-time one (with `siteId`). Object spread
+ * order decided whether plugins were tenant-safe, and it decided "no".
  */
 export async function bootPluginRuntime(env: Env): Promise<RuntimePlugin[]> {
   const existing = booted.get(env);
   if (existing) return existing;
   const p = loadEnabledPlugins(env).then((plugins) => {
     for (const plugin of plugins) {
-      const ctx: ExtensionContext = {
-        env,
-        extension: { type: "plugin", name: plugin.name, permissions: plugin.permissions },
-        api: pluginApi(env, "plugin", plugin.name, plugin.permissions),
-      };
+      const identity = { type: "plugin", name: plugin.name, permissions: plugin.permissions };
       for (const hook of plugin.hooks) {
         const spec = HOOK_IMPLS[hook];
         if (!spec) continue;
-        // Bind the plugin's context so the impl can read its own settings.
-        const bound: Hook = (c, data) => spec.impl({ ...c, ...ctx, extension: ctx.extension }, data);
+        const bound: Hook = (c, data) =>
+          spec.impl(
+            {
+              // Dispatch-time context wins: it carries the request's siteId.
+              ...c,
+              env: c?.env ?? env,
+              extension: identity,
+              api: pluginApi(env, "plugin", plugin.name, plugin.permissions, requireSiteId(c)),
+            },
+            data
+          );
         if (spec.phase === "filter") addFilter(hook, bound);
         else addAction(hook, bound);
       }
@@ -224,6 +250,20 @@ export async function bootPluginRuntime(env: Env): Promise<RuntimePlugin[]> {
   });
   booted.set(env, p);
   return p;
+}
+
+/**
+ * The dispatching site, or a hard error.
+ *
+ * Every dispatch point in `index.ts` resolves a site before firing hooks
+ * (`requestSiteId`). If one ever stops doing so, a plugin would silently read
+ * the wrong tenant's data — so this fails loudly instead of defaulting, which
+ * is the policy §10 rule 6 sets for every other data-access path.
+ */
+function requireSiteId(ctx: ExtensionContext): string {
+  const siteId = ctx?.siteId;
+  if (!siteId) throw new Error("plugin hook dispatched without a siteId (§10 rule 6)");
+  return siteId;
 }
 
 /** Drop memoised state. Used by tests and after plugin enable/disable. */
@@ -307,26 +347,32 @@ export async function seedBundledExtensions(env: Env) {
     .run()
     .catch(() => {});
 }
-export async function shortcode(env: Env, name: string, attrs: any, content: string) {
+export async function shortcode(env: Env, name: string, attrs: any, content: string, siteId?: string) {
   const row = await env.DB.prepare("SELECT enabled,config FROM shortcodes WHERE name=?").bind(name).first<any>();
   // A registered `shortcode` filter runs even when the row is absent, so a
   // plugin can own a shortcode without a database row of its own.
-  const filtered = await applyFilters("shortcode", { env }, { name, attrs, body: content, enabled: !!row?.enabled });
+  const filtered = await applyFilters("shortcode", { env, siteId }, { name, attrs, body: content, enabled: !!row?.enabled });
   if (filtered && typeof filtered === "object" && "body" in filtered && filtered.body !== content) {
     return String((filtered as any).body);
   }
   if (!row?.enabled) return content;
-  if (name === "site_title") return await env.DB.prepare("SELECT value FROM settings WHERE key='site.title'").first<any>().then((x: any) => x?.value || "CFPress");
+  if (name === "site_title") {
+    // Was `SELECT value FROM settings WHERE key='site.title'` with no site
+    // filter — every site rendered whichever title the database returned first.
+    if (!siteId) return "CFPress";
+    const s = await env.DB.prepare("SELECT value FROM settings WHERE site_id=? AND key='site.title'").bind(siteId).first<any>();
+    return s?.value || "CFPress";
+  }
   if (name === "year") return String(new Date().getFullYear());
   return content;
 }
-export async function renderShortcodes(env: Env, html: string) {
+export async function renderShortcodes(env: Env, html: string, siteId?: string) {
   let out = html;
   const re = /\[([a-zA-Z0-9_-]+)(?:\s+([^\]]+))?\](.*?)\[\/\1\]|\[([a-zA-Z0-9_-]+)\]/gs;
   for (const m of [...out.matchAll(re)]) {
     const name = m[1] || m[4],
       body = m[3] || "";
-    out = out.replace(m[0], await shortcode(env, name, {}, body));
+    out = out.replace(m[0], await shortcode(env, name, {}, body, siteId));
   }
   return out;
 }
@@ -340,9 +386,18 @@ export async function capabilityAllowed(env: Env, type: string, name: string, ca
   return row?.enabled === 1;
 }
 
-/** Capability-gated API surface handed to every plugin hook as `ctx.api`. */
+/**
+ * Capability-gated API surface handed to every plugin hook as `ctx.api`.
+ *
+ * Every method is **tenant-scoped**. `siteId` is a required constructor
+ * argument rather than something the plugin passes per call, so a plugin cannot
+ * forget it — the class of bug this replaced was three separate site-blind
+ * queries, each of which looked correct in isolation.
+ */
 export interface PluginApi {
   identity: { type: string; name: string };
+  /** The site this facade is bound to. Exposed so a plugin can key its own data. */
+  siteId: string;
   has(cap: string): boolean;
   readSetting(key: string): Promise<string | null>;
   writeSetting(key: string, value: string): Promise<void>;
@@ -351,25 +406,56 @@ export interface PluginApi {
   log(message: string): Promise<void>;
 }
 
-export function pluginApi(env: Env, type: string, name: string, permissions: string[]): PluginApi {
+export function pluginApi(
+  env: Env,
+  type: string,
+  name: string,
+  permissions: string[],
+  siteId: string
+): PluginApi {
+  if (!siteId) {
+    // Unreachable through the dispatcher (it supplies the request's site), and
+    // deliberately fatal rather than defaulted: a default here is exactly how
+    // the original site-blind queries stayed hidden for two batches.
+    throw new Error("pluginApi requires a siteId (§10 rule 6: no defaults)");
+  }
   const allow = (cap: string) => permissions.includes(cap);
   const deny = (cap: string): never => {
     throw new Error(`Capability denied: ${cap}`);
   };
   return {
     identity: { type, name },
+    siteId,
     has: (cap: string) => allow(cap),
     async readSetting(key: string) {
       if (!allow("settings.read")) deny("settings.read");
-      return (await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first<any>())?.value ?? null;
+      const row = await env.DB
+        .prepare("SELECT value FROM settings WHERE site_id=? AND key=?")
+        .bind(siteId, key)
+        .first<any>();
+      return row?.value ?? null;
     },
     async writeSetting(key: string, value: string) {
       if (!allow("settings.write")) deny("settings.write");
-      await env.DB.prepare("UPDATE settings SET value=? WHERE key=?").bind(value, key).run();
+      // Upsert rather than blanket UPDATE. The previous form
+      // (`UPDATE settings SET value=? WHERE key=?`) rewrote the row for every
+      // site in the install that shared the key.
+      await env.DB
+        .prepare(
+          "INSERT INTO settings(id,site_id,key,value,autoload) VALUES(?,?,?,?,1) " +
+          "ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value"
+        )
+        .bind(`set_${siteId}_${key}`.replace(/[^A-Za-z0-9_]/g, "_"), siteId, key, value)
+        .run();
     },
     async readContent(id: string) {
       if (!allow("content.read")) deny("content.read");
-      return await env.DB.prepare("SELECT * FROM posts WHERE id=?").bind(id).first();
+      // Scoped by site: without it a plugin could read another tenant's
+      // unpublished content by guessing an id.
+      return await env.DB
+        .prepare("SELECT * FROM posts WHERE id=? AND site_id=?")
+        .bind(id, siteId)
+        .first();
     },
     async readPluginSetting(key: string) {
       if (!allow("settings.read")) deny("settings.read");
@@ -381,9 +467,12 @@ export function pluginApi(env: Env, type: string, name: string, permissions: str
     },
     async log(message: string) {
       try {
+        // `admin_activity` is the real audit table; the previous name
+        // (`activity_log`) never existed, and the swallowed error below meant
+        // every plugin log line was silently discarded.
         await env.DB
-          .prepare("INSERT INTO activity_log(id,user_id,action,object_type,object_id,meta,created_at) VALUES(?,?,?,?,?,?,?)")
-          .bind(await randomId(), null, "plugin_log", "plugin", name, JSON.stringify({ message: String(message).slice(0, 500) }), Math.floor(Date.now() / 1000))
+          .prepare("INSERT INTO admin_activity(id,user_id,action,entity_type,entity_id,meta,created_at) VALUES(?,?,?,?,?,?,?)")
+          .bind(await randomId(), null, "plugin_log", "plugin", name, JSON.stringify({ site: siteId, message: String(message).slice(0, 500) }), Math.floor(Date.now() / 1000))
           .run();
       } catch {
         /* logging must never break a request */

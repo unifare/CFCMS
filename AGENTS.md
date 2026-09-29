@@ -32,10 +32,22 @@
 7. 如果改了 `src/rendering/template-engine.ts`、`src/extensions/contract/*`、
    或 `scripts/make-*.mjs`，跑 `node tests/scaffold.test.mjs`。它用**真实校验器**与
    **真实模板引擎**跑生成的骨架——**生成器的缺陷只有渲染一遍才会现形**（见下方规则 4）。
+7b. **如果加了数据库表、改了表的租户/语言归属、或改了 `contract/schema.ts`**，跑
+   `node tests/_schema-scope.mjs`（已进 `npm test`）。它把迁移流应用到**临时 SQLite**
+   并驱动**真实 `syncThemeTables()`**，逐表检验声明与真实列一致。
+   同时跑一次 `node tests/_tenant-query-audit.mjs`：新语句会打印为 `NEW`，
+   **必须补一条书面裁决**（为什么不带 `site_id` 是安全的）。
+7c. **如果改了 `contract/events.ts` 或插件的 `subscribes[]`**，跑
+   `node tests/manifest-validation.test.mjs` 与 `node tests/architecture.test.mjs`
+   （后者守 `DOMAIN_EVENTS` 的完整性、唯一性、payload 版本兜底，以及
+   "事件名不得混进 hook 列表"）。
 8. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
-   本仓库已经发生过**七种**（见下方「守卫失效记录」与「同一意图的两种写法」）。
-   工具：`node tests/_eshop-inject.mjs`、`node tests/_i18n-field-inject.mjs`。
+   本仓库已经发生过**八种**（见下方「守卫失效记录」与「同一意图的两种写法」）。
+   工具：`node tests/_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法，11 个场景）、
+   `node tests/_eshop-inject.mjs`、`node tests/_i18n-field-inject.mjs`。
+   ⚠️ 这三个工具**用 Worker 线程在进程内跑套件**——本沙箱 `spawnSync` 一律 `EBUSY`，
+   用子进程会把"跑不起来"伪装成"没变红"。
 
 **当前源码布局**（已重整完毕，新代码必须放对位置）：
 
@@ -52,7 +64,9 @@ src/
 └── extensions/
     ├── contract/         ★ 主题与插件共享的词汇与接口（依赖倒置的支点）
     │   ├── hooks.ts         HostHooks + DECLARABLE_HOOKS（宿主提供实现）
-    │   ├── manifest.ts      词汇表：保留列 / 字段类型 / 后台屏幕 / 各种正则
+    │   ├── events.ts      ★ DOMAIN_EVENTS + EventEnvelope（事实，不是通道，规则 45）
+    │   ├── schema.ts      ★ PLATFORM_SCHEMA：每张表的租户/语言归属（规则 43）
+    │   ├── manifest.ts      词汇表：保留列 / 字段类型 / 后台屏幕 / 语言策略 / 各种正则
     │   ├── capabilities.ts  CAPABILITIES 白名单
     │   └── validation.ts    安装边界：validateManifest（失败必须抛错）
     ├── security.ts       只剩 safeZipPath / sha256（校验已移入 contract/）
@@ -233,6 +247,41 @@ await hooks.applyFilters("html", ctx, out);
 新增一条就用一批真实样例**逐条实测**它命中；② 守卫**自身的守门逻辑**也要反向验证，
 **一个"只在没违规时才通过"的检查，看不见自己的范围失控**。
 
+### 第八种假绿：断言**拼法**让它不可能失败
+
+批次 6 新增 schema / 事件契约守卫时，本文件的格式被抄了一遍：
+
+```js
+check("no domain event is declared twice", dupes, []);   // ← 不可能失败
+```
+
+`check(name, condition, detail)` 测的是 **真值**，而**空数组恒为真**。
+于是七条新守卫**全部无法失败**——注入一个重复的 `MediaUploaded` 到 `DOMAIN_EVENTS`，
+磁盘上确实是两份，测试**依然 40/40 全绿**。这是唯一一次假绿发生在**守卫自己内部**。
+
+**修法两层**：
+
+1. `checkEmpty(name, offenders)` —— 意图可表达，不必在每处重复 `len === 0`；
+2. **元守卫**扫本文件，禁止 `check(<字符串>, <任意表达式>, [])` 这种拼法，并断言
+   扫描到的 `check*` 调用数 **> 20**（否则扫一个空文件也"通过"）。
+
+> 第一版元守卫只匹配**裸标识符**（`check("x", someList, [])`），
+> 结果两条条件写成 `.filter(...)` 的假绿调用溜过去了。**守卫的守卫也要覆盖每种写法**
+> ——这正是第七种的教训，隔一节又犯了一次。
+
+### 反向验证工具自身的三条铁律（`tests/_skeleton-inject.mjs`）
+
+本轮把 11 个场景全部跑通了，途中工具自己假绿过三次：
+
+| 坑 | 症状 | 修法 |
+|---|---|---|
+| **量字节数看不见等长替换** | `"site"`→`"sote"` 长度相同 → 守卫打印"什么都没改"，而注入**其实生效了** | 比**内容哈希**（SHA-256） |
+| **快照取自脏树** | 还原失败（`git checkout` 修不了 untracked 文件）→ 场景逐层叠加；脏状态被拍进快照 → "还原"忠实还原了损坏，**连续几轮红在没人引入过的缺陷上** | 快照前 `assertPristine()`，还原后**再**跑一次——**还原也要被验证** |
+| **用子进程跑套件** | 本沙箱 `spawnSync` 一律 `EBUSY` → 每个场景报"没有摘要"，**"跑不起来"伪装成"没变红"** | 改用 **Worker 线程**（同进程，无需二元文件）。⚠️ 从 ESM 父进程 `eval` 出的 worker 里 `require` **未定义** → 必须用 `import()` |
+
+第 2、3 条合起来的后果很值得记：**一次未还原的注入，会让后续所有场景的结论作废**，
+而 `assertPristine` 之所以没拦住，是因为它的基准快照本身取自已经脏掉的树。**先修树，再快照。**
+
 ### 合法豁免要写在源码里，不要写在测试里
 
 `resolveSite()` 确实需要兜底（请求总得属于某个站点）。用 `?? DEFAULT_SITE_ID`
@@ -252,6 +301,28 @@ await hooks.applyFilters("html", ctx, out);
 | 13c | 语言开关（启用/停用/加语言/改默认）改动后**必须刷新后台上下文**（`loadContext()`），否则编辑器的语言版本条会整条不渲染 |
 | 13d | 扩展菜单的 `label_key` 必须带 owner 前缀（`theme.{name}.` / `plugin.{name}.`，规则 11 的延伸——`validateAdminMenus` 用 ownerName 构造正则拒绝越界 key）。**菜单标签的翻译发生在服务端**（`admin-menus` GET 命中字典即替换 `label`），SPA 不做二次翻译 |
 | 41 | **所有数据都必须有多语言能力，不是可选项**。表字段按承载内容分两类，分类表是 `contract/manifest.ts` 的 `PROSE_FIELD_TYPES` / `LANGUAGE_NEUTRAL_FIELD_TYPES`，`isProseFieldType()` 是唯一谓词：散文（`text`/`longtext`）**必须**在 `translatable`，语言中立（`number`/`boolean`/`date`/`datetime`）**必须不在**。两个方向都在安装边界、架构测试、脚手架默认值三处强制 |
+| 42 | 主题/插件表**必须显式声明语言结构** `tables[].language{strategy,translatable,fallback,requiredLocales}`。`strategy` ∈ `none`/`sidecar`（`versioned` 声明了但**未实现 → 校验器拒绝，不是忽略**）。`strategy:"none"` 而表里有散文 = **断言为假，拒绝**；`language.translatable` 与扁平 `translatable` 不一致 = **两个权威，拒绝**；`fallback`/`requiredLocales` 里的非法 locale 码拒绝 |
+| 43 | 平台 schema 的租户/语言归属**只有一份声明**：`contract/schema.ts` 的 `PLATFORM_SCHEMA`。`TENANT_TABLES` / `PLATFORM_TABLES` / `DERIVED_TENANT_TABLES` / `LOCALE_COLUMN_TABLES` **全部派生自它，不得手写**。每一条必须写 `note`（≥10 字）说明理由，派生租户（`derivedTenant`）必须写明 FK 路径（`post_id → posts.site_id`） |
+| 44 | schema 声明**必须被真实数据库检验**（`tests/_schema-scope.mjs`，进了 `npm test`）：数据库里的表没被分类 = 红；租户表没有 `site_id` = 红；平台表**有** `site_id` = 红；`_i18n` 边车**有** `site_id` = 红。它跑在**临时 SQLite**（迁移流）上而非 `.wrangler/`，并**驱动真实的 `syncThemeTables()`** 造出生成表——否则那些断言全是空转 |
+| 45 | 领域事件是**独立于 hook 的契约**（`contract/events.ts`）：**事件是事实**（过去式 + `payloadVersion` + 必带 `siteId`，分语言的事实带 `locale`），**hook 是通道**。`DOMAIN_EVENTS` 与 `DECLARABLE_HOOKS` **不得互相掺入**（hooks 里出现事件名 = 红）。插件的 `subscribes[]` 在**安装边界**对照 `DOMAIN_EVENTS` 校验——**订阅一个不存在的事件名是 400，不是"永远不触发的 hook"** |
+| 46 | 表有租户字段 **≠** 查询用了它。`tests/_tenant-query-audit.mjs` 列出所有触碰租户表却不带 `site_id` 的语句；**每一处都必须有书面裁决**（`REVIEWED` 表）。没有裁决的新语句打印为 `NEW`。它是报告工具，**不进 `npm test`** |
+| 47 | 平台表（`theme_installs` 等）上的跨站聚合是**设计不是泄漏**：`active` 的含义就是"有站点在用它"。判断是否泄漏看**声明**（`schema.ts` 的 `tenant`），**不看表名前缀**——`theme_installs` 匹配 `theme_*` 但它是平台表 |
+
+规则 42 的后果：`strategy` 不是文档装饰。写 `"versioned"` 会**装不进去**而不是静默降级——
+把一个存在但不可用的选项留在白名单里，等于承诺了没实现的能力。
+
+规则 43 的后果：`theme_installs` / `theme_settings` / `plugin_installs` / `plugin_settings`
+都匹配 `^(?:theme|plugin)_` 前缀，但它们是**平台注册表**、设计上**没有** `site_id`。
+所以判别器是 `isGeneratedBusinessTable()`（先查声明），**不是那个正则**——
+首次运行 `_schema-scope.mjs` 就在这 6 张表上假红过。
+
+规则 45 的后果：`DOMAIN_EVENTS`（21 个）与 `DECLARABLE_HOOKS`（7 个）**数量不同是正常的**，
+因为问题不同——"有几个可挂载的通道" ≠ "有几件值得知道的事"。
+
+### 越界不变量：查询级（规则 46、47）
+
+表声明守的是**形状**，规则 46 守的是**用法**。一条语句可以完全合法地写出来，
+却装着"跨站读别人的行"：
 
 规则 11 的后果：`themes/aurora/langs/zh-CN.json` 里写 `"nav.home"` 会让测试失败，
 必须写 `"theme.aurora.nav.home"`。**这不是风格要求**——两个扩展都定义 `nav.home`

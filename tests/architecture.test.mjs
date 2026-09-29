@@ -42,6 +42,54 @@ function check(name, condition, detail = "") {
   }
 }
 
+/**
+ * Assert a list is empty — the *only* correct way to write "no offenders".
+ *
+ * ⚠️ Do not write `check(name, offenders, [])`. `check` tests **truthiness**,
+ * and an empty array is truthy, so that spelling asserts nothing and cannot
+ * fail. Seven guards in the batch-6 sections were written that way and stayed
+ * green with a blatant defect (a duplicate `MediaUploaded`) sitting on disk —
+ * the eighth false-green in this repo, and the first one *inside the guards*.
+ *
+ * This helper exists so the intent is expressible without repeating
+ * `offenders.length === 0` at every call site; the parameter name is `offenders`
+ * rather than `list` to make the call read as the rule it enforces.
+ */
+function checkEmpty(name, offenders) {
+  const list = Array.isArray(offenders) ? offenders : [offenders];
+  check(
+    name,
+    list.length === 0,
+    list.length ? `${list.length}: ${list.join(" | ")}` : ""
+  );
+}
+
+/**
+ * Guard the guard: no `check()` may pass a collection as its condition.
+ *
+ * A shape error in an assertion is invisible at runtime — the assertion simply
+ * never fails — so it has to be caught *lexically*. This scans this file for
+ * the exact spelling above and fails if it reappears. It is the same idea as
+ * `tests/architecture.test.mjs` refusing to match strings where a structure
+ * needs parsing: here the "structure" is the argument being a bare identifier
+ * whose name is in a known collection-noun set.
+ *
+ * Keep this near `checkEmpty` so the two read together.
+ */
+function findTruthyCollectionCalls(src) {
+  // Any `check(<string>, <anything>, [])`. The third argument of `check` is a
+  // *detail string*, so passing `[]` there means the author believed this was a
+  // comparison helper — and whatever they passed as the condition (a bare
+  // identifier, `.filter(...)`, a spread) is being tested for **truthiness**.
+  // An array is always truthy, so the assertion cannot fail.
+  //
+  // Matching any expression, not just a bare identifier, matters: the first
+  // version of this scan only caught `check("x", someList, [])`, and two
+  // vacuous calls whose condition was `.filter(...)` sailed through.
+  const re = /check\(\s*"[^"]*"\s*,\s*[\s\S]*?,\s*\[\]\s*\)/g;
+  return [...src.matchAll(re)].map((m) => m[0].replace(/\s+/g, " ").slice(0, 80));
+}
+
 function section(title) {
   console.log(`\n${title}`);
 }
@@ -742,14 +790,264 @@ check(
 }
 
 // ---------------------------------------------------------------------------
-console.log(`\n${"=".repeat(64)}`);
-console.log(`${passed} passed, ${failed} failed`);
-if (failed) {
-  console.log("\nFailures:");
-  for (const f of failures) console.log(`  - ${f.name}`);
-  console.log(
-    "\nThese are architecture rules, not style preferences. See docs/ARCHITECTURE.md §5 and §10."
+section("The domain event contract is coherent (§10 rule 45)");
+// ---------------------------------------------------------------------------
+
+/**
+ * `events.ts` declares *what happened*; `hooks.ts` declares *where you may
+ * attach*. Both are contracts, so both need the same treatment as the hook
+ * list above: parsed from source, compared against a pinned set, and checked
+ * for non-vacuity before anything is asserted about the set.
+ *
+ * These are read out of the file rather than imported for the same reason the
+ * hook guard does it: the file may not import the implementation, and the
+ * architecture suite is deliberately dependency-free (it must run first, with
+ * no build step, on a bare checkout).
+ */
+{
+  const eventsSrc = read(join(ROOT, "src/extensions/contract/events.ts"));
+  const hooksSrc = read(join(ROOT, "src/extensions/contract/hooks.ts"));
+
+  const eventsBlock = eventsSrc.match(/export const DOMAIN_EVENTS\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  const events = eventsBlock ? [...eventsBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+
+  const scopedBlock = eventsSrc.match(/export const LOCALE_SCOPED_EVENTS\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  const scoped = scopedBlock ? [...scopedBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+
+  // Non-vacuity first: every assertion below is a statement about a set, and a
+  // set that failed to parse is trivially "consistent".
+  check(
+    "the event contract was actually parsed (non-vacuity)",
+    events.length > 0 && scoped.length > 0,
+    `DOMAIN_EVENTS=${events.length} entries, LOCALE_SCOPED_EVENTS=${scoped.length} entries`
+  );
+
+  const dupes = events.filter((e, i) => events.indexOf(e) !== i);
+  checkEmpty(
+    "no domain event is declared twice",
+    dupes
+  );
+
+  // Naming is the contract's readability: a reader of `PostPublished` knows it
+  // already happened, where `savePost` leaves them guessing before-or-after.
+  const badlyNamed = events.filter((e) => !/^[A-Z][A-Za-z0-9]*$/.test(e));
+  checkEmpty(
+    "every domain event is PascalCase, past tense by convention",
+    badlyNamed
+  );
+
+  // A subscription target that is not an event is the `beforRender` typo again:
+  // the validator accepts it, and the hook never fires.
+  const scopedNotEvents = scoped.filter((e) => !events.includes(e));
+  checkEmpty(
+    "every locale-scoped event is a declared domain event",
+    scopedNotEvents
+  );
+
+  const scopedDupes = scoped.filter((e, i) => scoped.indexOf(e) !== i);
+  checkEmpty(
+    "no locale-scoped event is listed twice",
+    scopedDupes
+  );
+
+  // Payload versioning must be *total*: every event resolves to a version even
+  // when the override map is empty. `payloadVersionOf` falls back to 1, so the
+  // guard checks the fallback path is real by looking for the `?? 1`.
+  const versionFn = eventsSrc.match(/export function payloadVersionOf[\s\S]*?\n\}/);
+  check(
+    "payloadVersionOf has a total fallback (an event with no override still has a version)",
+    Boolean(versionFn) && /\?\?\s*1\b/.test(versionFn[0]),
+    versionFn ? versionFn[0].replace(/\s+/g, " ").slice(0, 120) : "payloadVersionOf not found"
+  );
+
+  // Events live above hooks, not beside them. Collapsing the two is how a CMS
+  // gets a `save_post` that means six things — so the file must say so, and the
+  // hook list must not have quietly grown event names.
+  const hooksLookingLikeEvents = declaredHooksForEvents(hooksSrc).filter((h) => events.includes(h));
+  checkEmpty(
+    "no domain event is smuggled into the hook list",
+    hooksLookingLikeEvents
+  );
+
+  // Every event that carries a language must be one whose fact *is* a
+  // language-specific statement. `SiteCreated` has no locale; `PostPublished`
+  // does. This is a sanity bound rather than a proof — it catches the case
+  // where someone marks a site-level fact as locale-scoped by accident.
+  const SITE_LEVEL_EVENTS = [
+    "SiteCreated", "SiteDeleted", "ExtensionInstalled", "ExtensionEnabled",
+    "ExtensionDisabled", "ThemeActivated", "ThemeDeactivated",
+    "UserCreated", "UserPasswordChanged", "UserDeleted", "MediaUploaded", "MediaDeleted",
+  ];
+  const misScoped = scoped.filter((e) => SITE_LEVEL_EVENTS.includes(e));
+  checkEmpty(
+    "site-level facts are not marked locale-scoped",
+    misScoped
   );
 }
-console.log(`${failed ? "1" : "0"} failure(s)`);
-process.exit(failed ? 1 : 0);
+
+/** Hook names declared in `hooks.ts`, for the cross-check above. */
+function declaredHooksForEvents(src) {
+  const block = src.match(/export const DECLARABLE_HOOKS\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  return block ? [...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+}
+
+// ---------------------------------------------------------------------------
+section("This suite's own assertions can actually fail (meta-guard)");
+// ---------------------------------------------------------------------------
+
+/**
+ * The eighth false-green was not in the code under test — it was in **this
+ * file's own assertion spelling**. `check("…", offenders, [])` reads as "assert
+ * no offenders" and asserts nothing, because `check` tests truthiness and an
+ * empty array is truthy. Any such call is a guard that can never fail, and it
+ * is invisible: the output says `ok` either way.
+ *
+ * So the spelling is banned lexically. This is deliberately a *text* check
+ * rather than a structural one: the defect is a spelling, and the thing being
+ * guarded is a spelling, which is the one case in this repo where text is the
+ * right tool (see AGENTS.md on `theme_admin_menus`).
+ *
+ * It must not match its own source, so the pattern is assembled from parts and
+ * the scan runs on the file with comments blanked (the explanatory comment
+ * above contains the forbidden form as an example).
+ */
+{
+  const selfSrc = blankComments(read(join(ROOT, "tests/architecture.test.mjs")));
+  const open = "check\\(";
+  const arg = "\\s*\"[^\"]*\"\\s*,\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s*,\\s*\\[\\]\\s*\\)";
+  const banned = new RegExp(open + arg, "g");
+  const offenders = [...selfSrc.matchAll(banned)].map((m) => m[1]);
+
+  checkEmpty("no assertion passes a collection as its truthiness condition", offenders);
+
+  // And prove the scan is looking at something: the file must contain the
+  // helper and enough `check*` calls that a zero-result scan is meaningful.
+  const checkCalls = (selfSrc.match(/\bcheck(?:Empty)?\(/g) ?? []).length;
+  check(
+    "the meta-guard actually scanned this suite's assertions (non-vacuity)",
+    checkCalls > 20,
+    `found ${checkCalls} check/checkEmpty calls`
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("The schema declaration covers the real database (§10 rules 41–44)");
+// ---------------------------------------------------------------------------
+
+/**
+ * `tests/_schema-scope.mjs` builds a throwaway SQLite from the migration
+ * stream and checks every real table against `contract/schema.ts`. That is the
+ * strong version of this check, but it needs `node:sqlite` and a temp dir, so
+ * it is its own suite.
+ *
+ * What this section adds is the *cheap* structural half, runnable with zero
+ * setup: the declaration must partition cleanly (no table both tenant-scoped
+ * and platform-global), the derived lists must agree with the entries they are
+ * derived from, and the runtime list must not overlap the platform schema.
+ * A partition that overlaps is a table with two contradictory answers, which
+ * is worse than no answer — a reader will believe whichever they read first.
+ */
+{
+  const schemaSrc = read(join(ROOT, "src/extensions/contract/schema.ts"));
+
+  const entryBlock = schemaSrc.match(/export const PLATFORM_SCHEMA\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  const entryLines = entryBlock ? entryBlock[1].split("\n").filter((l) => l.includes("{ table:")) : [];
+
+  // Parse each entry line for `table:` and `tenant:` without importing — same
+  // rationale as above (this suite stays dependency-free). A line-by-line read
+  // is enough because the declaration is deliberately one table per line; that
+  // convention is itself asserted by the "one entry per line" count below.
+  const declaredTables = entryLines.map((l) => l.match(/table:\s*"([^"]+)"/)?.[1]).filter(Boolean);
+  const declaredTenants = entryLines.map((l) => l.match(/tenant:\s*"([^"]+)"/)?.[1]).filter(Boolean);
+
+  check(
+    "the schema declaration was actually parsed (non-vacuity)",
+    declaredTables.length > 0,
+    `${declaredTables.length} declared entries`
+  );
+  check(
+    "every entry states a tenant scope",
+    declaredTables.length === declaredTenants.length,
+    `${declaredTables.length} tables vs ${declaredTenants.length} tenant values`
+  );
+  checkEmpty(
+    "the tenant scope is only ever site or platform",
+    [...new Set(declaredTenants)].filter((t) => t !== "site" && t !== "platform")
+  );
+
+  const dupTables = declaredTables.filter((t, i) => declaredTables.indexOf(t) !== i);
+  checkEmpty(
+    "no table is declared twice (two answers is worse than none)",
+    dupTables
+  );
+
+  // The derived exports must be derived. If someone hand-writes `TENANT_TABLES`
+  // it will drift from `PLATFORM_SCHEMA` on the next edit, and the collection
+  // script will agree with whichever it happens to read.
+  for (const [name, filter] of [
+    ["TENANT_TABLES", '"site"'],
+    ["PLATFORM_TABLES", '"platform"'],
+  ]) {
+    const derivedFrom = new RegExp(
+      `export const ${name}\\s*=\\s*PLATFORM_SCHEMA[\\s\\S]{0,120}?tenant\\s*===\\s*${filter}`
+    ).test(schemaSrc);
+    check(`${name} is derived from PLATFORM_SCHEMA, not hand-written`, derivedFrom);
+  }
+
+  // RUNTIME_TABLES describes tables the runtime owns; one of them also being a
+  // declared platform table would make `scopeOf()` ambiguous.
+  const runtimeBlock = schemaSrc.match(/export const RUNTIME_TABLES\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  const runtimeNames = runtimeBlock ? [...runtimeBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+  check(
+    "the runtime table list was parsed (non-vacuity)",
+    runtimeNames.length > 0,
+    `${runtimeNames.length} entries`
+  );
+  checkEmpty(
+    "no runtime-owned table is also a declared platform table",
+    runtimeNames.filter((t) => declaredTables.includes(t))
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+//
+// ⚠️ This suite is the one that *documents* the sixth false-green ("no summary
+// line means the run did not finish, which is not the same as success") and it
+// violated that rule itself: the summary sat at the bottom of the file, so any
+// throw from a guard above it produced an empty output and a non-zero exit —
+// legible in CI, but exactly the shape a script grepping for `N passed, M
+// failed` reads as "no failures". The post-restore check in
+// `tests/_skeleton-inject.mjs` walked straight into it.
+//
+// The fix is the one the rule prescribes: one `finish()` that always prints,
+// wired to the uncaught-exception path so a crash reports as `(aborted)` and
+// still carries a failure count.
+let finished = false;
+function finish(tag = "", extraFailures = 0) {
+  if (finished) return;
+  finished = true;
+  const total = failed + extraFailures;
+  console.log(`\n${"=".repeat(64)}`);
+  console.log(`${passed} passed, ${total} failed${tag}`);
+  if (failures.length) {
+    console.log("\nFailures:");
+    for (const f of failures) console.log(`  - ${f.name}`);
+    console.log(
+      "\nThese are architecture rules, not style preferences. See docs/ARCHITECTURE.md §5 and §10."
+    );
+  }
+  console.log(`${total ? "1" : "0"} failure(s)`);
+  process.exit(total ? 1 : 0);
+}
+process.on("uncaughtException", (e) => {
+  console.error("\nSUITE ERROR:", (e && e.stack) || e);
+  finish(" (aborted)", 1);
+});
+process.on("unhandledRejection", (e) => {
+  console.error("\nSUITE ERROR (unhandled rejection):", (e && e.stack) || e);
+  finish(" (aborted)", 1);
+});
+
+finish();

@@ -86,7 +86,7 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  setHostHooks({
    doAction:(name,c,data)=>doAction(name,c,data),
    applyFilters:(name,c,data)=>applyFilters(name,c,data),
-   renderShortcodes:(env2,html)=>renderShortcodes(env2,html),
+   renderShortcodes:(env2,html,siteId)=>renderShortcodes(env2,html,siteId),
    boot:(env2)=>bootPluginRuntime(env2),
  });
  // Same dependency-inversion trick for the UI dictionary. `platform/i18n`
