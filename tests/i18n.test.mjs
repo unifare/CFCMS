@@ -227,7 +227,7 @@ async function main() {
   const previousLocales = sqlite.prepare("SELECT * FROM locales").all();
   sqlite.exec(`DROP TABLE IF EXISTS ${I18N_TABLE}`);
   sqlite.exec(`DROP TABLE IF EXISTS ${MAIN_TABLE}`);
-  sqlite.exec(`DELETE FROM theme_table_defs WHERE theme_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`);
   sqlite.exec(`DELETE FROM theme_installs WHERE name='${THEME}'`);
   sqlite.exec(`DELETE FROM extension_versions WHERE extension_name='${THEME}'`);
   sqlite.exec("DELETE FROM post_meta WHERE post_id IN (SELECT id FROM posts WHERE slug LIKE 'i18n-%')");
@@ -289,7 +289,7 @@ async function main() {
   // here — the assertion would then be measuring the D1's history instead of
   // this suite's behaviour. Filtering by theme keeps it just as strong (a
   // duplicate row for the same theme still fails) without the coupling.
-  const mine = tt1.items.filter((d) => d.theme_name === THEME);
+  const mine = tt1.items.filter((d) => d.owner_type === "theme" && d.owner_name === THEME);
   check("table is registered", mine.map((d) => d.logical_name), ["product"]);
   check("registered without a translation table", mine[0].i18n_table, null);
 

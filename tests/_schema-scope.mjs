@@ -51,7 +51,7 @@ const require = createRequire(pathToFileURL(join(ROOT, "package.json")).href);
 /**
  * A D1-shaped shim over the real SQLite file.
  *
- * Deliberately minimal — only the methods `syncThemeTables` actually calls — so
+ * Deliberately minimal — only the methods `syncOwnerTables` actually calls — so
  * the guard drives the **real** DDL generator rather than re-declaring the
  * shape of a generated table in the test. A test that spells out
  * `id TEXT PRIMARY KEY, site_id TEXT NOT NULL, …` would agree with itself
@@ -175,9 +175,9 @@ try {
   check("every migration applied", fail === 0, true);
   console.log(`  (${files.length} files, ${applied} statements)`);
 
-  // -- 1b. materialise a generated table pair -------------------------------
+  // -- 1b. materialise generated table pairs --------------------------------
   //
-  // Generated business tables are created at RUNTIME by `syncThemeTables`, not
+  // Generated business tables are created at RUNTIME by `syncOwnerTables`, not
   // by the migration stream — so a migration-only walk sees none of them, and
   // every assertion about their shape would be vacuously true. (That is exactly
   // what the non-vacuity check below caught on the first run.)
@@ -185,9 +185,9 @@ try {
   // So drive the real generator against this database. The declaration below is
   // deliberately mixed: prose fields that must be translatable, language-neutral
   // ones that must not be, proving the guard sees both kinds of column.
-  section("0b. Materialise a generated table pair through the real generator");
+  section("0b. Materialise generated table pairs through the real generator");
 
-  const { syncThemeTables } = await loadTablesModule();
+  const { syncOwnerTables } = await loadTablesModule();
   const shim = d1(db);
   // `isMultilingual` reads site_locales; enabling a second language is what
   // makes the generator create the `_i18n` sidecar at all.
@@ -215,13 +215,41 @@ try {
   let syncErr = null;
   let synced = [];
   try {
-    synced = await syncThemeTables({ DB: shim }, "scopeprobe", probeManifest, "default");
+    synced = await syncOwnerTables({ DB: shim }, "theme", "scopeprobe", probeManifest, "default");
   } catch (e) {
     syncErr = e?.message ?? String(e);
   }
   check("the real table generator ran without error", syncErr, null);
   check("it created the business table", synced.map((r) => r.table), ["theme_scopeprobe_item"]);
   check("it created the i18n sidecar (site serves 2 languages)", synced.map((r) => r.i18nTable), ["theme_scopeprobe_item_i18n"]);
+
+  // The same *logical* name under a plugin owner must NOT resolve to the theme's
+  // table. This is the whole reason `owner_type` is in the physical prefix, and
+  // the assertion is on distinct physical names — a guard that only checked
+  // "both sync calls returned without error" would pass while they shared a table.
+  let pluginSynced = [];
+  let pluginSyncErr = null;
+  try {
+    pluginSynced = await syncOwnerTables({ DB: shim }, "plugin", "scopeprobe", probeManifest, "default");
+  } catch (e) {
+    pluginSyncErr = e?.message ?? String(e);
+  }
+  check("a plugin owner with the same name also syncs", pluginSyncErr, null);
+  check("its table is namespaced by owner type", pluginSynced.map((r) => r.table), ["plugin_scopeprobe_item"]);
+  check(
+    "theme and plugin tables of the same logical name are different tables",
+    synced[0].table !== pluginSynced[0].table,
+    true
+  );
+  const registryOwners = db
+    .prepare("SELECT owner_type, table_name FROM theme_table_defs ORDER BY owner_type")
+    .all()
+    .map((r) => `${r.owner_type}:${r.table_name}`);
+  check(
+    "the registry records both owners separately",
+    registryOwners,
+    ["plugin:plugin_scopeprobe_item", "theme:theme_scopeprobe_item"]
+  );
 
   // -- 1. walk the real schema ---------------------------------------------
   section("1. Walk every table in the real database");

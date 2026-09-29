@@ -9,7 +9,7 @@
 import { Env } from "../../shared/types";
 import { now } from "../../shared/repo";
 import { randomId } from "../../shared/crypto";
-import { syncThemeTables } from "./tables";
+import { syncOwnerTables } from "./tables";
 import { registerOwnerMenus, clearOwnerMenus, listOwnerMenus } from "../../platform/admin-menus";
 import type {
   ThemeManifest,
@@ -210,7 +210,7 @@ export async function applyThemeCapabilities(
   // Theme-owned business tables (§2.5.2). The DDL is generated from the
   // declaration, never written by the theme; the `_i18n` companion is created
   // only when this site serves more than one language.
-  const tables = await syncThemeTables(env, themeName, manifest, siteId);
+  const tables = await syncOwnerTables(env, "theme", themeName, manifest, siteId);
   result.tables = tables.length;
 
   await env.DB.prepare("UPDATE theme_installs SET manifest=?, updated_at=? WHERE name=?")

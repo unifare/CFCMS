@@ -51,10 +51,23 @@ export interface ThemeTableDecl {
   fields?: ThemeTableField[];
 }
 
+/**
+ * Who declared a generated table.
+ *
+ * A theme and a plugin of the same name are different owners with different
+ * data, so this is part of the physical name (`theme_foo_bar` vs
+ * `plugin_foo_bar`) and of the registry's unique key. Without it the two would
+ * collide on `foo_bar` and the second one to install would read the first one's
+ * rows.
+ */
+export type OwnerType = "theme" | "plugin";
+
 export interface ThemeTableDef {
   id: string;
   site_id: string;
-  theme_name: string;
+  owner_type: OwnerType;
+  /** The theme name or the plugin name, depending on `owner_type`. */
+  owner_name: string;
   logical_name: string;
   table_name: string;
   i18n_table: string | null;
@@ -102,16 +115,37 @@ export function fieldSqlType(type: string): string {
 }
 
 /**
- * Generated table name. The prefix is not configurable — a theme that could
+ * Generated table name. The prefix is not configurable — an extension that could
  * choose its own table name could collide with a platform table, and there
  * would be no way to tell a generated table from a hand-written one.
+ *
+ * The owner *type* is in the prefix, not just the name: theme `notify` and
+ * plugin `notify` both declaring a `log` table must not resolve to the same
+ * table. `theme_` is the prefix that was already in use, so every name
+ * generated before plugins existed is still produced by this function.
  */
+export function generatedTableName(
+  ownerType: OwnerType,
+  ownerName: string,
+  logicalName: string
+): string {
+  return `${ownerType}_${sanitise(ownerName)}_${sanitise(logicalName)}`;
+}
+
 export function themeTableName(themeName: string, logicalName: string): string {
-  return `theme_${sanitise(themeName)}_${sanitise(logicalName)}`;
+  return generatedTableName("theme", themeName, logicalName);
+}
+
+export function generatedI18nTableName(
+  ownerType: OwnerType,
+  ownerName: string,
+  logicalName: string
+): string {
+  return `${generatedTableName(ownerType, ownerName, logicalName)}_i18n`;
 }
 
 export function themeI18nTableName(themeName: string, logicalName: string): string {
-  return `${themeTableName(themeName, logicalName)}_i18n`;
+  return generatedI18nTableName("theme", themeName, logicalName);
 }
 
 /**
@@ -120,11 +154,17 @@ export function themeI18nTableName(themeName: string, logicalName: string): stri
  * Belt and braces: `validateManifest` already rejects bad names at install
  * time, but this module is also reachable from the admin API and the sandbox
  * facade, and a name that reaches a template-literal `CREATE TABLE` unchecked
- * is an injection. Requiring the generated `theme_` prefix as well means the
+ * is an injection. Requiring one of the generated prefixes as well means the
  * check cannot accidentally bless a platform table.
+ *
+ * Both prefixes are accepted because both an owner type and a logical name are
+ * sanitised before they get here: a logical name containing `plugin_` cannot
+ * forge the prefix, since the real prefix is always the *owner type*, which
+ * comes from `OwnerType` and never from the manifest.
  */
-export function isGeneratedThemeTable(name: string): boolean {
-  return name.startsWith("theme_") && TABLE_NAME_RE.test(name);
+export function isGeneratedExtensionTable(name: string): boolean {
+  if (!TABLE_NAME_RE.test(name)) return false;
+  return name.startsWith("theme_") || name.startsWith("plugin_");
 }
 
 function sanitise(v: string): string {
@@ -196,16 +236,23 @@ export interface SyncTableResult {
 }
 
 /**
- * Materialise every `tables[]` declaration of a theme for one site.
+ * Materialise every `tables[]` declaration of one extension owner for one site.
  *
  * Idempotent by construction: `CREATE TABLE IF NOT EXISTS` plus an
  * `ALTER TABLE ADD COLUMN` pass for fields added to the manifest since the last
  * activation. Columns are never dropped — a removed field is very likely a
  * mistake, and a dropped column is not recoverable.
+ *
+ * `ownerType` decides the physical prefix, so a theme's `log` and a plugin's
+ * `log` are two tables. Everything else here — the field filtering, the
+ * translatable resolution, the `_i18n` decision — is shared, which is the point:
+ * plugin tables get the multilingual treatment by default rather than by a
+ * second implementation that would drift.
  */
-export async function syncThemeTables(
+export async function syncOwnerTables(
   env: Env,
-  themeName: string,
+  ownerType: OwnerType,
+  ownerName: string,
   manifest: any,
   siteId: string
 ): Promise<SyncTableResult[]> {
@@ -233,8 +280,8 @@ export async function syncThemeTables(
       .map((k) => String(k))
       .filter((k) => fieldKeys.has(k));
 
-    const tableName = themeTableName(themeName, logical);
-    const i18nName = themeI18nTableName(themeName, logical);
+    const tableName = generatedTableName(ownerType, ownerName, logical);
+    const i18nName = generatedI18nTableName(ownerType, ownerName, logical);
 
     const existed = await tableExists(env, tableName);
     await env.DB.prepare(mainTableDdl(tableName, fields)).run();
@@ -270,9 +317,9 @@ export async function syncThemeTables(
     // so the facade never tries to join a table that is not there.
     const i18nTable = multilingual && translatable.length ? i18nName : null;
     await env.DB.prepare(
-      `INSERT INTO theme_table_defs(id,site_id,theme_name,logical_name,table_name,i18n_table,translatable,fields_json,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(site_id,theme_name,logical_name) DO UPDATE SET
+      `INSERT INTO theme_table_defs(id,site_id,owner_type,owner_name,logical_name,table_name,i18n_table,translatable,fields_json,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(site_id,owner_type,owner_name,logical_name) DO UPDATE SET
          table_name=excluded.table_name,
          i18n_table=COALESCE(excluded.i18n_table, theme_table_defs.i18n_table),
          translatable=excluded.translatable,
@@ -280,9 +327,10 @@ export async function syncThemeTables(
          updated_at=excluded.updated_at`
     )
       .bind(
-        `ttd_${sanitise(siteId)}_${sanitise(themeName)}_${sanitise(logical)}`,
+        `ttd_${sanitise(siteId)}_${sanitise(ownerType)}_${sanitise(ownerName)}_${sanitise(logical)}`,
         siteId,
-        themeName,
+        ownerType,
+        ownerName,
         logical,
         tableName,
         i18nTable,
@@ -300,7 +348,10 @@ export async function syncThemeTables(
 }
 
 /**
- * Re-run the multilingual decision for every table a site already knows about.
+ * Re-run the multilingual decision for every table a site already knows about,
+ * for **every owner type**. A plugin's tables need translations for the same
+ * reason a theme's do, so this deliberately does not filter on `owner_type`:
+ * one pass over the registry keeps the two paths from diverging.
  *
  * Called when a language is enabled or disabled: the manifests have not
  * changed, but the answer to "does this site need `_i18n` tables" has. Tables
@@ -324,8 +375,8 @@ export async function refreshThemeTableI18n(env: Env, siteId: string): Promise<s
     // `_i18n` to the stored table name. Both happen to agree today, but they
     // are two expressions of one rule (§10 rule 30): if the naming scheme ever
     // changes, the hand-rolled one silently produces a name the resolver does
-    // not know. `themeI18nTableName` is the function everything else calls.
-    const i18nName = themeI18nTableName(def.theme_name, def.logical_name);
+    // not know. `generatedI18nTableName` is the function everything else calls.
+    const i18nName = generatedI18nTableName(def.owner_type, def.owner_name, def.logical_name);
     const existed = await tableExists(env, i18nName);
     await env.DB.prepare(i18nTableDdl(i18nName, def.translatable)).run();
     if (!existed) created.push(i18nName);
@@ -372,42 +423,73 @@ async function seedI18nFromMain(
 // Registry reads
 // ---------------------------------------------------------------------------
 
-export async function listThemeTableDefs(
+/**
+ * Every generated table this site knows about, optionally narrowed to one owner.
+ *
+ * `ownerName` alone is not enough to narrow: theme `notify` and plugin `notify`
+ * are different owners, so a caller that knows which it wants must say so. The
+ * two-argument form is kept for theme callers, which is every caller that
+ * existed before plugins, and it means "themes with this name".
+ */
+export async function listOwnerTableDefs(
   env: Env,
   siteId: string,
-  themeName?: string
+  owner?: { type: OwnerType; name: string }
 ): Promise<ThemeTableDef[]> {
   try {
-    const sql = themeName
-      ? "SELECT * FROM theme_table_defs WHERE site_id=? AND theme_name=? ORDER BY logical_name"
-      : "SELECT * FROM theme_table_defs WHERE site_id=? ORDER BY theme_name, logical_name";
-    const stmt = themeName
-      ? env.DB.prepare(sql).bind(siteId, themeName)
-      : env.DB.prepare(sql).bind(siteId);
-    const r = await stmt.all();
+    if (owner) {
+      const r = await env.DB.prepare(
+        "SELECT * FROM theme_table_defs WHERE site_id=? AND owner_type=? AND owner_name=? ORDER BY logical_name"
+      )
+        .bind(siteId, owner.type, owner.name)
+        .all();
+      return ((r.results as any[]) ?? []).map(hydrate);
+    }
+    const r = await env.DB.prepare(
+      "SELECT * FROM theme_table_defs WHERE site_id=? ORDER BY owner_type, owner_name, logical_name"
+    )
+      .bind(siteId)
+      .all();
     return ((r.results as any[]) ?? []).map(hydrate);
   } catch {
     return [];
   }
 }
 
-/**
- * Resolve a theme's *logical* table name to its generated one.
- *
- * Scoped to `themeName` on purpose: a theme may only reach its own tables, and
- * the lookup is where that is enforced rather than at each call site.
- */
-export async function resolveThemeTable(
+export async function listThemeTableDefs(
   env: Env,
   siteId: string,
-  themeName: string,
+  themeName?: string
+): Promise<ThemeTableDef[]> {
+  return await listOwnerTableDefs(
+    env,
+    siteId,
+    themeName ? { type: "theme", name: themeName } : undefined
+  );
+}
+
+/**
+ * Resolve an owner's *logical* table name to its generated one.
+ *
+ * Scoped to the owner on purpose: an extension may only reach its own tables,
+ * and the lookup is where that is enforced rather than at each call site.
+ * `ownerType` is required rather than defaulted to `"theme"` — a default here
+ * would mean a plugin calling the theme-shaped overload reads the theme's table
+ * of the same name and gets an empty result, which looks like "no data" rather
+ * than "wrong table" (§10 rule 6: no defaulted scoping parameter).
+ */
+export async function resolveOwnerTable(
+  env: Env,
+  siteId: string,
+  ownerType: OwnerType,
+  ownerName: string,
   logicalName: string
 ): Promise<ThemeTableDef | null> {
   try {
     const r = await env.DB.prepare(
-      "SELECT * FROM theme_table_defs WHERE site_id=? AND theme_name=? AND logical_name=?"
+      "SELECT * FROM theme_table_defs WHERE site_id=? AND owner_type=? AND owner_name=? AND logical_name=?"
     )
-      .bind(siteId, themeName, logicalName)
+      .bind(siteId, ownerType, ownerName, logicalName)
       .first<any>();
     return r ? hydrate(r) : null;
   } catch {
@@ -415,11 +497,27 @@ export async function resolveThemeTable(
   }
 }
 
+export async function resolveThemeTable(
+  env: Env,
+  siteId: string,
+  themeName: string,
+  logicalName: string
+): Promise<ThemeTableDef | null> {
+  return await resolveOwnerTable(env, siteId, "theme", themeName, logicalName);
+}
+
 function hydrate(r: any): ThemeTableDef {
+  // `owner_type` is read defensively rather than trusted: this row also exists
+  // in databases created before migration 0014, and a hydration that returned
+  // `undefined` for it would make `generatedI18nTableName` produce
+  // `undefined_foo_bar` — a name that is plausible enough to be queried.
+  const ownerType: OwnerType = r.owner_type === "plugin" ? "plugin" : "theme";
+  const ownerName = String(r.owner_name ?? r.theme_name ?? "");
   return {
     id: String(r.id),
     site_id: String(r.site_id),
-    theme_name: String(r.theme_name),
+    owner_type: ownerType,
+    owner_name: ownerName,
     logical_name: String(r.logical_name),
     table_name: String(r.table_name),
     i18n_table: r.i18n_table ? String(r.i18n_table) : null,

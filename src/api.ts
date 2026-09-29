@@ -47,9 +47,8 @@ import {
 } from "./platform/i18n";
 import { activeTheme } from "./extensions/theme/runtime-declarative";
 import {
-  listThemeTableDefs,
+  listOwnerTableDefs,
   refreshThemeTableI18n,
-  syncThemeTables,
 } from "./extensions/theme/tables";
 import { tableBySlug, tableDelete, tableList, tableSave, resolveTableForSite } from "./extensions/theme/table-facade";
 
@@ -902,16 +901,30 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
     await activity(env, user.id, "translate", String(source.type), newId, { from: id, locale, mode, site: siteId });
     return ok({ id: newId, locale, slug, mode, group }, 201);
   }
-  // -- Theme-owned tables (L3) --------------------------------------------
+  // -- Extension-owned tables (L3) ----------------------------------------
   if (path === "theme-tables" && method === "GET") {
     const theme = await activeTheme(env, siteId).catch(() => null);
-    const defs = await listThemeTableDefs(env, siteId);
+    const defs = await listOwnerTableDefs(env, siteId);
+    // Which plugins are running, so a plugin-owned table can report whether it
+    // is live. `bootPluginRuntime` is the same source the hook wiring uses, so
+    // the flag cannot drift from what actually executes.
+    const enabledPlugins = new Set(
+      (await bootPluginRuntime(env).catch(() => [])).map((p) => p.name)
+    );
     return ok({
       site: siteId,
       active_theme: theme?.name ?? null,
       items: defs.map((d) => ({
         ...d,
-        active: d.theme_name === theme?.name,
+        // "Active" means the declaring owner is the one running now. A theme's
+        // table is active when its theme is the active theme; a plugin's table
+        // is active when the plugin is enabled. Comparing only the name would
+        // mark plugin `notify`'s table as active whenever a theme named
+        // `notify` happened to be active — two different owners, one name.
+        active:
+          d.owner_type === "theme"
+            ? d.owner_name === theme?.name
+            : enabledPlugins.has(d.owner_name),
       })),
     });
   }

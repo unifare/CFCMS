@@ -104,11 +104,11 @@ console.log(
  * is platform-global by design), and a guard that is wrong gets disabled.
  */
 const REVIEWED = {
-  "src/api.ts:217": "UPDATE posts … WHERE id=? — id came from a site-scoped lookup; slug/status are not identity",
-  "src/api.ts:373": "DELETE FROM posts WHERE id=? — id already authorized against siteId above",
-  "src/api.ts:1141": "UPDATE theme_installs … — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
+  "src/api.ts:216": "UPDATE posts … WHERE id=? — id came from a site-scoped lookup; slug/status are not identity",
+  "src/api.ts:372": "DELETE FROM posts WHERE id=? — id already authorized against siteId above",
+  "src/api.ts:1154": "UPDATE theme_installs … — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
   "src/extensions/theme/runtime-worker.ts:390": "menu_items … WHERE menu_id=? — the menu row was resolved per site; locale is the remaining filter",
-  "src/extensions/theme/tables.ts:332": "UPDATE theme_table_defs WHERE id=? — registry row addressed by its own PK",
+  "src/extensions/theme/tables.ts:383": "UPDATE theme_table_defs WHERE id=? — registry row addressed by its own PK",
   "src/platform/frontend.ts:84": "menu_items … WHERE menu_id=? — same reasoning as runtime-worker",
   "src/shared/scheduler.ts:23": "UPDATE posts … WHERE id=? — the site was just read from that very row",
 };

@@ -315,7 +315,7 @@ async function main() {
     "DELETE FROM theme_routes WHERE declared_by_theme='realestate'",
     "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='realestate'",
     "DELETE FROM theme_blocks WHERE declared_by_theme='realestate'",
-    "DELETE FROM theme_table_defs WHERE theme_name='realestate'",
+    "DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='realestate'",
     // `theme_table_defs` deliberately survives theme deactivation (§3.4 — the
     // rows must stay reachable after a switch), so nothing removes this fixture
     // for us. Leaving it behind pollutes the shared local D1 that the other
