@@ -152,7 +152,7 @@ act_dev() {
 
 act_theme_deploy() {
   require_wrangler
-  theme="${1:-themes/aurora}"
+  theme="${1:-themes/default}"
   [ -d "$theme" ] || die "theme directory not found: $theme"
   head1 "deploy theme: $theme"
   dim "requires a running dev server at http://$DEV_HOST:$DEV_PORT (menu 1)"
@@ -184,7 +184,7 @@ admin-spa|tests/admin-spa.test.mjs
 template-engine|tests/template-engine.test.mjs
 scaffold|tests/scaffold.test.mjs
 theme-integration|tests/theme-integration.test.mjs
-theme-eshop|tests/theme-eshop.test.mjs
+theme-fixture|tests/theme-fixture.test.mjs
 multisite|tests/multisite.test.mjs
 i18n|tests/i18n.test.mjs
 admin-contract|tests/admin-contract.test.mjs
@@ -192,7 +192,7 @@ account|tests/account.test.mjs
 menu-custom|tests/menu-custom.test.mjs
 plugin-hooks|tests/plugin-hooks.test.mjs
 theme-worker|tests/theme-worker.test.mjs
-theme-aurora|tests/theme-aurora.test.mjs
+
 launcher-parity|tests/launcher-parity.test.mjs"
 
 # `_schema-scope` is `_schema-scope.mjs`, not `_schema-scope.test.mjs` — the
@@ -428,8 +428,8 @@ ${C_BOLD}CFPress launcher${C_RESET}  ${C_DIM}(repo root: $ROOT)${C_RESET}
 
   ${C_BOLD}SUITES${C_RESET}  ${C_DIM}(for \`test <name>\`)${C_RESET}
     architecture  _schema-scope  manifest-validation  admin-menus  admin-spa
-    template-engine  scaffold  theme-integration  theme-eshop  multisite  i18n
-    admin-contract  account  menu-custom  plugin-hooks  theme-worker  theme-aurora
+    template-engine  scaffold  theme-integration  theme-fixture  multisite  i18n
+    admin-contract  account  menu-custom  plugin-hooks  theme-worker
 
   ${C_BOLD}ENV${C_RESET}
     CFP_PORT (default 47913)  CFP_HOST (default 127.0.0.1)   NO_COLOR (disable colour)
@@ -503,7 +503,7 @@ menu_loop() {
     case "$choice" in
       1) act_dev ;;
       2) act_migrate_local ;;
-      3) theme=$(menu_read "  theme dir [themes/aurora]: "); act_theme_deploy "${theme:-themes/aurora}" ;;
+      3) theme=$(menu_read "  theme dir [themes/default]: "); act_theme_deploy "${theme:-themes/default}" ;;
       4) act_test ;;
       5) act_typecheck ;;
       6) act_audit ;;

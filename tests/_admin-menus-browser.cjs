@@ -31,7 +31,6 @@ const { DatabaseSync } = require("node:sqlite");
 const ROOT = join(__dirname, "..");
 const BASE = process.env.CFPRESS_BASE || "http://127.0.0.1:47913";
 const THEME = "menusbrowser";
-const PLUGIN = "seo";
 /** The *logical* table name from the manifest — what `args.table` names, and
  *  therefore the first half of every `data-table-*` value. Not the theme name.
  *  Kept unique to this fixture so a run can never be confused with a table a
@@ -153,7 +152,7 @@ function resetFixture() {
   console.log("\n2. Reset to a known state");
   await page.evaluate(async () => {
     await fetch("/api/v1/extensions/themes/default/activate?site=default", { method: "POST" });
-    await fetch("/api/v1/extensions/plugins/seo/disable", { method: "POST" });
+    await fetch("/api/v1/extensions/plugins/notify/disable", { method: "POST" });
   });
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(800);
@@ -165,7 +164,7 @@ function resetFixture() {
   // -- plugin path ---------------------------------------------------------
   console.log("\n3. Enabling a plugin grows an Extensions group");
   const enableStatus = await page.evaluate(async () => {
-    const r = await fetch("/api/v1/extensions/plugins/seo/enable", { method: "POST" });
+    const r = await fetch("/api/v1/extensions/plugins/notify/enable", { method: "POST" });
     return r.status;
   });
   check("enable accepted", enableStatus === 200, `status ${enableStatus}`);
@@ -179,13 +178,13 @@ function resetFixture() {
     const g = gs.find((x) => x.querySelector(".nav-group-label")?.textContent.trim() === "Extensions");
     return g ? [...g.querySelectorAll(".nav-item")].map((b) => b.textContent.trim()) : [];
   });
-  check("the plugin's menu is in it", extItems.includes("SEO Settings"), extItems.join(", "));
+  check("the plugin's menu is in it", extItems.includes("Notify Settings"), extItems.join(", "));
 
   console.log("\n4. The plugin menu opens the plugin's declared settings");
-  await page.click('[data-nav="menu:seo-settings"]');
+  await page.click('[data-nav="menu:notify-settings"]');
   await page.waitForTimeout(900);
   const pluginPage = await page.textContent("#content");
-  check("heading is the menu label", /SEO Settings/i.test(pluginPage || ""));
+  check("heading is the menu label", /Notify Settings/i.test(pluginPage || ""));
   check("declared field `title_template` rendered", !!(await page.$('[data-ts-key="title_template"]')));
   check("declared field `default_description` rendered", !!(await page.$('[data-ts-key="default_description"]')));
 
@@ -194,13 +193,13 @@ function resetFixture() {
   await page.fill('[data-ts-key="title_template"]', newVal);
   await page.click("[data-save-theme-settings]");
   await page.waitForTimeout(1200);
-  const saved = apiLog.filter((l) => /plugins\/seo\/settings ->/.test(l));
+  const saved = apiLog.filter((l) => /plugins\/notify\/settings ->/.test(l));
   check("saving plugin settings was accepted (not a silent 4xx)", saved.some((l) => /-> 200/.test(l)), saved.join("\n       ") || "no request seen");
 
   // Read it back after a full reload: a POST that returns 200 but writes
   // nothing is exactly the failure a status-code-only assertion misses.
   await page.reload({ waitUntil: "networkidle" });
-  await page.click('[data-nav="menu:seo-settings"]');
+  await page.click('[data-nav="menu:notify-settings"]');
   await page.waitForTimeout(900);
   const persisted = await page.inputValue('[data-ts-key="title_template"]').catch(() => "");
   check("the saved value survived a reload", persisted === newVal, `read back "${persisted}", wrote "${newVal}" (was "${beforeVal}")`);
@@ -282,7 +281,7 @@ function resetFixture() {
   console.log("\n9. Restore the starting state");
   await page.evaluate(async () => {
     await fetch("/api/v1/extensions/themes/default/activate?site=default", { method: "POST" });
-    await fetch("/api/v1/extensions/plugins/seo/disable", { method: "POST" });
+    await fetch("/api/v1/extensions/plugins/notify/disable", { method: "POST" });
   });
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(900);

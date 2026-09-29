@@ -219,7 +219,7 @@ function Invoke-Dev {
 }
 
 function Invoke-ThemeDeploy {
-    param([string]$Theme = 'themes/aurora')
+    param([string]$Theme = 'themes/default')
     Assert-Node
     if (-not (Test-Path $Theme)) { Die "theme directory not found: $Theme" }
     Write-Head "deploy theme: $Theme"
@@ -259,7 +259,7 @@ $Script:Suites = [ordered]@{
     'template-engine'    = 'tests/template-engine.test.mjs'
     'scaffold'           = 'tests/scaffold.test.mjs'
     'theme-integration'  = 'tests/theme-integration.test.mjs'
-    'theme-eshop'        = 'tests/theme-eshop.test.mjs'
+    'theme-fixture'      = 'tests/theme-fixture.test.mjs'
     'multisite'          = 'tests/multisite.test.mjs'
     'i18n'               = 'tests/i18n.test.mjs'
     'admin-contract'     = 'tests/admin-contract.test.mjs'
@@ -267,7 +267,6 @@ $Script:Suites = [ordered]@{
     'menu-custom'        = 'tests/menu-custom.test.mjs'
     'plugin-hooks'       = 'tests/plugin-hooks.test.mjs'
     'theme-worker'       = 'tests/theme-worker.test.mjs'
-    'theme-aurora'       = 'tests/theme-aurora.test.mjs'
     'launcher-parity'    = 'tests/launcher-parity.test.mjs'
 }
 
@@ -590,8 +589,8 @@ function Start-MenuLoop {
             '^1$' { $null = Invoke-Dev }
             '^2$' { $null = Invoke-MigrateLocal }
             '^3$' {
-                $t = Read-MenuInput '  theme dir [themes/aurora]: '
-                if (-not $t) { $t = 'themes/aurora' }
+                $t = Read-MenuInput '  theme dir [themes/default]: '
+                if (-not $t) { $t = 'themes/default' }
                 $null = Invoke-ThemeDeploy $t
             }
             '^4$' { $null = Invoke-Test }

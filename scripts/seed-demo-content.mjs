@@ -64,7 +64,7 @@ const HELLO = body(
     "penalty for it."),
   b("core/code",
     "// A theme is a folder, not an application.\n" +
-    "themes/aurora/\n" +
+    "themes/fixture/\n" +
     "  theme.json\n" +
     "  templates/\n" +
     "    index.html    // the home page\n" +

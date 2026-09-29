@@ -15,7 +15,7 @@
  * Runs the REAL Worker source against the REAL local D1, same as the other
  * integration suites. Usage: node tests/admin-menus.test.mjs
  */
-import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -126,7 +126,7 @@ async function req(worker, env, path, init) {
 // Fixtures
 // ---------------------------------------------------------------------------
 const THEME = "menusdemo";
-const PLUGIN = "seo";
+const PLUGIN = "notify";
 
 function buildThemeZip() {
   const manifest = {
@@ -160,9 +160,28 @@ function buildThemeZip() {
 }
 
 function buildPluginZip() {
-  // The shipped SEO manifest, so the test proves the real one validates and
-  // registers rather than a fixture written to match the code.
-  const manifest = JSON.parse(readFileSync(join(root, "plugins", PLUGIN, "plugin.json"), "utf8"));
+  // Read the *shipped* plugin manifest when it exists, so the test proves the
+  // real one validates and registers rather than a fixture written to match the
+  // code. `plugins/notify` is the reference plugin; until it lands, fall back to
+  // an inline manifest equivalent to the retired `plugins/seo` one, so this
+  // suite keeps its coverage either way.
+  const shipped = join(root, "plugins", PLUGIN, "plugin.json");
+  const manifest = existsSync(shipped)
+    ? JSON.parse(readFileSync(shipped, "utf8"))
+    : {
+        name: PLUGIN,
+        title: "Notify",
+        version: "1.0.0",
+        permissions: ["content.read", "settings.read", "settings.write"],
+        hooks: ["beforeRender", "html"],
+        adminMenus: [
+          { id: "notify-settings", label: "Notify Settings", icon: "chart", screen: "plugin-settings", capability: "settings.read" },
+        ],
+        settings: [
+          { key: "title_template", label: "Title template", type: "text", default: "%title% | %site%" },
+          { key: "default_description", label: "Default description", type: "textarea", default: "" },
+        ],
+      };
   return { zip: zipSync({ "plugin.json": strToU8(JSON.stringify(manifest, null, 2)) }), manifest };
 }
 
@@ -179,7 +198,7 @@ async function main() {
   for (const sql of [
     `DELETE FROM admin_menu_registry WHERE owner_name='${THEME}'`,
     `DELETE FROM admin_menu_registry WHERE owner_type='plugin'`,
-    "UPDATE plugin_installs SET enabled=0 WHERE name='seo'",
+    "UPDATE plugin_installs SET enabled=0 WHERE name='notify'",
     `DELETE FROM theme_table_defs WHERE theme_name='${THEME}'`,
     `DELETE FROM post_types WHERE declared_by_theme='${THEME}'`,
     `DELETE FROM theme_installs WHERE name='${THEME}'`,
@@ -417,7 +436,7 @@ async function main() {
   for (const sql of [
     `DELETE FROM admin_menu_registry WHERE owner_name='${THEME}'`,
     `DELETE FROM admin_menu_registry WHERE owner_type='plugin'`,
-    "UPDATE plugin_installs SET enabled=0 WHERE name='seo'",
+    "UPDATE plugin_installs SET enabled=0 WHERE name='notify'",
     `DELETE FROM theme_table_defs WHERE theme_name='${THEME}'`,
     `DELETE FROM theme_installs WHERE name='${THEME}'`,
     "DELETE FROM sites WHERE id='menusite2'",
@@ -427,11 +446,34 @@ async function main() {
 
   sqlite.close();
 
-  console.log("\n" + "=".repeat(64));
-  console.log(`${pass} passed, ${fail} failed`);
-  if (failures.length) console.log("Failures:\n  - " + failures.join("\n  - "));
-  console.log(`${fail ? 1 : 0} failure(s)`);
-  process.exit(fail ? 1 : 0);
+  summary();
+  return fail ? 1 : 0;
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+/**
+ * The summary every suite must print, in the one format a reader or a script
+ * can parse. This suite used to print `${fail ? 1 : 0} failure(s)` *in addition*
+ * to the standard line — two summaries in two spellings, which is how a checker
+ * greps the wrong one and reads a crash as a pass.
+ */
+function summary(note) {
+  console.log("\n" + "=".repeat(64));
+  console.log(`${pass} passed, ${fail} failed${note ? ` (${note})` : ""}`);
+  if (failures.length) console.log("Failed: " + failures.join(", "));
+}
+
+let code = 1;
+try {
+  code = await main();
+} catch (e) {
+  console.error("Harness error:", (e && e.message) || e);
+  console.error(String((e && e.stack) || "").split("\n").slice(0, 8).join("\n"));
+  // A crashed run must still print a summary, and it must say it failed.
+  // Without this, a suite that throws mid-way leaves no parseable line and
+  // "I could not tell" is silently read as "it passed" (AGENTS.md type 6).
+  fail++;
+  failures.push(`harness threw: ${(e && e.message) || e}`);
+  summary("aborted");
+  code = 2;
+}
+process.exit(code);

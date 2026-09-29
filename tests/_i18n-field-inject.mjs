@@ -15,7 +15,7 @@
  *   5. restores and asserts pristine AGAIN ("the restore is also verified").
  *
  * This file is a TOOL, not a suite: it is not in `npm test` (same nature as
- * `_eshop-inject.mjs` and `_i18n-browser.cjs`).
+ * `_fixture-inject.mjs` and `_i18n-browser.cjs`).
  *
  * Usage: node tests/_i18n-field-inject.mjs
  */
@@ -31,7 +31,7 @@ const ROOT = join(__dirname, "..");
 const MANIFEST = join(ROOT, "src/extensions/contract/manifest.ts");
 const VALIDATION = join(ROOT, "src/extensions/contract/validation.ts");
 const MAKETABLE = join(ROOT, "scripts/make-table.mjs");
-const SHIPPED = join(ROOT, "themes/eshop/theme.json");
+const SHIPPED = join(ROOT, "themes/fixture/theme.json");
 const VALIDATOR_SUITE = join(ROOT, "tests/manifest-validation.test.mjs");
 const SCAFFOLD_SUITE = join(ROOT, "tests/scaffold.test.mjs");
 const ARCH_SUITE = join(ROOT, "tests/architecture.test.mjs");

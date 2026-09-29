@@ -18,7 +18,7 @@
     "test:admin": "node tests/admin-contract.test.mjs",
     "test:plugins": "node tests/plugin-hooks.test.mjs",
     "test:sandbox": "node tests/theme-worker.test.mjs",
-    "test:aurora": "node tests/theme-aurora.test.mjs",
+    "test:fixture": "node tests/theme-fixture.test.mjs",
     "test:manifest": "node tests/manifest-validation.test.mjs",
     "test:admin-spa": "node tests/admin-spa.test.mjs",
     "test:admin-menus": "node tests/admin-menus.test.mjs",
@@ -28,12 +28,11 @@
     "make:plugin": "node scripts/make-plugin.mjs",
     "make:table": "node scripts/make-table.mjs",
     "test:scaffold": "node tests/scaffold.test.mjs",
-    "test:theme-eshop": "node tests/theme-eshop.test.mjs",
     "test:account": "node tests/account.test.mjs",
     "test:menu-custom": "node tests/menu-custom.test.mjs",
     "test:schema": "node tests/_schema-scope.mjs",
     "test:launcher": "node tests/launcher-parity.test.mjs",
-    "test": "node tests/architecture.test.mjs && node tests/_schema-scope.mjs && node tests/manifest-validation.test.mjs && node tests/admin-menus.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/scaffold.test.mjs && node tests/theme-integration.test.mjs && node tests/theme-eshop.test.mjs && node tests/multisite.test.mjs && node tests/i18n.test.mjs && node tests/admin-contract.test.mjs && node tests/account.test.mjs && node tests/menu-custom.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/theme-aurora.test.mjs && node tests/launcher-parity.test.mjs"
+    "test": "node tests/architecture.test.mjs && node tests/_schema-scope.mjs && node tests/manifest-validation.test.mjs && node tests/admin-menus.test.mjs && node tests/admin-spa.test.mjs && node tests/template-engine.test.mjs && node tests/scaffold.test.mjs && node tests/theme-integration.test.mjs && node tests/theme-fixture.test.mjs && node tests/multisite.test.mjs && node tests/i18n.test.mjs && node tests/admin-contract.test.mjs && node tests/account.test.mjs && node tests/menu-custom.test.mjs && node tests/plugin-hooks.test.mjs && node tests/theme-worker.test.mjs && node tests/launcher-parity.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.3",

@@ -51,7 +51,11 @@ const SCENARIOS = [
   {
     label: "a suite dropped from the powershell table",
     file: PS1,
-    before: "    'theme-aurora'       = 'tests/theme-aurora.test.mjs'\n",
+    // Anchor on a row that exists in both tables and appears exactly once in
+    // each. This used to be `theme-aurora`; when that theme was retired the row
+    // was deleted from both launchers, and an anchor that matches nothing makes
+    // the scenario **skip silently** — the "skipped is not passed" trap.
+    before: "    'theme-fixture'      = 'tests/theme-fixture.test.mjs'\n",
     after: "",
     expect: "no suite name is listed only by .sh",
   },
