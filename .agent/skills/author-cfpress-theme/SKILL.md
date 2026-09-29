@@ -353,7 +353,7 @@ curl -sD- -o /dev/null http://127.0.0.1:8787/en | grep -i cfpress-template
 `worker:storefront` 而实际激活的是 aurora），看起来像「新主题没生效」。
 **等 1~3 秒，或连续探测两次都一致**再判定。
 
-## 四个会让「主题不生效」的假象
+## 五个会让「主题不生效」的假象
 
 1. **`__fallback__` 最常见的原因不是 R2 被清空，而是 `theme.active` 设置行缺失。**
    `activeTheme()` 读的是 `setting(env,"theme.active", <兜底>, siteId)`。
