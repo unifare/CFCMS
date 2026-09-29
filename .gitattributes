@@ -28,6 +28,13 @@
 *.sql           text eol=lf
 *.css           text eol=lf
 *.md            text eol=lf
+# Theme templates. The engine tolerates CRLF (verified: a CRLF template renders
+# identical output), so this is not a correctness pin — it is a *diff* pin. With
+# `core.autocrlf=true`, an unpinned `.html` shows as modified after every
+# checkout, and a reviewer then has to re-derive that the change is whitespace.
+# Same reason as the shell scripts: the form is decided here, not by the
+# developer's git config.
+*.html          text eol=lf
 *.yml           text eol=lf
 *.yaml          text eol=lf
 
