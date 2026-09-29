@@ -28,7 +28,7 @@
    它注入 6 个缺陷、断言每个都真的变红（含"断言注入确实生效"与"还原也验证"）。
 6. 如果改了后台界面，跑 `node tests/admin-spa.test.mjs`，并跑一次真实浏览器验收
    `node tests/_i18n-browser.cjs` / `node tests/_admin-menus-browser.cjs`
-   （需要另开 `npx wrangler dev --port 8787 --ip 127.0.0.1`）。
+   （需要另开 `npx wrangler dev --port 47913 --ip 127.0.0.1`）。
 7. 如果改了 `src/rendering/template-engine.ts`、`src/extensions/contract/*`、
    或 `scripts/make-*.mjs`，跑 `node tests/scaffold.test.mjs`。它用**真实校验器**与
    **真实模板引擎**跑生成的骨架——**生成器的缺陷只有渲染一遍才会现形**（见下方规则 4）。

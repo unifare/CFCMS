@@ -18,7 +18,7 @@
  * suite read this theme's table as if it were its own.
  *
  * Usage:
- *   npx wrangler dev --port 8787 --ip 127.0.0.1   (in another shell)
+ *   npx wrangler dev --port 47913 --ip 127.0.0.1   (in another shell)
  *   node tests/_admin-menus-browser.cjs
  */
 const PW = "C:/Users/TF/.workbuddy-ai/binaries/node/workspace/node_modules/playwright-core";
@@ -29,7 +29,7 @@ const { readdirSync } = require("fs");
 const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = join(__dirname, "..");
-const BASE = process.env.CFPRESS_BASE || "http://127.0.0.1:8787";
+const BASE = process.env.CFPRESS_BASE || "http://127.0.0.1:47913";
 const THEME = "menusbrowser";
 const PLUGIN = "seo";
 /** The *logical* table name from the manifest — what `args.table` names, and

@@ -78,7 +78,11 @@ Set-Location $Root
 
 $ConfigFile = 'wrangler.jsonc'
 $DbName = 'cfpress'
-$DevPort = if ($env:CFP_PORT) { $env:CFP_PORT } else { '8787' }
+# Deliberately an uncommon port. 8787 is the default for `wrangler dev`, so it
+# collides with every other Wrangler project on the machine (and with the two
+# wrangler dev instances that cause SQLITE_BUSY). 47913 is in the private range
+# and is not the default of any tool we use. Override with CFP_PORT.
+$DevPort = if ($env:CFP_PORT) { $env:CFP_PORT } else { '47913' }
 $DevHost = if ($env:CFP_HOST) { $env:CFP_HOST } else { '127.0.0.1' }
 $DevUrl = "http://${DevHost}:${DevPort}"
 
@@ -521,7 +525,7 @@ CFPress launcher  (repo root: $Root)
     $suiteNames
 
   ENV / 环境变量
-    CFP_PORT (default 8787)   CFP_HOST (default 127.0.0.1)   NO_COLOR (disable colour)
+    CFP_PORT (default 47913)  CFP_HOST (default 127.0.0.1)   NO_COLOR (disable colour)
 
   EXIT CODES / 退出码
     0 ok    1 failed/aborted    2 usage error    3 refused by a precondition

@@ -7,13 +7,13 @@
  * errors, page errors, failed requests and 5xx responses.
  *
  * Usage:
- *   npx wrangler dev --port 8787 --ip 127.0.0.1   (in another shell)
+ *   npx wrangler dev --port 47913 --ip 127.0.0.1   (in another shell)
  *   node tests/_i18n-browser.cjs
  */
 const PW = "C:/Users/TF/.workbuddy-ai/binaries/node/workspace/node_modules/playwright-core";
 const { chromium } = require(PW);
 
-const BASE = process.env.CFPRESS_BASE || "http://127.0.0.1:8787";
+const BASE = process.env.CFPRESS_BASE || "http://127.0.0.1:47913";
 
 const problems = [];
 /** Every write the script performs, with its status — so a silent 4xx cannot

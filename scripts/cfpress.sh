@@ -35,7 +35,11 @@ cd "$ROOT" || { echo "cannot cd to $ROOT" >&2; exit 2; }
 
 CONFIG="wrangler.jsonc"
 DB_NAME="cfpress"
-DEV_PORT="${CFP_PORT:-8787}"
+# Deliberately an uncommon port. 8787 is the default for `wrangler dev`, so it
+# collides with every other Wrangler project on the machine (and with the two
+# wrangler dev instances that cause SQLITE_BUSY). 47913 is in the private range
+# and is not the default of any tool we use. Override with CFP_PORT.
+DEV_PORT="${CFP_PORT:-47913}"
 DEV_HOST="${CFP_HOST:-127.0.0.1}"
 
 # --- output helpers ----------------------------------------------------------
@@ -428,7 +432,7 @@ ${C_BOLD}CFPress launcher${C_RESET}  ${C_DIM}(repo root: $ROOT)${C_RESET}
     admin-contract  account  menu-custom  plugin-hooks  theme-worker  theme-aurora
 
   ${C_BOLD}ENV${C_RESET}
-    CFP_PORT (default 8787)   CFP_HOST (default 127.0.0.1)   NO_COLOR (disable colour)
+    CFP_PORT (default 47913)  CFP_HOST (default 127.0.0.1)   NO_COLOR (disable colour)
 
   ${C_BOLD}EXIT CODES${C_RESET}
     0 ok    1 failed/aborted    2 usage error    3 refused by a precondition

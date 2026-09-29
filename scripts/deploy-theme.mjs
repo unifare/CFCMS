@@ -5,7 +5,7 @@ import { join, relative, sep } from "node:path";
 import { zipSync } from "fflate";
 
 const themeDir = process.argv[2] ?? "themes/storefront";
-const base = process.argv[3] ?? "http://127.0.0.1:8787";
+const base = process.argv[3] ?? "http://127.0.0.1:47913";
 const siteId = process.argv[4] ?? "default";
 
 async function walk(dir, root = dir, out = []) {

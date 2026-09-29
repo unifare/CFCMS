@@ -306,7 +306,7 @@ node tests/_i18n-data-inventory.mjs    # 清点所有承载数据的声明类，
 另有两个**不在 `npm test` 链里**的真实浏览器验收脚本：
 
 ```bash
-npx wrangler dev --port 8787 --ip 127.0.0.1     # 另开一个 shell
+npx wrangler dev --port 47913 --ip 127.0.0.1     # 另开一个 shell
 node tests/_i18n-browser.cjs                     # 多语言：22 条断言
 node tests/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言（本轮新增）
 node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 新功能：47 条断言

@@ -65,7 +65,7 @@ the same numbers and the same exit codes — a parity suite
 **Numeric menu** — run with no arguments and pick a number:
 
 ```
- 1) 启动本地服务   dev (port 8787)      6) 租户/语言审计   audit
+ 1) 启动本地服务   dev (port 47913)      6) 租户/语言审计   audit
  2) 本地数据库迁移  migrate --local      7) 部署            deploy
  3) 部署主题        theme deploy        8) 部署+远程迁移   deploy:full
  4) 跑全部测试      test (per suite)    9) 诊断环境        doctor
@@ -101,6 +101,18 @@ Two things the launcher does that `npm test` and `npm run deploy` do not:
   loudly — it produces a Worker whose DB binding points nowhere. The launcher
   prints the `wrangler d1 create` / `wrangler kv namespace create` commands to
   run instead. Pass `--force` to override.
+
+### The dev port is deliberately uncommon
+
+The local dev server runs on **47913**, not wrangler's default 8787. 8787 is the
+default for *every* Wrangler project, so it collides with anything else on the
+machine — and two `wrangler dev` instances fighting over the same local D1 is
+how you get `SQLITE_BUSY` with no obvious cause. 47913 is in the private range
+and is not the default of any tool used here.
+
+Set `CFP_PORT` (both launchers honour it, and `npm run dev` is pinned to match)
+to use another one. The browser acceptance scripts default to the same port and
+can be pointed elsewhere with `CFPRESS_BASE`.
 
 ## Deploy
 

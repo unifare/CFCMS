@@ -288,7 +288,10 @@ async function main() {
   const wwwShop = await req(worker, env, "/en", {}, "www.shop.example.com");
   check("www. prefix and case are normalised", wwwShop.headers.get("X-CFPress-Site"), "shop");
 
-  const withPort = await req(worker, env, "/en", {}, "shop.example.com:8787");
+  // The port value is arbitrary -- this asserts it gets stripped before host
+  // matching. Kept in step with the launcher's default so a grep for the real
+  // dev port does not turn up a fixture that looks like a config value.
+  const withPort = await req(worker, env, "/en", {}, "shop.example.com:47913");
   check("port is stripped for host matching", withPort.headers.get("X-CFPress-Site"), "shop");
 
   const unknown = await req(worker, env, "/en", {}, "nope.example.com");
