@@ -35,7 +35,7 @@ d6e2239  Split the admin SPA into modules + add structure tests
 a1ac8e3  Unify admin menus into one registry + generate table screens from declarations
 33f6369  Add theme/plugin scaffolders + make declared routes actually drive rendering
 fb2b012  Add eshop sample theme, its test suite, and the three dev docs (batch 4)  ← 上一基线
-????????  Admin UI language (en/zh) + account self-service + per-user menu config  ← 本轮
+3ccd66b  Admin UI language (en/zh) + account self-service + site menu editor  ← 本轮
 ```
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
