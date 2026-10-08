@@ -111,6 +111,8 @@ export interface ThemeSettingDef {
   label?: string;
   type?: string;
   default?: unknown;
+  /** Declared choices for a `select` setting (validator allows an array). */
+  options?: unknown[];
 }
 
 /**

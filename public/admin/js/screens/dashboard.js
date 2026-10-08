@@ -24,6 +24,11 @@ export default async function dashboard(c) {
     </div>`)
     .join("");
 
+  // The stat cards arrive as data (`cards` from the dashboard API, labels
+  // translated server-side, plugins may inject their own). Never re-list
+  // stat cards here.
+  const cards = (d.cards || []).map((card) => stat(card.label, card.value, card.note)).join("");
+
   const recent = (d.recent || []).slice(0, 5).map((r) => `<div class="list-row">
       <div><div class="title">${esc(r.title || "(untitled)")}</div><div class="meta">${esc(r.type)} · ${esc(r.locale || "—")}</div></div>
       <span class="badge secondary">${esc(r.status)}</span>
@@ -37,10 +42,7 @@ export default async function dashboard(c) {
     crumbs: [{ label: "Home" }, { label: "Dashboard" }],
   })}
   <div class="cards cols-4">
-    ${stat("Posts", d.posts, `<span class="up">${esc(d.published ?? 0)}</span> published`)}
-    ${stat("Pages", d.pages)}
-    ${stat("Media", d.media)}
-    ${stat("Drafts", d.drafts, "awaiting review")}
+    ${cards}
   </div>
   <div class="grid2" style="margin-top:1.25rem;grid-template-columns:minmax(0,1fr) 22rem">
     <div class="panel">

@@ -198,11 +198,11 @@ export async function applyThemeCapabilities(
   for (const s of manifest.settings ?? []) {
     if (!s.key) continue;
     await env.DB.prepare(
-      `INSERT INTO theme_setting_defs(theme_name,key,label,type,default_value)
-       VALUES(?,?,?,?,?)
-       ON CONFLICT(theme_name,key) DO UPDATE SET label=excluded.label, type=excluded.type, default_value=excluded.default_value`
+      `INSERT INTO theme_setting_defs(theme_name,key,label,type,default_value,options)
+       VALUES(?,?,?,?,?,?)
+       ON CONFLICT(theme_name,key) DO UPDATE SET label=excluded.label, type=excluded.type, default_value=excluded.default_value, options=excluded.options`
     )
-      .bind(themeName, s.key, s.label ?? s.key, s.type ?? "text", s.default === undefined ? null : String(s.default))
+      .bind(themeName, s.key, s.label ?? s.key, s.type ?? "text", s.default === undefined ? null : String(s.default), Array.isArray(s.options) ? JSON.stringify(s.options) : null)
       .run();
     result.settings++;
   }
@@ -387,6 +387,16 @@ export async function listFieldDefs(env: Env, siteId: string) {
   }
 }
 
+/**
+ * The stored `options` JSON (migration 0017) becomes a real array for the
+ * settings form renderer; anything malformed degrades to "no choices" rather
+ * than a broken select.
+ */
+export function parseSettingOptions(raw: unknown): string[] {
+  if (typeof raw !== "string" || !raw) return [];
+  try { const v = JSON.parse(raw); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+}
+
 export async function themeSettings(env: Env, themeName: string) {
   try {
     const defs = await env.DB.prepare(
@@ -401,6 +411,7 @@ export async function themeSettings(env: Env, themeName: string) {
     return ((defs.results as any[]) ?? []).map((d) => ({
       ...d,
       value: map[d.key] ?? d.default_value ?? "",
+      options: parseSettingOptions(d.options),
     }));
   } catch {
     return [];

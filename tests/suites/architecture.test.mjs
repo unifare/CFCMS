@@ -15,10 +15,13 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
 import { langPackProblems, themeManifestProblems } from "../fixtures/_extension-rules.mjs";
+// The editor palette must be this array (see the one-definition guard below).
+import { CORE_BLOCKS } from "../../src/rendering/blocks.ts";
 // The field-type classification is imported, never re-listed: the validator and
 // the scaffolder read the same source, so "is this field prose?" has one answer.
 import {
   ALLOWED_AGGREGATES,
+  ALLOWED_FIELD_TYPES,
   ALLOWED_PAGE_BLOCKS,
   ALLOWED_TABLE_FIELD_TYPES,
   LANGUAGE_NEUTRAL_FIELD_TYPES,
@@ -1316,6 +1319,74 @@ section("Multilingual and URL rules (AGENTS.md 56-59)");
     "rule 59 scan actually saw the SEO exports (non-vacuity)",
     exports.length >= 3,
     `found ${exports.length} exported functions`
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("The editor palette comes from the renderer (one definition)");
+// ---------------------------------------------------------------------------
+
+// The insertable block set lives in `CORE_BLOCKS` (rendering/blocks.ts) and
+// reaches the editor through `GET /api/v1/blocks`. A block-name literal in the
+// SPA is a second list guaranteed to drift — the hand-written palette had
+// already dropped gallery, button and columns while the renderer kept
+// supporting them, and nothing failed because both sides were green.
+{
+  const blockNameRe = /["'`]core\/(?:paragraph|heading|list|quote|code|image|gallery|button|separator|html|group|columns)["'`]/;
+  const spaFiles = walk(join(ROOT, "public", "admin"), [".js"]);
+  const offenders = spaFiles
+    .filter((f) => blockNameRe.test(blankComments(read(f))))
+    .map((f) => relative(ROOT, f).split(sep).join("/"));
+  checkEmpty("the admin SPA carries no block-name literals (palette comes from CORE_BLOCKS)", offenders);
+  check(
+    "palette scan actually saw the SPA (non-vacuity)",
+    spaFiles.length >= 15,
+    `scanned ${spaFiles.length} js files`
+  );
+  check(
+    "the renderer's CORE_BLOCKS is the source being scanned for (non-vacuity)",
+    Array.isArray(CORE_BLOCKS) && CORE_BLOCKS.length >= 12 && CORE_BLOCKS.every((b) => blockNameRe.test(`"${b.name}"`)),
+    `CORE_BLOCKS has ${Array.isArray(CORE_BLOCKS) ? CORE_BLOCKS.length : 0} entries`
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("Dashboard stat cards arrive as data (one definition)");
+// ---------------------------------------------------------------------------
+
+// The dashboard's stat cards are produced by the API — labels from the UI
+// dictionary, values from site-scoped counts, extendable by plugins through
+// the `dashboardCards` filter. A `stat("Posts", …)` literal in the screen is
+// a client-side copy that will not translate and will not see plugin cards.
+{
+  const dash = join(ROOT, "public", "admin", "js", "screens", "dashboard.js");
+  const statLiteralRe = /stat\(\s*["'](Posts|Pages|Media|Drafts)["']/;
+  const hasLiteral = statLiteralRe.test(blankComments(read(dash)));
+  checkEmpty("the dashboard screen carries no hard-coded stat cards", hasLiteral ? ["dashboard.js stat(\"Posts|Pages|Media|Drafts\")"] : []);
+  // Non-vacuity: the scan must be looking at the screen that renders cards.
+  check(
+    "dashboard scan actually saw the cards renderer (non-vacuity)",
+    /d\.cards/.test(blankComments(read(dash)))
+  );
+}
+
+// ---------------------------------------------------------------------------
+section("The declarative settings form covers every declared field type");
+// ---------------------------------------------------------------------------
+
+// `settings[]` entries may declare any of `ALLOWED_FIELD_TYPES` — the same
+// closed set the manifest validator enforces. The one auto-form that renders
+// them (theme-menu.js, for themes AND plugins) must have a branch per type:
+// a type without a branch silently degrades to a text input, which is how a
+// declared select loses its choices and a declared boolean becomes free text.
+{
+  const form = blankComments(read(join(ROOT, "public", "admin", "js", "screens", "theme-menu.js")));
+  const missing = ALLOWED_FIELD_TYPES.filter((t) => !form.includes(`case "${t}"`));
+  checkEmpty("every allowed field type has a rendering branch in the settings form", missing);
+  check(
+    "settings-form scan actually saw the type switch (non-vacuity)",
+    (form.match(/case "/g) ?? []).length >= ALLOWED_FIELD_TYPES.length,
+    `found ${(form.match(/case "/g) ?? []).length} case labels`
   );
 }
 

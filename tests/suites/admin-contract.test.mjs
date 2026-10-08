@@ -118,7 +118,7 @@ function buildTheme(name, cpt, opts = {}) {
     }],
     fields: opts.fields ?? [{ key: "sku", label: "SKU", type: "text", postTypes: [cpt] }],
     adminMenus: opts.adminMenus ?? [{ id: cpt + "s", label: cpt + "s", screen: "content-list", args: { type: cpt } }],
-    settings: opts.settings ?? [{ key: "accent", label: "Accent", type: "color", default: "#f00" }],
+    settings: opts.settings ?? [{ key: "accent", label: "Accent", type: "color", default: "#f00" }, { key: "layout.mode", label: "Layout", type: "select", default: "wide", options: ["wide", "boxed"] }, { key: "showHero", label: "Show hero", type: "boolean", default: "true" }],
     runtime: "declarative",
   };
   const index = `<!doctype html><html><body>{{site.title}}</body></html>`;
@@ -255,6 +255,10 @@ async function main() {
   console.log("\n8. Theme settings screen contract");
   const ts = await (await req(worker, env, "/api/v1/theme/admtheme/settings", { headers: auth })).json();
   check("theme settings exposes key/label/value", [ts.items[0].key, ts.items[0].label, ts.items[0].value], ["accent", "Accent", "#f00"]);
+  // Declared `options` survive the install (migration 0017) and reach the form.
+  const sel = ts.items.find((x) => x.key === "layout.mode");
+  check("select options round-trip from the manifest", sel && sel.options, ["wide", "boxed"]);
+  check("declared type reaches the form", sel && sel.type, "select");
   await req(worker, env, "/api/v1/theme/admtheme/settings", { method: "POST", headers: json, body: JSON.stringify({ key: "accent", value: "#00f" }) });
   const ts2 = await (await req(worker, env, "/api/v1/theme/admtheme/settings", { headers: auth })).json();
   check("theme setting saved", ts2.items[0].value, "#00f");
@@ -264,6 +268,42 @@ async function main() {
   const mAdm = await (await req(worker, env, "/api/v1/media?site=adm", { headers: auth })).json();
   check("media list echoes site", [mDef.site, mAdm.site], ["default", "adm"]);
   checkTruthy("media lists are independent", Array.isArray(mDef.items) && Array.isArray(mAdm.items));
+
+  console.log("\n10. Editor block palette is the renderer's set, translated");
+  const blocksEn = await (await req(worker, env, "/api/v1/blocks?locale=en", { headers: auth })).json();
+  checkTruthy("palette covers every renderable block type", blocksEn.items.length >= 12);
+  check(
+    "each entry carries type/label/category",
+    [typeof blocksEn.items[0].type, typeof blocksEn.items[0].label, typeof blocksEn.items[0].category],
+    ["string", "string", "string"]
+  );
+  check(
+    "the types are exactly the renderer's set (no drift)",
+    blocksEn.items.map((b) => b.type).join(","),
+    ["core/paragraph","core/heading","core/list","core/quote","core/code","core/image","core/gallery","core/button","core/separator","core/html","core/group","core/columns"].join(",")
+  );
+  check("english label", blocksEn.items.find((b) => b.type === "core/paragraph").label, "Paragraph");
+  const blocksZh = await (await req(worker, env, "/api/v1/blocks?locale=zh-CN", { headers: auth })).json();
+  check("labels follow the requested UI locale", blocksZh.items.find((b) => b.type === "core/paragraph").label, "段落");
+  // Without an explicit locale the palette follows the admin's own ui_lang —
+  // this suite's shared dev database has it as zh-CN, so the fallback must
+  // agree with that rather than with any assumed language.
+  const blocksAuto = await (await req(worker, env, "/api/v1/blocks?locale=xx-XX", { headers: auth })).json();
+  const blocksPlain = await (await req(worker, env, "/api/v1/blocks", { headers: auth })).json();
+  check("an unknown locale falls back to the admin's own ui_lang",
+    blocksAuto.items.find((b) => b.type === "core/paragraph").label,
+    blocksPlain.items.find((b) => b.type === "core/paragraph").label);
+
+  console.log("\n11. Dashboard stat cards arrive as data");
+  const dash = await (await req(worker, env, "/api/v1/dashboard", { headers: auth })).json();
+  check(
+    "cards carry the platform stat set",
+    dash.cards.map((c) => c.key),
+    ["posts", "pages", "media", "drafts"]
+  );
+  checkTruthy("card values are numbers", dash.cards.every((c) => typeof c.value === "number"));
+  checkTruthy("card labels are delivered (translated server-side)", dash.cards.every((c) => typeof c.label === "string" && c.label.length > 0));
+  checkTruthy("recent content is present as an array", Array.isArray(dash.recent));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

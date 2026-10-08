@@ -52,6 +52,9 @@ export const state = {
   menuCanManage: false,
   postTypes: [],
   fields: [],
+  // The editor's insert palette, delivered by `GET /api/v1/blocks` from the
+  // renderer's own `CORE_BLOCKS` set. Never re-listed in the SPA.
+  blockTypes: [],
   sidebarCollapsed: localStorage.getItem("cfpress.admin.sidebar") === "1",
   openGroups: new Set(JSON.parse(localStorage.getItem("cfpress.admin.groups") || "[]")),
 };
@@ -133,6 +136,7 @@ export async function loadContext() {
     state.plugins = Array.isArray(d.items) ? d.items : [];
   } catch { state.plugins = []; }
   try { state.fields = (await api(scoped("theme/fields"))).items ?? []; } catch { state.fields = []; }
+  try { state.blockTypes = (await api("blocks")).items ?? []; } catch { state.blockTypes = []; }
   // The languages this site serves. The editor needs them to offer a locale
   // picker and a language-version bar, and to know which locale a new piece of
   // content should start in.

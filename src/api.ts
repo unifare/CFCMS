@@ -16,17 +16,7 @@ import { listAdminMenuGroups } from "./platform/admin-menus";
 import { clearPluginMenus } from "./extensions/plugin/menus";
 import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./platform/sites";
 import { invalidateThemeWorker } from "./extensions/theme/runtime-worker";
-import {
-  applyThemeCapabilities,
-  clearThemeCapabilities,
-  listPostTypes,
-  listTaxonomies,
-  listRoutes,
-  listThemeAdminMenus,
-  listThemeBlocks,
-  listFieldDefs,
-  themeSettings,
-} from "./extensions/theme/capabilities";
+import {applyThemeCapabilities, clearThemeCapabilities, listPostTypes, listTaxonomies, listRoutes, listThemeAdminMenus, listThemeBlocks, listFieldDefs, themeSettings, parseSettingOptions} from "./extensions/theme/capabilities";
 import {
   availableUiLocaleEntries,
   availableUiLocales,
@@ -406,7 +396,7 @@ async function uploadExtension(env:Env,userId:string,request:Request,type:"plugi
   if(type==="plugin" && Array.isArray(manifest.settings)) {
     for(const def of manifest.settings) {
       if(!def?.key) continue;
-      await env.DB.prepare("INSERT OR REPLACE INTO plugin_setting_defs(plugin_name,key,label,type,default_value) VALUES(?,?,?,?,?)").bind(meta.name,String(def.key),String(def.label||def.key),String(def.type||"text"),String(def.default??"")).run();
+      await env.DB.prepare("INSERT OR REPLACE INTO plugin_setting_defs(plugin_name,key,label,type,default_value,options) VALUES(?,?,?,?,?,?)").bind(meta.name,String(def.key),String(def.label||def.key),String(def.type||"text"),String(def.default??""),Array.isArray(def.options)?JSON.stringify(def.options):null).run();
     }
   }
   await activity(env,userId,"install",type,meta.name,{version:meta.version,checksum});
@@ -417,7 +407,7 @@ async function pluginSettings(env:Env,name:string){
   const defs=await env.DB.prepare("SELECT * FROM plugin_setting_defs WHERE plugin_name=? ORDER BY key").bind(name).all();
   const vals=await env.DB.prepare("SELECT key,value FROM plugin_settings WHERE plugin_id=(SELECT id FROM plugin_installs WHERE name=? LIMIT 1)").bind(name).all();
   const map=Object.fromEntries((vals.results as any[]).map(x=>[x.key,x.value]));
-  return ok({items:(defs.results as any[]).map(x=>({...x,value:map[x.key]??x.default_value??""}))});
+  return ok({items:(defs.results as any[]).map(x=>({...x,value:map[x.key]??x.default_value??"",options:parseSettingOptions(x.options)}))});
 }
 async function savePluginSetting(env:Env,userId:string,name:string,b:any){
   const row=await env.DB.prepare("SELECT id FROM plugin_installs WHERE name=? LIMIT 1").bind(name).first<any>();
@@ -1219,17 +1209,60 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
       ).bind(siteId).all()
     ]);
     return ok({
-      posts: posts?.count ?? 0,
-      pages: pages?.count ?? 0,
-      media: media?.count ?? 0,
-      drafts: drafts?.count ?? 0,
-      published: published?.count ?? 0,
+      // The stat cards are DATA, not client markup: labels come from the UI
+      // dictionary and plugins may add or reorder cards through the
+      // `dashboardCards` filter — the screen renders whatever arrives.
+      cards: await (async () => {
+        const uiLocale = await resolveUiLocale(env, siteId, {
+          userLang: (user as any).ui_lang ?? null,
+          defaultLocale: await siteDefaultLocale(env, siteId),
+        });
+        const dict = mergePacks(await loadUiPacks(env, siteId, uiLocale));
+        const label = (k: string, fb: string) => {
+          const v = dict[`core.dashboard.${k}`];
+          return typeof v === "string" && v ? v : fb;
+        };
+        const cards = [
+          { key: "posts", label: label("posts", "Posts"), value: posts?.count ?? 0, note: `${published?.count ?? 0} ${label("published", "published")}` },
+          { key: "pages", label: label("pages", "Pages"), value: pages?.count ?? 0 },
+          { key: "media", label: label("media", "Media"), value: media?.count ?? 0 },
+          { key: "drafts", label: label("drafts", "Drafts"), value: drafts?.count ?? 0, note: label("awaiting", "awaiting review") },
+        ];
+        try {
+          const filtered = await applyFilters("dashboardCards", { env, siteId }, cards);
+          return Array.isArray(filtered) ? filtered : cards;
+        } catch {
+          /* a failing plugin must not blank the dashboard */
+          return cards;
+        }
+      })(),
       recent: recent?.results ?? [],
       site: siteId,
     });
   }
 
-  if (path === "blocks" && method === "GET") return ok({ items: CORE_BLOCKS });
+  // The editor's insert palette. One definition: the renderable set is
+  // `CORE_BLOCKS` in `rendering/blocks.ts` — the same array `renderBlocks`
+  // switches on — so the palette can never offer a block the front end cannot
+  // draw (the hand-written SPA list this endpoint replaced had already lost
+  // three). Labels come from the UI dictionary (`core.block.*`) resolved for
+  // this admin's interface locale, like every other admin string.
+  if (path === "blocks" && method === "GET") {
+    const available = await availableUiLocales(env, siteId);
+    const wanted = String(url.searchParams.get("locale") ?? "").trim();
+    const uiLocale = wanted && available.includes(wanted)
+      ? wanted
+      : await resolveUiLocale(env, siteId, {
+          userLang: (user as any).ui_lang ?? null,
+          defaultLocale: await siteDefaultLocale(env, siteId),
+        });
+    const dict = mergePacks(await loadUiPacks(env, siteId, uiLocale));
+    const label = (b: { name: string; title: string }) => {
+      const v = dict[`core.block.${b.name.slice("core/".length)}`];
+      return typeof v === "string" && v ? v : b.title;
+    };
+    return ok({ items: CORE_BLOCKS.map((b) => ({ type: b.name, label: label(b), category: b.category })), site: siteId });
+  }
   if (path === "posts" && method === "GET") return listPosts(env, url, "post", siteId);
   if (path === "pages" && method === "GET") return listPosts(env, url, "page", siteId);
   if (path === "posts" && method === "POST") return savePost(env, user.id, null, await jsonBody(request), "post", siteId);

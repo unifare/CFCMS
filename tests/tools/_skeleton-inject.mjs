@@ -278,6 +278,38 @@ const SCENARIOS = [
     after: ['.bind(await randomId(), siteId, FEATURE_SETTINGS_KEY + "-typo", next).run();'],
     runs: [["tests/suites/features.test.mjs", "the row is now the source"]],
   },
+  {
+    // The dashboard's stat cards must arrive as data (`cards` from the API,
+    // translated server-side, plugin-extendable). A client-side `stat("Posts")`
+    // is a copy that will not translate and will not see plugin cards.
+    label: "a hard-coded stat card reappears in the dashboard screen",
+    file: join(ROOT, "public/admin/js/screens/dashboard.js"),
+    before: ["  const cards = (d.cards || [])"],
+    after: ["  const cards = (d.cards || [])\n  const legacy = stat(\"Posts\", 0);"],
+    runs: [["tests/suites/architecture.test.mjs", "the dashboard screen carries no hard-coded stat cards"]],
+  },
+  {
+    // The settings auto-form must have a rendering branch for every type in
+    // ALLOWED_FIELD_TYPES. Deleting a branch silently degrades that type to a
+    // text input — a declared select loses its choices, a boolean becomes
+    // free text — with nothing else failing.
+    label: "a settings-form type branch is deleted",
+    file: join(ROOT, "public/admin/js/screens/theme-menu.js"),
+    before: ['    case "boolean":'],
+    after: [''],
+    runs: [["tests/suites/architecture.test.mjs", "every allowed field type has a rendering branch in the settings form"]],
+  },
+  {
+    // The editor's insert palette must be delivered by `GET /api/v1/blocks`
+    // from the renderer's `CORE_BLOCKS`. A block-name literal in the SPA is a
+    // second list guaranteed to drift (the hand-written palette had already
+    // lost gallery/button/columns while the renderer kept supporting them).
+    label: "a block-name literal reappears in the admin SPA",
+    file: join(ROOT, "public/admin/js/screens/editor.js"),
+    before: ["  // Never re-list block types here."],
+    after: ["  // Never re-list block types here.\n  const legacy = [\"core/paragraph\", \"Paragraph\"];"],
+    runs: [["tests/suites/architecture.test.mjs", "the admin SPA carries no block-name literals (palette comes from CORE_BLOCKS)"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -287,7 +319,10 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "src/extensions/contract/hooks.ts"),
   join(ROOT, "AGENTS.md"),
   join(ROOT, "docs/guides/THEME-DEV.md"),
-  join(ROOT, "public/admin/js/screens/account.js")])];
+  join(ROOT, "public/admin/js/screens/account.js"),
+  join(ROOT, "public/admin/js/screens/editor.js"),
+  join(ROOT, "public/admin/js/screens/dashboard.js"),
+  join(ROOT, "public/admin/js/screens/theme-menu.js")])];
 
 function hashAll() {
   const out = {};

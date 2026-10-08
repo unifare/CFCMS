@@ -120,11 +120,13 @@ export async function editor(c, type) {
   const group = await loadVersions(x.id);
   state.translations = group;
 
-  const blockButtons = [
-    ["core/paragraph", "Paragraph"], ["core/heading", "Heading"], ["core/list", "List"],
-    ["core/image", "Image"], ["core/quote", "Quote"], ["core/code", "Code"],
-    ["core/separator", "Separator"], ["core/html", "HTML"], ["core/group", "Group"],
-  ].map(([t, label]) => `<button class="btn outline sm" data-block="${attr(t)}">${icon("plus")}${esc(label)}</button>`).join("");
+  // The palette is the renderer's own set, delivered by `GET /api/v1/blocks`
+  // (see state.loadContext) — the same `CORE_BLOCKS` array the front end
+  // switches on, so the editor can never offer a block the site cannot draw.
+  // Never re-list block types here.
+  const blockButtons = (state.blockTypes ?? [])
+    .map((b) => `<button class="btn outline sm" data-block="${attr(b.type)}">${icon("plus")}${esc(b.label)}</button>`)
+    .join("");
 
   // A locale picker rather than a free-text field: content may only be authored
   // in a language the site actually serves, and typing `zh-cn` by hand used to

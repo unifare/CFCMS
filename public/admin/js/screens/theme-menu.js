@@ -38,6 +38,48 @@ function unknownScreen(c, m, menuId) {
   </div>`;
 }
 
+/**
+ * One control per declared setting, keyed by the type the manifest declared
+ * (`ALLOWED_FIELD_TYPES` — the same closed set the field validator enforces).
+ * Every declared type must have a branch here; the architecture test walks
+ * the type list against this renderer, so a new type without a branch is a
+ * red suite, not a silently text-only form.
+ */
+function settingControl(x) {
+  const name = `data-ts-key="${attr(x.key)}"`;
+  const val = x.value ?? "";
+  switch (x.type) {
+    case "textarea":
+    case "richtext":
+      return `<textarea ${name} rows="4">${esc(val)}</textarea>`;
+    case "number":
+      return `<input type="number" ${name} value="${attr(val)}">`;
+    case "boolean":
+      return `<input type="checkbox" ${name}${String(val) === "true" ? " checked" : ""}>`;
+    case "color":
+      return `<input type="color" ${name} value="${attr(val)}">`;
+    case "date":
+      return `<input type="date" ${name} value="${attr(val)}">`;
+    case "datetime":
+      return `<input type="datetime-local" ${name} value="${attr(val)}">`;
+    case "url":
+      return `<input type="url" ${name} value="${attr(val)}">`;
+    case "email":
+      return `<input type="email" ${name} value="${attr(val)}">`;
+    case "select":
+    {
+      const opts = Array.isArray(x.options) ? x.options : [];
+      return `<select ${name}>${opts.map((o) => `<option${String(o) === String(val) ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+    }
+    case "media":
+    case "media-multiple":
+      return `<input type="text" ${name} value="${attr(val)}" placeholder="URL in the media library">`;
+    case "text":
+    default:
+      return `<input type="text" ${name} value="${attr(val)}">`;
+  }
+}
+
 async function extensionSettings(c, m, kind) {
   const owner = m.owner_name;
   const path = kind === "plugin"
@@ -53,7 +95,7 @@ async function extensionSettings(c, m, kind) {
     crumbs: [{ label: kind === "plugin" ? "Extensions" : "Appearance" }, { label: title }],
   })}
   <div class="panel">
-    ${fields.map((x) => `<div class="field"><label>${esc(x.label || x.key)}</label><input data-ts-key="${attr(x.key)}" value="${attr(x.value ?? "")}"></div>`).join("")
+    ${fields.map((x) => `<div class="field"><label>${esc(x.label || x.key)}</label>${settingControl(x)}</div>`).join("")
       || `<div class="empty">This ${kind} declares no settings.</div>`}
   </div>`;
 }
@@ -98,9 +140,12 @@ document.addEventListener("click", async (e) => {
     ? `extensions/plugins/${encodeURIComponent(owner)}/settings`
     : `theme/${encodeURIComponent(owner)}/settings`;
   for (const el of document.querySelectorAll("[data-ts-key]")) {
+    // A checkbox's `value` never changes — the saved fact is whether it is
+    // checked, stored as the string the boolean branch reads back.
+    const value = el.type === "checkbox" ? String(el.checked) : el.value;
     await api(base, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: el.dataset.tsKey, value: el.value }),
+      body: JSON.stringify({ key: el.dataset.tsKey, value }),
     });
   }
   toast(kind === "plugin" ? "Plugin settings saved" : "Theme settings saved");
