@@ -377,6 +377,12 @@ async function savePluginSetting(env:Env,userId:string,name:string,b:any){
 
 async function deletePost(env: Env, userId: string, id: string, siteId: string) {
   await bootPluginRuntime(env);
+  // The id comes straight from the URL, so ownership is established before
+  // anything is removed. The statements below are keyed by `post_id`, which is
+  // only meaningful once this row is known to belong to this site — without
+  // this check a request against one site could delete another site's post.
+  const owned = await env.DB.prepare("SELECT id FROM posts WHERE id=? AND site_id=? LIMIT 1").bind(id, siteId).first<any>();
+  if (!owned) return ok({ error: "not found" }, 404);
   // Let plugins purge their own derived data (indexes, caches) first.
   try {
     await doAction("beforeDeletePost", { env, siteId }, { id, siteId });
@@ -386,7 +392,7 @@ async function deletePost(env: Env, userId: string, id: string, siteId: string) 
   await env.DB.prepare("DELETE FROM post_translations WHERE post_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM post_meta WHERE post_id = ?").bind(id).run().catch(() => {});
   await env.DB.prepare("DELETE FROM term_relationships WHERE post_id = ?").bind(id).run().catch(() => {});
-  await env.DB.prepare("DELETE FROM posts WHERE id = ?").bind(id).run();
+  await env.DB.prepare("DELETE FROM posts WHERE id = ? AND site_id = ?").bind(id, siteId).run();
   await bumpContentCache(env, siteId);
   await activity(env, userId, "delete", "post", id, { siteId });
   return ok({ ok: true });
@@ -1114,13 +1120,35 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
   }
 
   if (path === "dashboard" && method === "GET") {
-    const [posts, pages, media, drafts] = await Promise.all([
+    // Every field the dashboard screen reads has to be produced here. `recent`
+    // and `published` were read by `screens/dashboard.js` but never sent, so
+    // the "Recent content" panel was permanently empty and the Posts card's
+    // "N published" read 0 on a site that did have published posts — the same
+    // "declared but never provided" shape as the plugin manifest fields.
+    // `media_files` gained a `site_id` column in a later migration, so its
+    // count is scoped like the rest instead of counting every site's uploads.
+    const [posts, pages, media, drafts, published, recent] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND type='post'").bind(siteId).first<any>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND type='page'").bind(siteId).first<any>(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM media_files").first<any>(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND status='draft'").bind(siteId).first<any>()
+      env.DB.prepare("SELECT COUNT(*) AS count FROM media_files WHERE site_id=?").bind(siteId).first<any>(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND status='draft'").bind(siteId).first<any>(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND status='published'").bind(siteId).first<any>(),
+      env.DB.prepare(
+        `SELECT p.id, p.type, p.status, p.updated_at, t.locale, t.title
+           FROM posts p LEFT JOIN post_translations t ON t.post_id = p.id
+          WHERE p.site_id = ?
+          ORDER BY p.updated_at DESC LIMIT 5`
+      ).bind(siteId).all()
     ]);
-    return ok({ posts: posts?.count ?? 0, pages: pages?.count ?? 0, media: media?.count ?? 0, drafts: drafts?.count ?? 0, site: siteId });
+    return ok({
+      posts: posts?.count ?? 0,
+      pages: pages?.count ?? 0,
+      media: media?.count ?? 0,
+      drafts: drafts?.count ?? 0,
+      published: published?.count ?? 0,
+      recent: recent?.results ?? [],
+      site: siteId,
+    });
   }
 
   if (path === "blocks" && method === "GET") return ok({ items: CORE_BLOCKS });
