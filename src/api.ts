@@ -203,8 +203,24 @@ async function savePost(
   const title = String(body.title ?? "");
   const excerpt = String(body.excerpt ?? "");
   const content = typeof body.content === "string" ? body.content : JSON.stringify(body.content ?? []);
-  const isCreate = !id;
-  if (!id) {
+  // A `PUT` names an id; a `POST` does not. Naming an id must not become a
+  // silent no-op when no such row exists: SQLite's `UPDATE` affects zero rows
+  // without raising, so the translation insert below would create a row
+  // pointing at a post that does not exist — a 200 that leaves the site with
+  // orphan translations and no post. So existence is checked first and a `PUT`
+  // for an unknown id *creates* it, which is the idempotence a client supplying
+  // a stable id (the seed script, an import, a sync) is relying on.
+  const existingPost = id
+    ? await env.DB.prepare("SELECT id, site_id FROM posts WHERE id=? LIMIT 1").bind(entityId).first<any>()
+    : null;
+  if (existingPost && existingPost.site_id !== siteId) {
+    // The id exists but belongs to another site. Creating it here would collide
+    // with the primary key; updating it would edit a neighbour's content.
+    // Neither is acceptable, so the write is refused instead of misdirected.
+    return ok({ error: "id belongs to another site" }, 409);
+  }
+  const isCreate = !existingPost;
+  if (isCreate) {
     // `lang_group` ties the language versions of one piece of content together.
     // A new post starts as its own group of one; a translation added later
     // adopts the existing group (see the i18n/translations endpoint).
@@ -214,7 +230,7 @@ async function savePost(
   } else {
     const old = await env.DB.prepare("SELECT * FROM post_translations WHERE post_id=? AND locale=? LIMIT 1").bind(entityId,locale).first<any>();
     if(old) await createRevision(env,entityId,userId,locale,String(old.title||""),String(old.excerpt||""),String(old.content||""));
-    await env.DB.prepare("UPDATE posts SET slug = ?, status = ?, updated_at = ? WHERE id = ?").bind(slug, status, now(), entityId).run();
+    await env.DB.prepare("UPDATE posts SET slug = ?, status = ?, updated_at = ? WHERE id = ? AND site_id = ?").bind(slug, status, now(), entityId, siteId).run();
   }
   const existing = await env.DB.prepare("SELECT id FROM post_translations WHERE post_id = ? AND locale = ? LIMIT 1").bind(entityId, locale).first<any>();
   if (existing) {

@@ -39,7 +39,7 @@
   // it to `false`: an omitted var lets the admin still override per site,
   // whereas `"false"` here only changes the inherited default.
   //
-  // The keys are defined once in `src/extensions/contract/manifest.ts`
+  // The keys are defined once in `src/shared/features.ts`
   // (`FEATURE_SWITCHES`) and must match these names exactly — the runtime
   // reads them by literal name from `env`. Var name -> switch key:
   //
