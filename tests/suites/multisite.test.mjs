@@ -518,6 +518,33 @@ async function main() {
   check("robots served on shop host", rbShop.status, 200);
   checkTruthy("robots declares the sitemap", (await rbDefault.text()).includes("Sitemap: "));
 
+  // -- 9c. the RSS feed is site-scoped and well-formed ---------------------
+  //
+  // Same class of bug as 9b, and a worse one to ship: a feed is polled
+  // unattended by a subscriber's reader, so a feed that quietly serves another
+  // site's posts is never noticed — unlike a page, nobody is looking at it.
+  console.log("\n9c. The RSS feed is site-scoped");
+  const fdDefault = await req(worker, env, "/feed.xml", {}, "localhost");
+  const fdShop = await req(worker, env, "/feed.xml", {}, "shop.example.com");
+  check("feed served on the default host", fdDefault.status, 200);
+  check("feed served on the shop host", fdShop.status, 200);
+  checkTruthy("feed uses the RSS content type", (fdDefault.headers.get("content-type") || "").includes("application/rss+xml"));
+  const fdDefaultXml = await fdDefault.text();
+  const fdShopXml = await fdShop.text();
+  checkTruthy("feed is well-formed", fdDefaultXml.startsWith("<?xml") && fdDefaultXml.includes("</rss>"));
+  checkTruthy("feed declares its own url", fdDefaultXml.includes("<atom:link href="));
+  checkTruthy("guid is a permalink", fdDefaultXml.includes('isPermaLink="true"'));
+  checkTruthy("feed carries the site's own title", fdDefaultXml.includes("Default Title"));
+  // The discriminating pair, exactly as in 9b: a feed that ignores `site_id`
+  // lists BOTH slugs on every host.
+  checkTruthy("default feed lists its own post", fdDefaultXml.includes("/default-post"));
+  checkTruthy("default feed does NOT list the shop's post", !fdDefaultXml.includes("/shop-post"));
+  checkTruthy("shop feed lists its own post", fdShopXml.includes("/shop-post"));
+  checkTruthy("shop feed does NOT list the default site's post", !fdShopXml.includes("/default-post"));
+  // `/rss.xml` is an alias — readers and humans both guess at this name.
+  check("the /rss.xml alias answers too", (await req(worker, env, "/rss.xml", {}, "localhost")).status, 200);
+  check("feed reaches a path-prefix site", (await req(worker, env, "/de/feed.xml", {}, "localhost")).status, 200);
+
   // -- 10. site delete protection -----------------------------------------
   console.log("\n10. Site delete protection");
   const delDefault = await req(worker, env, "/api/v1/sites/default", { method: "DELETE", headers: auth });

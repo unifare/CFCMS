@@ -186,6 +186,7 @@ scaffold|tests/suites/scaffold.test.mjs
 theme-integration|tests/suites/theme-integration.test.mjs
 theme-fixture|tests/suites/theme-fixture.test.mjs
 theme-journal|tests/suites/theme-journal.test.mjs
+theme-mobai|tests/suites/theme-mobai.test.mjs
 multisite|tests/suites/multisite.test.mjs
 i18n|tests/suites/i18n.test.mjs
 admin-contract|tests/suites/admin-contract.test.mjs
@@ -432,7 +433,7 @@ ${C_BOLD}CFPress launcher${C_RESET}  ${C_DIM}(repo root: $ROOT)${C_RESET}
 
   ${C_BOLD}SUITES${C_RESET}  ${C_DIM}(for \`test <name>\`)${C_RESET}
     architecture  _schema-scope  manifest-validation  admin-menus  admin-spa
-    template-engine  scaffold  theme-integration  theme-fixture  theme-journal  multisite  i18n
+    template-engine  scaffold  theme-integration  theme-fixture  theme-journal  theme-mobai  multisite  i18n
     admin-contract  account  menu-custom  plugin-hooks  plugin-channels  plugin-pages  theme-worker
 
   ${C_BOLD}ENV${C_RESET}

@@ -8,7 +8,9 @@
  * Worker's security model intact.
  */
 import { Env } from "../../shared/types";
-import { esc, setting, siteInfo, menu, locales, renderBlocks, latestPosts, formatDate } from "../../platform/frontend";
+import { esc, setting, siteInfo, menu, locales, renderBlocks, formatDate, coverFrom } from "../../platform/frontend";
+import { parsePack } from "../../platform/i18n/translate";
+import { themePackKey } from "./packs";
 import { resolveTemplate, templateCandidates, type TemplateContext } from "../../rendering/template-resolver";
 import { resolveContentLocale } from "../../platform/i18n/locale-registry";
 import { renderTemplateSource, TemplateError, type RenderOptions } from "../../rendering/template-engine";
@@ -272,9 +274,9 @@ export async function runThemeQuery(
   const rows = await env.DB.prepare(sql).bind(...binds).all();
   const items = (rows.results as any[]) ?? [];
   await attachMeta(env, items);
-  // Listings carry a print-ready date, like single objects do — a route-based
-  // archive should not be the one page where the date is missing.
-  for (const it of items) it.date_display = formatDate(it.created_at, locale);
+  // Listings carry a print-ready date and a cover, like single objects do — a
+  // route-based archive should not be the one page where they are missing.
+  for (const it of items) { it.date_display = formatDate(it.created_at, locale); it.cover = coverFrom(it.content); }
   return items as QueryRow[];
 }
 
@@ -321,6 +323,10 @@ export interface ThemeRenderOptions {
   siteId: string;
   locale: string;
   path: string;
+  /** Request origin (`https://example.com`), exposed as `site.url`. Empty when
+   *  a caller renders without a request — templates guard on it rather than
+   *  emitting a half-built absolute URL. */
+  origin?: string;
   kind: TemplateContext["kind"];
   postType?: string;
   slug?: string;
@@ -363,6 +369,43 @@ function hooksOf(o: ThemeRenderOptions): HostHooks {
   return o.hooks ?? hostHooks() ?? NULL_HOOKS;
 }
 
+/**
+ * The active theme's own language pack, nested so a template can read
+ * `theme.strings.<group>.<key>`.
+ *
+ * Theme packs (`langs/{locale}.json`, keys prefixed `theme.{name}.`) used to
+ * feed only the *admin* dictionary. That left a theme's front-end chrome
+ * hardcoded in its markup — the one place a string could not be translated
+ * without editing the template. Exposing the pack here lets a template write
+ * `{{default(theme.strings.nav.home, "Home")}}`: the pack supplies the
+ * translation when the locale has one, and the literal is the fallback for a
+ * locale the theme does not ship. A missing or malformed pack yields `{}` — an
+ * untranslated page is a far better outcome than a blank one.
+ */
+function nestThemeStrings(messages: Record<string, string>, themeName: string): Record<string, unknown> {
+  const prefix = `theme.${themeName}.`;
+  const out: Record<string, any> = Object.create(null);
+  for (const [key, value] of Object.entries(messages)) {
+    if (!key.startsWith(prefix)) continue;
+    const parts = key.slice(prefix.length).split(".");
+    let cur = out;
+    for (let i = 0; i < parts.length - 1; i++) cur = (cur[parts[i]] ??= Object.create(null));
+    cur[parts[parts.length - 1]] = value;
+  }
+  return out;
+}
+
+async function loadThemeStrings(env: Env, theme: ActiveTheme, locale: string): Promise<Record<string, unknown>> {
+  try {
+    const obj = await env.MEDIA.get(themePackKey(theme as any, locale));
+    if (!obj) return Object.create(null);
+    const pack = parsePack(await obj.text());
+    return pack ? nestThemeStrings(pack, theme.name) : Object.create(null);
+  } catch {
+    return Object.create(null);
+  }
+}
+
 /** Build the base scope every template can rely on. */
 export async function buildScope(
   env: Env,
@@ -370,10 +413,11 @@ export async function buildScope(
   o: ThemeRenderOptions
 ): Promise<Record<string, unknown>> {
   const siteId = o.siteId;
-  const [s, items, ls] = await Promise.all([
+  const [s, items, ls, strings] = await Promise.all([
     siteInfo(env, siteId),
     menu(env, o.locale, siteId),
     locales(env, siteId),
+    loadThemeStrings(env, theme, o.locale),
   ]);
   const navItems = (items as any[]).map((i) => ({
     title: i.title,
@@ -391,7 +435,7 @@ export async function buildScope(
     /* a failing plugin must not break rendering */
   }
   return {
-    site: { title: s.title, description: s.description, robots: s.robots, locale: o.locale },
+    site: { title: s.title, description: s.description, robots: s.robots, locale: o.locale, url: o.origin ?? "" },
     page: {
       title: o.title,
       description: o.description ?? s.description,
@@ -412,7 +456,7 @@ export async function buildScope(
       primary_html: navItems.map((i) => `<a href="${esc(i.url)}">${esc(i.title)}</a>`).join(" "),
     },
     post: o.post ?? null,
-    theme: { name: theme.name, version: theme.version, title: theme.manifest.title },
+    theme: { name: theme.name, version: theme.version, title: theme.manifest.title, strings },
     ...extra,
   };
 }

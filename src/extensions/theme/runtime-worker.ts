@@ -257,11 +257,16 @@ export async function tryRenderWithThemeWorker(
   const themeReq = new Request(url.toString(), {
     method: "GET",
     headers: {
-      // Plain strings only — headers are the one channel that survives intact.
+      // Plain strings only — header values are ByteStrings, so anything put
+      // here has to survive Latin-1. That is exactly why there is no scope
+      // header: a site whose title, categories or tags are Chinese (or Japanese,
+      // or Arabic) would make `JSON.stringify(scope)` unrepresentable and the
+      // whole Worker path would fall back to the declarative renderer with no
+      // error anywhere. A theme reads state through `env.HOST`, which is a real
+      // HTTP response body and carries UTF-8.
       "x-cfpress-kind": input.kind,
       "x-cfpress-site": input.siteId,
       "x-cfpress-theme": theme.name,
-      "x-cfpress-scope": safeJson(input.scope),
     },
   });
 
@@ -280,14 +285,6 @@ export async function tryRenderWithThemeWorker(
     // Finding #2: exceptions propagate from the sub-Worker. Swallow and fall
     // back to declarative rendering.
     return null;
-  }
-}
-
-function safeJson(v: unknown): string {
-  try {
-    return JSON.stringify(v).slice(0, 8192);
-  } catch {
-    return "{}";
   }
 }
 

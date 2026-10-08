@@ -14,9 +14,22 @@ const USER = process.env.CFP_USER || "admin";
 const PASS = process.env.CFP_PASS || "change-me-now";
 
 const b = (type, text) => ({ type, attrs: { text } });
+// `core/image` is the one block whose attrs are not `{text}` — the renderer
+// reads `url`/`alt`. The theme derives a post's cover from the first image in
+// its body, so every post that should have a card image starts with one.
+const img = (url, alt) => ({ type: "core/image", attrs: { url, alt } });
 const body = (...items) => JSON.stringify(items);
 
+const PHOTO = {
+  reading: "https://images.unsplash.com/photo-1481627834876-b7833e8f5570?q=80&w=1200&auto=format&fit=crop",
+  desk: "https://images.unsplash.com/photo-1455390582262-044cdead277a?q=80&w=1200&auto=format&fit=crop",
+  server: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?q=80&w=1200&auto=format&fit=crop",
+  notebook: "https://images.unsplash.com/photo-1517971129774-8a2b38fa128e?q=80&w=1200&auto=format&fit=crop",
+  type: "https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop",
+};
+
 const HELLO = body(
+  img(PHOTO.reading, "安静图书馆里的一排书架与阅读桌"),
   b("core/paragraph",
     "There is a particular kind of quiet that settles over a project once the " +
     "architecture stops fighting you. For two years this site ran on a stack " +
@@ -89,6 +102,7 @@ const HELLO = body(
 );
 
 const SECOND = body(
+  img(PHOTO.notebook, "书桌上的钢笔与方格纸"),
   b("core/paragraph",
     "A shorter note, included mainly so the archive and the related-articles " +
     "strip have more than one real entry to work with. The engine treats it " +
@@ -123,6 +137,7 @@ const ABOUT = body(
 );
 
 const EDGE = body(
+  img(PHOTO.server, "机房里的一排服务器"),
   b("core/paragraph",
     "A request for a page reaches a data centre that may be a hundred kilometres " +
     "from the reader, or ten. It is answered there, in one pass, and nothing is " +
@@ -147,6 +162,7 @@ const EDGE = body(
 );
 
 const TEMPLATES = body(
+  img(PHOTO.type, "排版中的铅字与手稿"),
   b("core/paragraph",
     "The template language has no arithmetic, no loops you can build yourself, and " +
     "no way to call out to anything. It is deliberately too small to be a " +
@@ -168,6 +184,7 @@ const TEMPLATES = body(
 );
 
 const I18N = body(
+  img(PHOTO.desk, "书桌上的钢笔与手稿纸"),
   b("core/paragraph",
     "Content is stored once per language, side by side with the language it is " +
     "written in. Adding a second language is not a migration: the columns for it " +
@@ -191,6 +208,7 @@ const CONTENTS = {
     title: "Hello World",
     excerpt: "A publishing platform built to end the negotiation with its own framework.",
     content: HELLO,
+    meta: { category: "Design", tags: "long read,design systems,typography" },
   },
   "post_4E_VfYU_rSAnepUdteAqew": {
     kind: "posts",
@@ -198,6 +216,7 @@ const CONTENTS = {
     title: "Second Post",
     excerpt: "A shorter note about uniformity of mechanism and variety of output.",
     content: SECOND,
+    meta: { category: "Life", tags: "notebooks,workflow" },
   },
   "post_EDGE01aaaaaaaaaaaaaaaa": {
     kind: "posts",
@@ -205,6 +224,7 @@ const CONTENTS = {
     title: "Rendering at the edge, one pass at a time",
     excerpt: "A runtime that forgets you between requests is not a limitation to work around. It is the design.",
     content: EDGE,
+    meta: { category: "Technology", tags: "edge,architecture,long read" },
   },
   "post_TMPL02bbbbbbbbbbbbbbbb": {
     kind: "posts",
@@ -212,6 +232,7 @@ const CONTENTS = {
     title: "A template language small enough to reason about",
     excerpt: "Ten helpers, no arithmetic, and no way to call out. That is the whole vocabulary, on purpose.",
     content: TEMPLATES,
+    meta: { category: "Technology", tags: "templates,constraints" },
   },
   "post_I18N03cccccccccccccccc": {
     kind: "posts",
@@ -219,6 +240,7 @@ const CONTENTS = {
     title: "Two languages, one row",
     excerpt: "Adding a language should not be a migration, and a price should never be translated.",
     content: I18N,
+    meta: { category: "Design", tags: "i18n,data modelling" },
   },
   "page_JJEanMucBzmj-l6Lmju3VQ": {
     kind: "pages",
@@ -265,6 +287,9 @@ for (const [id, c] of Object.entries(CONTENTS)) {
       excerpt: c.excerpt,
       content: c.content,
       status: "published",
+      // Theme-declared fields (`category`, `tags`) land in `post_meta` and are
+      // what the mobai theme's chips and tag cloud are built from.
+      meta: c.meta,
     }),
   });
   const okFlag = r.status < 400;

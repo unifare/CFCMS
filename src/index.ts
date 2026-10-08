@@ -1,4 +1,4 @@
-import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,latestPosts,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setPluginTableSync}from "./extensions/plugin/menus";import{syncOwnerTables}from "./extensions/theme/tables";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo,listSites}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
+import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap,feed}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setPluginTableSync}from "./extensions/plugin/menus";import{syncOwnerTables}from "./extensions/theme/tables";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo,listSites}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
 import{resolveLocale,langFromUrl,langFromCookie,langCookie}from "./platform/i18n/resolve";import{setPackProviders}from "./platform/i18n/packs";import{themePackProvider}from "./extensions/theme/packs";import{pluginPackProvider}from "./extensions/plugin/packs";
 // A theme-owned table is read through the same facade the admin screens use.
 // `resolveTableForSite` lives there precisely so that this route and the
@@ -17,13 +17,23 @@ let booted=false;
  * broken theme never takes the site down.
  */
 async function renderPage(env:Env,o:ThemeRenderOptions,request:Request){
+  // The origin a page has to publish about itself — `rel=canonical`, `og:url`,
+  // the feed link. Derived here rather than at the nine call sites so `path`
+  // and `origin` can never come from two different requests.
+  o = { ...o, origin: new URL(request.url).origin };
   const theme=await activeTheme(env,o.siteId);
   const viaWorker=await tryRenderWithThemeWorker(env,theme,{
     request,
     kind:String(o.kind),
     siteId:o.siteId,
     scope:{title:o.title,description:o.description,path:o.path,locale:o.locale,postType:o.postType,slug:o.slug,extra:o.extra},
-  }).catch(()=>null);
+  }).catch((e)=>{
+    // A throw here used to be invisible: `.catch(() => null)` fell back to the
+    // declarative renderer with no trace, so the site looked like a theme that
+    // "just doesn't work". Log it; the page still renders.
+    console.error("theme worker render failed, falling back:", e && e.message ? e.message : e);
+    return null;
+  });
   if(viaWorker)return{html:viaWorker.html,template:`worker:${theme.name}`,tried:[] as string[],status:viaWorker.status};
   const r=await renderThemePage(env,o);
   return{html:r.html,template:r.template,tried:r.tried,status:200,error:r.error};
@@ -132,6 +142,9 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  // matched here by exact path, not by parsing a locale segment.
  if(path==="/sitemap.xml")return sitemap(env,request,siteId);
  if(path==="/robots.txt")return robots(env,request,siteId);
+ // `/rss.xml` is an alias: readers and humans both guess at this name, and
+ // answering 404 for the more obvious of the two is a needless dead end.
+ if(path==="/feed.xml"||path==="/rss.xml"||path==="/atom.xml")return feed(env,request,siteId);
 
  // Front-end paths may or may not carry a locale prefix. `/{locale}/...` is
  // explicit; anything else is resolved against the site's *default* locale.
@@ -176,10 +189,16 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  // this fallback runs exactly as it always did — latest posts through the
  // home/index template hierarchy.
  const home=async()=>{
-   const ps=await latestPosts(env,locale,siteId) as any[];
+   // The same query a theme-declared route uses, rather than a second, thinner
+   // one. `latestPosts` returned only slug/title/excerpt, so a front page could
+   // not show a date, a cover or a theme-declared field without the theme
+   // declaring a route for `/` — and then `page.title` became the route's title
+   // instead of the site's. One listing path means the front page and an
+   // archive can never disagree about what a post carries.
+   const ps=await runThemeQuery(env,{type:"post",limit:10,order:"created_at desc"},{locale},siteId) as any[];
    const r=await renderPage(env,{
      siteId,locale,path:u.pathname,kind:"home",title:site.title,description:site.description,
-     extra:{posts:ps.map((p:any)=>({slug:p.slug,title:p.title,excerpt:p.excerpt,created_at:p.created_at,date_display:p.date_display,url:`/${locale}/blog/${p.slug}`}))}
+     extra:{posts:ps.map((p:any)=>({...p,url:`/${locale}/blog/${p.slug}`}))}
    },request);
    return respond(r.html,r.template,r.status);
  };

@@ -261,6 +261,7 @@ $Script:Suites = [ordered]@{
     'theme-integration'  = 'tests/suites/theme-integration.test.mjs'
     'theme-fixture'      = 'tests/suites/theme-fixture.test.mjs'
     'theme-journal'      = 'tests/suites/theme-journal.test.mjs'
+    'theme-mobai'        = 'tests/suites/theme-mobai.test.mjs'
     'multisite'          = 'tests/suites/multisite.test.mjs'
     'i18n'               = 'tests/suites/i18n.test.mjs'
     'admin-contract'     = 'tests/suites/admin-contract.test.mjs'

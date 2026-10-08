@@ -91,17 +91,40 @@ export function formatDate(secs: unknown, locale: string): string {
   }
   return fmt.format(new Date(n * 1000));
 }
+/**
+ * The first image in a piece of content, for use as its cover.
+ *
+ * Posts have no cover column, and the six field types cannot honestly express
+ * one: `text` is classified as prose and is therefore **forced** to be
+ * translatable (rule 41), so a cover declared as `text` would ask an editor for
+ * one image per language — a URL is language-neutral data, not a sentence. The
+ * image is already in the body, as `core/image` or the first item of a
+ * `core/gallery`, so it is derived rather than declared.
+ *
+ * Returns `""` when there is none, so a template can guard with `{{#if}}`
+ * instead of rendering a broken `<img>`.
+ */
+export function coverFrom(content: unknown): string {
+  for (const b of parseBlocks(String(content ?? ""))) {
+    const a: any = (b as any).attrs || {};
+    if ((b as any).type === "core/image" && a.url) return String(a.url);
+    if ((b as any).type === "core/gallery" && Array.isArray(a.items)) {
+      const first = a.items.find((x: any) => x && x.url);
+      if (first) return String(first.url);
+    }
+  }
+  return "";
+}
 export async function findContent(env:Env,type:string,slug:string,locale:string,siteId:string){
   const row=await env.DB.prepare(`SELECT p.*,t.locale,t.title,t.excerpt,t.content FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type=? AND p.slug=? AND t.locale=? AND p.status='published' LIMIT 1`).bind(siteId,type,slug,locale).first<any>();
-  if(row){row.html=row.content?renderBlocks(String(row.content)):"";row.reading_time=readingTime(row.html,220,locale);row.date_display=formatDate(row.created_at,locale);}
+  if(row){row.html=row.content?renderBlocks(String(row.content)):"";row.reading_time=readingTime(row.html,220,locale);row.date_display=formatDate(row.created_at,locale);row.cover=coverFrom(row.content);}
   return row;
 }
-export async function latestPosts(env:Env,locale:string,siteId:string){
-  const r=await env.DB.prepare(`SELECT p.slug,p.created_at,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type='post' AND p.status='published' AND t.locale=? ORDER BY p.created_at DESC LIMIT 10`).bind(siteId,locale).all();
-  // `created_at` is selected (not just ordered by) so listings can show when a
-  // piece was published; `date_display` is the pre-formatted form of it.
-  return (r.results as any[]).map((p)=>({...p,date_display:formatDate(p.created_at,locale)}));
-}
+// `latestPosts` used to live here and returned only slug/title/excerpt. The
+// front page now runs the same query a theme route does (`runThemeQuery`), so
+// there is one listing path rather than two that can disagree about what a post
+// carries — and a listing that cannot show a date or a cover is not a listing
+// anyone wants.
 /**
  * Header navigation for a site. Menus are looked up by `site_id` when the
  * schema supports it, falling back to the legacy global lookup so pre-0008
