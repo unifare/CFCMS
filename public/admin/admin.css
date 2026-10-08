@@ -465,8 +465,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Theme switcher rows */
 .theme-opt { display: flex; align-items: center; gap: 0.5rem; }
-.theme-opt .check { margin-left: auto; width: 1rem; height: 1rem; opacity: 0; }
-.theme-opt.active .check { opacity: 1; }
+
+/* The check mark is a SINGLE-SELECT indicator for every dropdown that uses
+ * it (theme, interface language): hidden on all rows, shown only on the
+ * active one. Scoping it to `.theme-opt` alone was the bug that made every
+ * language in the topbar dropdown appear checked at once. If a menu ever
+ * needs real multi-select semantics, give it its own class — do not reuse
+ * `.check`. */
+.menu-item .check { margin-left: auto; width: 1rem; height: 1rem; opacity: 0; }
+.menu-item.active .check { opacity: 1; }
 
 /* --------------------------------------------------------------------------
    7. Card / panel
