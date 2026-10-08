@@ -108,11 +108,11 @@ const REVIEWED = {
   // listed here. Both now carry `AND site_id = ?` in the statement itself, so
   // they no longer appear as hits at all — a verdict that is no longer needed
   // is a verdict that should be deleted, not left to rot.
-  "src/api.ts:1342": "UPDATE theme_installs … WHERE name IN (SELECT value FROM settings WHERE key='theme.active') — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
+  "src/api.ts:1357": "UPDATE theme_installs … WHERE name IN (SELECT value FROM settings WHERE key='theme.active') — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
   "src/extensions/plugin/notify.ts:108": "UPDATE notification_log … WHERE id=? — the row is this send's own claim, addressed by the PK minted a few lines above for this siteId; ok/error are not identity",
-  "src/extensions/theme/runtime-worker.ts:414": "menu_items … WHERE menu_id=? — the menu row was resolved per site; locale is the remaining filter",
+  "src/extensions/theme/runtime-worker.ts:411": "menu_items … WHERE menu_id=? — the menu row was resolved per site (`location='header' AND site_id=?`) two lines above; locale is the remaining filter",
   "src/extensions/theme/tables.ts:383": "UPDATE theme_table_defs WHERE id=? — registry row addressed by its own PK",
-  "src/platform/frontend.ts:84": "menu_items … WHERE menu_id=? — same reasoning as runtime-worker",
+  "src/platform/frontend.ts:145": "menu_items … WHERE menu_id=? — same reasoning as runtime-worker: the menu row was resolved per site two lines above",
   "src/shared/scheduler.ts:23": "UPDATE posts … WHERE id=? — the site was just read from that very row",
 };
 
