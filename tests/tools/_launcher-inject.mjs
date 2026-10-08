@@ -176,10 +176,20 @@ function runSuite(relPath) {
       let out = "";
       process.stdout.write = (c) => { out += c; };
       process.stderr.write = (c) => { out += c; };
-      const done = (code) => { parentPort.postMessage({ out, code: code == null ? 0 : code }); };
+      // The suite's own process.exit must be the ONLY completion trigger.
+      // import() resolves when the module body ends, which is *before*
+      // main()'s first await returns — so an additional ".then(done)" call
+      // terminates the worker mid-run and the suite reads as "no summary",
+      // i.e. as "did not go red". A slow suite (esbuild compile) loses that
+      // race deterministically; see the long note in _skeleton-inject.mjs.
+      let reported = false;
+      const done = (code) => {
+        if (reported) return;
+        reported = true;
+        parentPort.postMessage({ out, code: code == null ? 0 : code });
+      };
       process.exit = done;
       import(${JSON.stringify(pathToFileURL(join(ROOT, relPath)).href)})
-        .then(() => done(0))
         .catch((e) => { out += "\\nTHREW: " + (e && e.stack); done(1); });
     `;
     const w = new Worker(

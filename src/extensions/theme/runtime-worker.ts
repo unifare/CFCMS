@@ -35,6 +35,7 @@
  *      while remaining correct.
  */
 import { Env } from "../../shared/types";
+import { featureEnabled } from "../../shared/features";
 import { setting } from "../../platform/frontend";
 import { listSites } from "../../platform/sites";
 import { siteDefaultLocale, siteLocales } from "../../platform/i18n/locale-registry";
@@ -107,12 +108,35 @@ export async function loadThemeWorkerSource(
  *
  * The stub is always produced inside the caller's request context. Only the
  * source text is cached, because a `WorkerStub` is request-scoped (finding #5).
+ *
+ * ## Two gates before the sandbox is touched
+ *
+ * The first is the missing-binding check that has always been here. The second
+ * is the `theme_runtime_worker` switch (`shared/features.ts`), which defaults
+ * to off.
+ *
+ * The switch is **checked before the binding** on purpose. A deploy can have
+ * `worker_loaders` configured — a paid account — and still want the runtime
+ * off, either to revoke the capability without a redeploy or to isolate a
+ * misbehaving theme. Checking the binding first would make "binding present"
+ * silently overrule the operator, which is the bug this switch exists to fix.
+ *
+ * The switch is already resolved when it matters: `featureEnabled()` reads the
+ * site's `settings` row directly, so there is no "the switch has not warmed up
+ * yet" window and a bad site id degrades to the declared default (off) rather
+ * than to "allowed".
  */
 export async function getThemeWorker(
   env: Env,
   theme: ActiveTheme,
   siteId: string
 ): Promise<LoadedThemeWorker | null> {
+  // 1. Operator switch. Off by default; a deploy that never set the var and a
+  //    site that never touched the admin both land here.
+  if (!(await featureEnabled(env, siteId, "theme_runtime_worker"))) return null;
+
+  // 2. Binding availability. Kept as a separate check so the two reasons for
+  //    "no sandbox" stay distinguishable in the code and in review.
   if (!env.LOADER) return null; // feature not available on this deploy
 
   const manifest = theme.manifest as ThemeWorkerManifest;

@@ -27,6 +27,31 @@
   "triggers": {"crons": ["*/5 * * * *"]},
 
   // ---------------------------------------------------------------------------
+  // Platform feature switches — the deploy-time fallback layer.
+  //
+  // Precedence is: per-site `settings` row (editable in the admin, at
+  // Tools -> Features) > these vars > the switch's declared default. Both
+  // switches default to off, so a deploy that sets nothing here writes nothing
+  // to KV and declines `runtime: "worker"` themes.
+  //
+  // Setting a var is how you turn a capability on for *every* site at once
+  // without touching the database. Leaving it out is not the same as setting
+  // it to `false`: an omitted var lets the admin still override per site,
+  // whereas `"false"` here only changes the inherited default.
+  //
+  // The keys are defined once in `src/extensions/contract/manifest.ts`
+  // (`FEATURE_SWITCHES`) and must match these names exactly — the runtime
+  // reads them by literal name from `env`. Var name -> switch key:
+  //
+  //   CFPRESS_CACHE_MIRROR_KV         -> cache_mirror_kv
+  //   CFPRESS_THEME_RUNTIME_WORKER    -> theme_runtime_worker
+  // ---------------------------------------------------------------------------
+  "vars": {
+    "CFPRESS_CACHE_MIRROR_KV": "false",
+    "CFPRESS_THEME_RUNTIME_WORKER": "false"
+  },
+
+  // ---------------------------------------------------------------------------
   // Paid-plan features, commented out by default.
   //
   // Both bindings are *optional in the source* — `runtime-worker.ts` returns

@@ -317,7 +317,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：19 套件 / 925 条 / 0 失败）
+## 6. 测试与验证（当前全绿：19 套件 / 1004 条 / 0 失败）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -326,16 +326,16 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 45 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 的闭集合双表对比（`ALLOWED_*` ↔ `RENDERED_*`）** |
+| architecture | 55 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 的闭集合双表对比（`ALLOWED_*` ↔ `RENDERED_*`）**、**规则 52/53 功能开关：词汇表单一定义 + 落叶子层 + 显式声明默认值 + 两个都默认关 + key 集合与 `varName` 在 `Env` 上** |
 | _schema-scope | 21 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
-| admin-spa | 15 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次 |
+| admin-spa | 19 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次 |
 | template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
 | scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
 | theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
 | theme-fixture | 47 | fixture 主题的声明与模板自洽 |
-| multisite | 74 | 多站点隔离（含 SEO 端点按站点） |
+| multisite | 78 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**） |
 | i18n | 66 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
 | admin-contract | 32 | 后台 API 契约 |
 | account | 27 | 账户自助：改密/改名的当前密码闸门、稳定错误码、menu_prefs 隔离、label_key 翻译端到端 |
@@ -343,7 +343,8 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | plugin-hooks | 32 | 插件 hook 生命周期 |
 | **plugin-pages** | **56** | **插件声明式后台页面（批次 10 新增）**：未声明页面 id 被拒（规则 50）/ 块类型闭集合（规则 49）/ `form` 块写入落到**真实物理行** / `stats` 聚合数字正确（`sum` 空集 = `null` 非 0）/ 禁用插件菜单与页面从注册表消失 / 按站点租户边界 / **§9 渲染器真渲染（读回 markup——本轮唯一一条把响应变成 HTML 再断言的守卫）** |
 | plugin-channels | 55 | 通知渠道运行时：webhook fetch 计数、claim-before-send 去重（含跨站双向）、`readChannelConfig` 只读声明过的 key |
-| theme-worker | 28 | L3 沙箱（含 WorkerStub 不可跨请求） |
+| **features** | **55** | **平台功能开关（批次 11 新增）**：列表与来源标注（site/var/default）/ **两层鉴权**（匿名被拒 + 非管理员 `author` 写 → 403，读只需会话）/ 保存往返 + 只落一行 + INSERT 分支 / **三层优先级逐层单独验**（站点行 > `env` var > 默认）/ 脏行降级 / 未知 key → 400 且不落库 / 屏幕接线 / UPDATE 分支（两次保存仍一行） |
+| theme-worker | 37 | L3 沙箱（含 WorkerStub 不可跨请求）+ **§10 功能开关反向验证：`theme_runtime_worker` 关/删/显式 false/拼错时都不加载沙箱，站点设置关能压过 var 开** |
 | launcher-parity | 55 | `cfpress.sh` ↔ `cfpress.ps1` 动作/菜单编号/套件表/退出码逐项对齐（解析结构，非 grep）+ BOM |
 
 ⚠️ **一跑必须有摘要行**：所有套件遵循「catch 里也打印摘要、崩溃标注 `(aborted)`」——
@@ -368,6 +369,19 @@ node tests/tools/_tenant-query-audit.mjs     # 列出所有「碰租户表但不
 ```bash
 node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 → 断言具名断言变红 → 还原 → 哈希一致
 ```
+
+**系统骨架 + 功能开关**的反向验证工具（10+ 场景，手工跑）：
+
+```bash
+node tests/tools/_skeleton-inject.mjs        # 20 场景：schema / 事件契约 / 断言拼法 / 功能开关（含 5 个开关场景）
+node tests/tools/_launcher-inject.mjs        # 16 场景：启动器两侧对齐 / BOM / stderr 提示 / EOF 退出
+```
+
+⚠️ 这三个工具（`_skeleton` / `_launcher` / `_plugin-pages`）都用 **Worker 线程在进程内**跑套件——
+本沙箱 `spawnSync` 一律 `EBUSY`，用子进程会把「跑不起来」伪装成「没变红」。
+其 worker 入口**只由套件自己桩掉的 `process.exit` 收尾**（不能 `.then(() => done(0))`）：
+`import()` 在模块体结束时即 resolve，**早于 `main()` 的第一个 `await`**，慢套件（esbuild 编译）
+会确定性地输掉这场竞速、被读成「注入后没有摘要」——即把红读成 abort。见 §8 坑位 30。
 
 
 第二个反向验证工具，守**规则 41（所有数据都有多语言能力）**：
@@ -637,6 +651,24 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     已裁决语句挤成 `NEW`。改完 `src/api.ts` 之类的文件后跑一次，**报了 `NEW` 就重新键位**
     （本轮 `theme_installs` 那条从 `:1154` 移到 `:1187`）。`NEW` 是提示不是失败，
     但每条都要有人写一句为什么会话安全的裁决。
+30. **注入工具用 `import().then(done)` 收尾 → 慢套件被读成 abort**（批次 11 新增的假绿形态）。
+    `import()` 在模块体执行完就 resolve，**早于套件 `main()` 的第一个 `await`**；
+    worker 线程由谁先结束谁说了算。esbuild 编译慢的套件（`features`）确定性输掉，
+    症状是「注入后没有摘要」——**把一次真红读成运行器坏了**。修法：worker 入口
+    **只由套件自己桩掉的 `process.exit` 收尾**，并用 `reported` 守卫保证只结算一次。
+    已在 `_skeleton-inject` / `_launcher-inject` / `_plugin-pages-inject` 三处修掉。
+31. **注入的缺陷让套件自己抛错时，红会被"崩溃"盖住**。开关场景把 settings key 改成
+    `cfpress.features-typo` 后，断言 `rows[0].value` 在空数组上抛、逃出 `main()`、
+    **摘要行根本没印** → 工具报 `no summary`（= abort）而不是「这条断言红了」。
+    三层修法：① 断言先查 `rows.length` 再用带守卫的 `JSON.parse` 读元素；
+    ② **每个 section 包 `section()`**，抛错记一条 FAIL 而不是中断整轮；
+    ③ 夹具在**开头和结尾都前缀删**（`LIKE 'cfpress.features%'`）——中途崩溃不再留脏行。
+32. **测试一条路由的权限，别用"匿名被拒"当判据**。`api.ts` 里 `requireAdmin` 是**全局闸门**，
+    它下面每条路由都已过会话校验——所以"匿名请求被拒"**对任何一条路由都成立**，
+    测不出这条路由自己的闸门。要验证 `settings.manage`，必须造一个**非管理员**用户
+    （`features.test.mjs` 用 `/api/v1/users` 造了个 `author` 角色用户），
+    否则 `can()` 会把 `role === "admin"` 短路成 true。这正是场景「drops its permission check」
+    第一版**没变红**的原因。
 
 ## 9. 权威文档索引
 
@@ -645,8 +677,13 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
 | `docs/design/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
 | `docs/history/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
-| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、明确不做的事） |
-| `tests/suites/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表） |
+| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、明确不做的事） |
+| `docs/HANDOVER.md` | 本文 |
+| `src/shared/features.ts` | **功能开关唯一词汇表 + 解析器**（`FEATURE_SWITCHES` / `featureEnabled()` / `featureSnapshot()`）——开关定义只此一处 |
+| `public/admin/js/screens/features.js` | 功能开关后台屏（每开关一张卡：来源标注 / var 名 / 声明默认 / 继承值 / 重置为继承） |
+| `tests/suites/features.test.mjs` | 功能开关 API 契约（两层鉴权 / 三层优先级 / 脏行降级 / 未知 key 400 / INSERT+UPDATE 分支 / 屏幕接线） |
+| `tests/tools/_skeleton-inject.mjs` | 骨架 + 开关的反向验证工具（20 场景，含 5 个开关场景） |
+| `tests/suites/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表 + **规则 52/53 开关守卫**） |
 | `tests/suites/admin-menus.test.mjs` | 菜单注册表契约（归属隔离 / 安装级可见 / 停用只删自己 / 切主题切回） |
 | `tests/suites/i18n.test.mjs` | 多语言四层契约（§5.4① 八条 + 翻译组 + 主题自有表 + 9b 段 `lang_group` 回归） |
 | `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |

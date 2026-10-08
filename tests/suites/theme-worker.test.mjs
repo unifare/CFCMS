@@ -13,6 +13,15 @@
  *   5. a theme with a syntax error is rejected at warm time, not per-request
  *   6. a 501 from the theme defers to the declarative renderer
  *   7. the theme never receives DB/MEDIA/CACHE — capability boundary holds
+ *   8. a theme reads content back through `env.HOST`
+ *   9. repeated requests reuse one env without an I/O-context error
+ *  10. the `theme_runtime_worker` switch defaults to off (sections 1-9 run
+ *      with it explicitly on, so the shipping default is asserted here)
+ *
+ * The runtime is behind a platform switch (`shared/features.ts`) that defaults
+ * to off, because the Worker Loader binding only exists on paid plans. Section
+ * 10 is what keeps that default honest; it is the only place in this suite that
+ * exercises the "off" direction.
  *
  * Usage: node tests/suites/theme-worker.test.mjs
  */
@@ -178,6 +187,13 @@ async function evalModule(source, { env, netBlocked, themeHost }) {
  * Build the test env. `worker` is passed in so `THEME_HOST` can be a real
  * Fetcher back into the host Worker — the same shape as the production
  * `THEME_HOST` service binding.
+ *
+ * `CFPRESS_THEME_RUNTIME_WORKER` is set because the runtime is now behind a
+ * platform switch that **defaults to off** (`shared/features.ts`). This suite's
+ * entire subject is what happens *when the sandbox is enabled*, so it has to
+ * ask for it — without the var, every case here degrades to the declarative
+ * renderer and the suite tests nothing. The opt-out direction is asserted
+ * separately in section 10, so "off" is covered too rather than assumed.
  */
 function makeEnv(sqlite, loader, worker) {
   const kv = new Map();
@@ -186,6 +202,7 @@ function makeEnv(sqlite, loader, worker) {
     DB: makeD1(sqlite), MEDIA: r2,
     CACHE: { async get(k) { return kv.has(k) ? kv.get(k) : null; }, async put(k, v) { kv.set(k, v); }, async delete(k) { kv.delete(k); } },
     ASSETS: { async fetch() { return new Response("asset"); } },
+    CFPRESS_THEME_RUNTIME_WORKER: "true",
   };
   if (loader) env.LOADER = loader;
   env.THEME_HOST = {
@@ -517,8 +534,100 @@ async function main() {
     check("one load() per page request, not one per isolate", perPage, results.length);
   }
 
+  // -----------------------------------------------------------------------
+  console.log("\n10. The theme runtime switch defaults to OFF");
+  // -----------------------------------------------------------------------
+  // Everything above runs with `CFPRESS_THEME_RUNTIME_WORKER: "true"` in the
+  // env, because the whole point of sections 1-9 is the *enabled* behaviour.
+  // That leaves the other direction untested, and the other direction is the
+  // one that ships by default — a switch whose "off" branch was never executed
+  // is a switch that is only believed to work.
+  //
+  // So this section builds envs that differ from `makeEnv` in exactly one way:
+  // the var is absent, or set to a rejected spelling. The theme, the loader and
+  // the R2 objects are all identical to section 1, which is what makes the
+  // difference attributable.
+  {
+    // Same theme source as section 1: it answers every page with a marker no
+    // declarative renderer could produce.
+    const optOutWorker = `
+      export default {
+        async fetch(request, env) {
+          if (new URL(request.url).pathname === "/__health") return new Response("ok");
+          return new Response("<html><body>WORKER_RENDERED</body></html>", { status: 200 });
+        }
+      };
+    `;
+    const fd = new FormData();
+    fd.append("file", new File([buildWorkerTheme("wtheme_switch", optOutWorker)], "wtheme_switch.zip", { type: "application/zip" }));
+
+    // Install/activate, then keep **one** env for every render below.
+    //
+    // This env must be reused, and that is not a style preference: R2 lives on
+    // the env object (`makeEnv` builds a fresh in-memory store per call). A
+    // fresh env per render would mean the theme's `worker.js` is never in R2,
+    // `loadThemeWorkerSource()` returns null, and *every* case — including the
+    // "on" one — skips the sandbox. The first draft of this section did exactly
+    // that, and only the positive control caught it: without that assert, five
+    // assertions here would have "passed" while collectively proving nothing.
+    //
+    // Reusing the env also means the only thing that varies between cases is
+    // the switch, which is what makes the A/B readable.
+    const loader = makeFakeLoader();
+    const env = makeEnv(sqlite, loader, worker);
+    await req(worker, env, "/api/v1/extensions/themes/upload", { method: "POST", headers: auth, body: fd });
+    const act = await req(worker, env, "/api/v1/extensions/themes/wtheme_switch/activate", {
+      method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({}),
+    });
+    check("switch fixture theme activated", act.status, 200);
+
+    // `loader._loads` accumulates, so each case reads the delta it caused
+    // rather than a running total that only ever grows.
+    const render = async (mutate) => {
+      mutate(env);
+      const before = loader._loads.length;
+      const res = await req(worker, env, "/en");
+      return { html: await res.text(), loads: loader._loads.length - before };
+    };
+
+    // -- the positive control comes first -----------------------------------
+    // If this fails, nothing below it means anything, so it is asserted before
+    // the opt-out cases rather than after them.
+    const on = await render((e) => { e.CFPRESS_THEME_RUNTIME_WORKER = "true"; });
+    checkTruthy("positive control: the var alone enables the sandbox", on.html.includes("WORKER_RENDERED"));
+    checkTruthy("positive control: the loader was actually called", on.loads > 0);
+
+    const off = await render((e) => { delete e.CFPRESS_THEME_RUNTIME_WORKER; });
+    checkTruthy("with no var the page is not worker-rendered", !off.html.includes("WORKER_RENDERED"));
+    check("with no var the loader is never called", off.loads, 0);
+
+    const explicitFalse = await render((e) => { e.CFPRESS_THEME_RUNTIME_WORKER = "false"; });
+    check("an explicit \"false\" var also skips the sandbox", explicitFalse.loads, 0);
+
+    // A typo must not enable a feature that needs a paid plan. This is the
+    // assert that keeps `truthy()` from drifting into "anything non-empty".
+    const typo = await render((e) => { e.CFPRESS_THEME_RUNTIME_WORKER = "yes-please"; });
+    check("an unrecognised spelling does not enable the sandbox", typo.loads, 0);
+
+    // The site-level row must beat the var in the off direction. The control
+    // above already proved this exact env renders through the worker when the
+    // var is on, so the only thing that changed here is the row — which is what
+    // stops this assert from being vacuous the way its first draft was.
+    sqlite.prepare("INSERT OR REPLACE INTO settings(site_id,key,value) VALUES(?,?,?)")
+      .run("default", "cfpress.features", JSON.stringify({ theme_runtime_worker: false }));
+    const siteOff = await render((e) => { e.CFPRESS_THEME_RUNTIME_WORKER = "true"; });
+    check("a site row saying off beats a var saying on", siteOff.loads, 0);
+    sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key='cfpress.features'");
+
+    // Removing the row restores the var, so "reset to inherited" is not a
+    // one-way door in the render path either.
+    const backOn = await render((e) => { e.CFPRESS_THEME_RUNTIME_WORKER = "true"; });
+    checkTruthy("dropping the row falls back to the var again", backOn.html.includes("WORKER_RENDERED"));
+  }
+
   // Cleanup
   for (const sql of [
+    "DELETE FROM settings WHERE site_id='default' AND key='cfpress.features'",
     "DELETE FROM post_meta WHERE post_id LIKE 'wpost_%'",
     "DELETE FROM post_translations WHERE post_id LIKE 'wpost_%'",
     "DELETE FROM posts WHERE id LIKE 'wpost_%'",

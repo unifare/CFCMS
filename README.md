@@ -48,6 +48,40 @@ On first boot the Worker creates a single administrator account so you can log i
 Authentication uses PBKDF2-hashed passwords (`src/shared/crypto.ts`); the plaintext
 is never stored. Sessions are signed cookies with a 14-day TTL.
 
+## Platform feature switches
+
+Some capabilities must not be on for every deploy — the Worker Loader binding
+(`worker_loaders`) only exists on paid plans, and mirroring the cache version
+into KV is pure write amplification on a free plan. Those are gated by
+**switches**, not by "the binding happens to be missing".
+
+Both switches ship **off**:
+
+| Key | `wrangler.jsonc` var | What off means |
+|---|---|---|
+| `cache_mirror_kv` | `CFPRESS_CACHE_MIRROR_KV` | No KV mirror of the content-cache version. D1 stays authoritative. |
+| `theme_runtime_worker` | `CFPRESS_THEME_RUNTIME_WORKER` | The theme Worker sandbox never starts; every page renders through the declarative engine. |
+
+Resolution order, highest first: the site's `settings` row `cfpress.features`
+(set from **Tools → Features** in the admin) → the `vars` value from
+`wrangler.jsonc` → the declared default.
+
+```jsonc
+// wrangler.jsonc — deploy-time layer
+"vars": {
+  "CFPRESS_THEME_RUNTIME_WORKER": "true"
+}
+```
+
+The definition lives in exactly one place, `src/shared/features.ts`
+(`FEATURE_SWITCHES`), because three readers have to agree on it: the resolver,
+the admin screen, and this `vars` name. A key spelled differently in any one of
+them produces a switch that saves fine and does nothing — the "declared but
+never consumed" defect `tests/suites/architecture.test.mjs` now guards against.
+
+Anything that cannot be resolved reads as **off**. Neither switch degrades the
+site when it is off; both require an explicit "on" before doing anything.
+
 ## Documentation map
 
 | Document | Read it when |
@@ -66,7 +100,7 @@ is never stored. Sessions are signed cookies with a 14-day TTL.
 ```
 src/          Worker source (layers: shared <- platform <- rendering <- extensions <- index.ts)
 tests/
-  suites/     18 behaviour/architecture suites — the things `npm test` runs
+  suites/     19 behaviour/architecture suites — the things `npm test` runs
   tools/      injectors, diagnostics and migration appliers — run by hand
   fixtures/   shared test harness code imported by suites
 public/admin/ the no-build admin SPA (served as static assets)

@@ -111,7 +111,7 @@ export function isProseFieldType(type: string): boolean {
  */
 export const ALLOWED_ADMIN_SCREENS = [
   "dashboard", "content-list", "content-edit", "settings", "media", "custom",
-  "theme-settings", "plugin-settings", "table-list", "table-edit",
+  "theme-settings", "plugin-settings", "table-list", "table-edit", "features",
 ] as const;
 
 /**

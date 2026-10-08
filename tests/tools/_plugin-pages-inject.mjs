@@ -252,10 +252,19 @@ function runSuite(relPath, expectRed) {
       let out = "";
       process.stdout.write = (c) => { out += c; };
       process.stderr.write = (c) => { out += c; };
-      const done = (code) => { parentPort.postMessage({ out, code: code == null ? 0 : code }); };
+      // Completion is the suite's own process.exit and nothing else.
+      // import() resolving means the module *body* ended, not that main()
+      // finished — adding a ".then(done)" here terminated the worker mid-run
+      // and made the suite read as "no summary", which the harness treats as
+      // "did not go red". See the long note in _skeleton-inject.mjs.
+      let reported = false;
+      const done = (code) => {
+        if (reported) return;
+        reported = true;
+        parentPort.postMessage({ out, code: code == null ? 0 : code });
+      };
       process.exit = done;
       import(${JSON.stringify(pathToFileURL(join(ROOT, relPath)).href)})
-        .then(() => done(0))
         .catch((e) => { out += "\\nWORKER IMPORT ERROR: " + ((e && e.stack) || e); done(1); });
     `;
     // The parent is ESM; `eval:true` workers created from it have their own

@@ -11,6 +11,7 @@ import { safeZipPath, sha256 } from "./extensions/security";
 import { createRevision, autosave } from "./platform/revisions";
 import { requirePermission, can } from "./platform/permissions";
 import { bumpContentCache } from "./shared/cache";
+import { featureSnapshot, inheritedValue, truthy, FEATURE_SETTINGS_KEY, FEATURE_SWITCHES, type FeatureSwitch } from "./shared/features";
 import { listAdminMenuGroups } from "./platform/admin-menus";
 import { clearPluginMenus } from "./extensions/plugin/menus";
 import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./platform/sites";
@@ -481,6 +482,107 @@ function normaliseMenuCustom(b: unknown): { items: Record<string, unknown>; grou
 async function settings(env: Env, siteId: string) {
   const rows = await env.DB.prepare("SELECT key, value, autoload FROM settings WHERE site_id=? ORDER BY key").bind(siteId).all();
   return ok({ items: rows.results, site: siteId });
+}
+
+/**
+ * Read the platform feature switches for a site.
+ *
+ * Returns every declared switch with its resolved value **and where that value
+ * came from** (`site` / `var` / `default`). The admin needs the provenance: a
+ * checkbox that reads "off" because nobody set anything looks identical to one
+ * that reads "off" because the operator turned it off, and only one of those
+ * is worth acting on.
+ *
+ * `_kvWrites`-style honesty applies here too — the screen shows the *effective*
+ * value, and the effective value is exactly what the runtime consumes, because
+ * both go through `featureSnapshot()` / `featureEnabled()`.
+ */
+async function features(env: Env, siteId: string) {
+  const snapshot = await featureSnapshot(env, siteId);
+  const items = FEATURE_SWITCHES.map((s) => ({
+    key: s.key,
+    label: s.label,
+    var: s.varName,
+    default_on: s.defaultOn,
+    enabled: snapshot[s.key].enabled,
+    source: snapshot[s.key].source,
+    // What the value would be if this site's row were removed — lets the admin
+    // offer "reset to inherit" without a second round trip.
+    inherited: inheritedValue(env, s),
+  }));
+  return ok({ items, site: siteId, settings_key: FEATURE_SETTINGS_KEY });
+}
+
+/**
+ * Save one switch for a site.
+ *
+ * Stored as a single JSON object under one settings key rather than one row per
+ * switch, so adding a switch is a code change with no migration and no chance
+ * of a half-populated row. Unknown keys are rejected rather than ignored: a
+ * typo that silently persists a key nothing reads is precisely the "declared
+ * but never consumed" defect this repo keeps re-fixing.
+ */
+async function saveFeature(env: Env, userId: string, body: any, siteId: string) {
+  const key = String(body.key ?? "");
+  if (!key) return ok({ error: "key required" }, 400);
+  // `featureSwitch()` throws on an unknown key; turn that into a 400 rather
+  // than a 500, since it is caller input.
+  if (!FEATURE_SWITCHES.some((s) => s.key === key)) {
+    return ok({ error: `unknown feature switch: ${key}` }, 400);
+  }
+
+  const existing = await env.DB.prepare("SELECT id, value FROM settings WHERE site_id=? AND key=?")
+    .bind(siteId, FEATURE_SETTINGS_KEY)
+    .first<any>();
+  let current: Record<string, unknown> = {};
+  if (existing?.value != null) {
+    try {
+      const parsed = JSON.parse(String(existing.value));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed;
+    } catch {
+      /* a corrupt row is replaced rather than propagated */
+    }
+  }
+
+  // `value: null` means "stop overriding on this site", so the row falls back
+  // to the var / default. Deleting the key outright keeps the row honest about
+  // which switches the operator actually chose.
+  if (body.value === null || body.value === undefined) {
+    delete current[key];
+  } else {
+    current[key] = truthy(body.value);
+  }
+
+  const next = JSON.stringify(current);
+  if (existing) {
+    await env.DB.prepare("UPDATE settings SET value=? WHERE id=?").bind(next, existing.id).run();
+  } else {
+    await env.DB.prepare("INSERT INTO settings (id, site_id, key, value, autoload) VALUES (?, ?, ?, ?, 1)")
+      .bind(await randomId(), siteId, FEATURE_SETTINGS_KEY, next).run();
+  }
+  await activity(env, userId, "update", "feature", key, { siteId, value: current[key] ?? null });
+  const snapshot = await featureSnapshot(env, siteId);
+  // ⚠️ Read the snapshot defensively, and *never* index it blindly.
+  //
+  // The guard above already rejects unknown keys, so in theory this cannot be
+  // undefined. But "in theory" is what the reverse-validation tool disproved:
+  // neutralizing the guard does not turn the route into a permissive one, it
+  // turns it into a **500**. `featureSnapshot()` only emits keys from
+  // `FEATURE_SWITCHES`, so an unvalidated key yields `undefined` here and the
+  // spread below throws on `.enabled`.
+  //
+  // A 500 on caller input is the wrong contract twice over: it hides the real
+  // problem from the caller, and it means the only observable difference between
+  // "the guard is present" and "the guard was deleted" is an unhandled
+  // exception. Reporting the resolved state through an optional read keeps the
+  // response shape stable and makes the failure legible.
+  const resolved = snapshot[key];
+  if (!resolved) {
+    // Unreachable while the guard above stands; kept as the honest answer if it
+    // ever does not.
+    return ok({ error: `switch not resolvable: ${key}` }, 400);
+  }
+  return ok({ ok: true, key, enabled: resolved.enabled, source: resolved.source });
 }
 
 async function saveSetting(env: Env, userId: string, body: any, siteId: string) {
@@ -1082,6 +1184,15 @@ export async function handleApi(env: Env, request: Request): Promise<Response> {
   if (path === "media" && method === "POST") return mediaUpload(env, user.id, request, siteId);
   if (path === "settings" && method === "GET") return settings(env, siteId);
   if (path === "settings" && method === "POST") { if(!(await requirePermission(env,user,"settings.manage"))) return ok({error:"Forbidden"},403); return saveSetting(env, user.id, await jsonBody(request), siteId); }
+
+  // Platform feature switches. GET needs no extra permission beyond being
+  // logged in (the same call `settings` makes); POST needs `settings.manage`,
+  // because the write is stored as a normal setting row with a fixed key.
+  if (path === "features" && method === "GET") return features(env, siteId);
+  if (path === "features" && method === "POST") {
+    if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);
+    return saveFeature(env, user.id, await jsonBody(request), siteId);
+  }
 
   const resourceMatch = path.match(/^(locales|redirects|rewrites|plugins|themes|menus|menu_items)$/);
   if (resourceMatch && method === "GET") return genericTable(env, resourceMatch[1], url, siteId);

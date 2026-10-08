@@ -117,16 +117,26 @@ function makeR2() {
 
 function makeEnv(sqlite) {
   const kv = new Map();
+  // Every KV *write* is recorded. The content-cache version used to be
+  // mirrored into KV on every bump, and re-written once a day per site on
+  // every miss (the mirror carried a 24h TTL). D1 is the source of truth and
+  // nothing reads the mirror, so section 9 asserts `_kvWrites` stays empty.
+  //
+  // Recording writes rather than objects is deliberate: a stale write with the
+  // same value would leave `_dump().length` unchanged and the check would pass
+  // vacuously. Writes are counted, not inferred.
+  const kvWrites = [];
   return {
     DB: makeD1(sqlite),
     MEDIA: makeR2(),
     CACHE: {
       async get(k) { return kv.has(k) ? kv.get(k) : null; },
-      async put(k, v) { kv.set(k, v); },
-      async delete(k) { kv.delete(k); },
+      async put(k, v) { kvWrites.push(k); kv.set(k, v); },
+      async delete(k) { kvWrites.push(k); kv.delete(k); },
     },
     ASSETS: { async fetch() { return new Response("asset", { status: 200 }); } },
     _kv: kv,
+    _kvWrites: kvWrites,
   };
 }
 
@@ -433,6 +443,7 @@ async function main() {
   // -- 9. cache isolation --------------------------------------------------
   console.log("\n9. Cache generation isolation");
   const { cacheVersion, bumpContentCache } = await importCache();
+  env._kvWrites.length = 0;
   const vDefaultBefore = await cacheVersion(env, "default");
   await bumpContentCache(env, "shop");
   const vDefaultAfter = await cacheVersion(env, "default");
@@ -442,6 +453,18 @@ async function main() {
   checkTruthy("cache keys are namespaced by site",
     (await cacheKeyFor(env, "/en", "shop")).includes(":shop:") &&
     (await cacheKeyFor(env, "/en", "default")).includes(":default:"));
+
+  // Version bookkeeping must not touch KV at all. Two reads of the same site
+  // are the important case: the old code re-`put` the version whenever the KV
+  // entry was missing, so a *read* was a write — including one scheduled write
+  // per site per day, forever, because of its 24h TTL.
+  check("cacheVersion does not write to KV (first read)", env._kvWrites.length, 0);
+  await cacheVersion(env, "default");
+  await cacheVersion(env, "default");
+  check("cacheVersion does not write to KV on repeated reads", env._kvWrites.length, 0);
+  await bumpContentCache(env, "default");
+  check("bumpContentCache does not write to KV", env._kvWrites.length, 0);
+  check("no KV write was recorded for any site", [...new Set(env._kvWrites)], []);
 
   // -- 9b. SEO endpoints are site-scoped ----------------------------------
   //

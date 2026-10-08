@@ -251,6 +251,68 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+section("Icon names referenced in code all exist");
+// ---------------------------------------------------------------------------
+//
+// `icon("sliders")` used to be a silent near-miss: `icons.js` falls back to the
+// `info` glyph for an unknown name, so a typo renders a *plausible* icon with
+// no error anywhere — not a missing box, not a console warning, just the wrong
+// picture. That is the same failure shape as the rest of this repo's
+// "declared but never consumed" family, and it is invisible to every other
+// check here (the module graph resolves, the screen renders, the entry stays
+// thin).
+//
+// So: parse every literal `icon("name")` call site and require the name to be
+// a key in the `PATHS` table. Prose mentions are stripped first — a comment
+// saying `icon("x")` is documentation, not a call.
+
+const iconsSrc = read(join(ADMIN, "icons.js"));
+const iconNames = new Set(
+  [...iconsSrc.matchAll(/^\s*"([a-z0-9-]+)":\s*'</gm)].map((m) => m[1])
+);
+check(
+  "the icon table was parsed (non-vacuity)",
+  iconNames.size > 30,
+  `parsed ${iconNames.size} icon names from icons.js`
+);
+
+/** Strip comments so a documentation example is not read as a call. */
+const stripComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+const iconRefs = new Map(); // name -> [files]
+for (const file of [...walk(join(ADMIN, "js"), [".js"]), join(ADMIN, "icons.js")]) {
+  const src = stripComments(read(file));
+  for (const m of src.matchAll(/\bicon\(\s*"([^"]+)"\s*[,)]/g)) {
+    if (!iconRefs.has(m[1])) iconRefs.set(m[1], []);
+    iconRefs.get(m[1]).push(rel(file));
+  }
+}
+check(
+  "icon() call sites were found (non-vacuity)",
+  iconRefs.size > 10,
+  `found ${iconRefs.size} distinct icon names across the admin`
+);
+
+const unknownIcons = [...iconRefs.entries()].filter(([name]) => !iconNames.has(name));
+check(
+  "every icon(\"...\") name is defined in the icon table",
+  unknownIcons.length === 0,
+  unknownIcons
+    .map(([name, files]) => `icon("${name}") is not in PATHS — used in ${[...new Set(files)].join(", ")}`)
+    .join("\n       ")
+);
+
+// `hasIcon()` is exported for callers that need to check before rendering; if
+// nothing ever calls it, it is a vestigial export. Record it rather than assert
+// on it, so the helper is not deleted as dead code while this suite relies on
+// the same knowledge.
+check(
+  "icons.js exposes hasIcon() for callers that must check first",
+  /export\s+const\s+hasIcon\s*=/.test(iconsSrc)
+);
+
+// ---------------------------------------------------------------------------
 section("Entry point boots against a DOM stub");
 // ---------------------------------------------------------------------------
 

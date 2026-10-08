@@ -180,13 +180,114 @@ const SCENARIOS = [
     after: ["node tests/suites/launcher-parity-GONE.test.mjs"],
     runs: [["tests/suites/architecture.test.mjs", "every `node <path>` command written in a doc points at a file that exists"]],
   },
+  {
+    // An icon name that is not in the table. `icons.js` falls back to the
+    // `info` glyph, so the screen still renders and every other check in
+    // `admin-spa.test.mjs` still passes — the button is simply wearing the
+    // wrong picture. This is the "silent near-miss" shape: it was a real bug
+    // in `account.js` (`icon("key-round")`, never defined) when the guard was
+    // written, which is why the injection moves an *existing* name to a
+    // slightly-wrong one rather than inventing a call site.
+    label: "a screen asks for an icon name the icon table does not define",
+    file: join(ROOT, "public/admin/js/screens/account.js"),
+    before: ['icon("key-round")'],
+    after: ['icon("key-round-not-a-real-icon")'],
+    runs: [["tests/suites/admin-spa.test.mjs", 'every icon("...") name is defined in the icon table']],
+  },
+  {
+    // The switch vocabulary is pinned to exactly one file because three readers
+    // must agree on it (resolver, admin screen, `vars` name). A second copy is
+    // how "saves fine, does nothing" gets in — the defect this repo has fixed
+    // five times under the name "declared but never consumed".
+    label: "the feature-switch vocabulary is declared a second time",
+    file: join(ROOT, "src/extensions/contract/manifest.ts"),
+    before: ['export const ALLOWED_ADMIN_SCREENS = ['],
+    after: [
+      'export const FEATURE_SWITCHES = [\n' +
+        '  { key: "cache_mirror_kv", varName: "CFPRESS_CACHE_MIRROR_KV", defaultOn: true, label: "a rival copy" },\n' +
+        '] as const;\n\n' +
+        'export const ALLOWED_ADMIN_SCREENS = [',
+    ],
+    runs: [["tests/suites/architecture.test.mjs", "FEATURE_SWITCHES is defined in exactly one file"]],
+  },
+  {
+    // `defaultOn` omitted is the quietest possible bug: `undefined` is falsy, so
+    // the switch behaves as "off", which is usually correct — and the omission
+    // is invisible until someone reads the definition expecting a stated choice.
+    label: "a declared switch stops stating its default explicitly",
+    file: join(ROOT, "src/shared/features.ts"),
+    before: ['    varName: "CFPRESS_CACHE_MIRROR_KV",\n    defaultOn: false,'],
+    after: ['    varName: "CFPRESS_CACHE_MIRROR_KV",'],
+    runs: [["tests/suites/architecture.test.mjs", "every declared feature switch states its default explicitly"]],
+  },
+  {
+    // A switch that defaults to on is a feature nobody asked for, shipping to
+    // every free-plan deploy. The two current switches gate a paid binding and
+    // a KV write amplifier, so "on by default" is wrong for both.
+    label: "a switch defaults to on",
+    file: join(ROOT, "src/shared/features.ts"),
+    before: ['    defaultOn: false,\n    label: "Mirror the content-cache version into KV",'],
+    after: ['    defaultOn: true,\n    label: "Mirror the content-cache version into KV",'],
+    runs: [["tests/suites/architecture.test.mjs", "both switches default to off"]],
+  },
+  {
+    // If the API ever persists a key that `FEATURE_SWITCHES` does not declare,
+    // the operator gets a switch that saves successfully and is never read.
+    // That is the "declared but never consumed" family — already fixed five
+    // times in this repo — so the rejection has to be pinned, not just written.
+    //
+    // Note which assertion this pins. Neutralizing the guard makes the route
+    // report 400 anyway (there is a defensive read after it), so "an unknown key
+    // is a 400" stays green and *the persistence assertion is what flips*. That
+    // was a genuine correction: the first version of this scenario pinned the
+    // status code and reported a false "did not go red". The lesson is the one
+    // in §12 — the guard to pin is the one that can actually observe the defect.
+    label: "the features API accepts a switch key it does not declare",
+    file: join(ROOT, "src/api.ts"),
+    before: ['  if (!FEATURE_SWITCHES.some((s) => s.key === key)) {\n    return ok({ error: `unknown feature switch: ${key}` }, 400);\n  }'],
+    after: ['  if (false) {\n    return ok({ error: `unknown feature switch: ${key}` }, 400);\n  }'],
+    runs: [["tests/suites/features.test.mjs", "nothing was written for the unknown key"]],
+  },
+  {
+    // Removing this line does not make the route public — `requireAdmin` sits
+    // above it — but it does let *any signed-in user* change a switch that
+    // turns on paid features. The anonymous assertions in the suite stay green
+    // when this line goes, which is exactly why the suite also creates a
+    // non-admin user; that assertion is what this scenario pins.
+    label: "the features write route drops its settings.manage check",
+    file: join(ROOT, "src/api.ts"),
+    before: ['if (path === "features" && method === "POST") {\n    if (!(await requirePermission(env, user, "settings.manage"))) return ok({ error: "Forbidden" }, 403);'],
+    after: ['if (path === "features" && method === "POST") {\n    if (false) return ok({ error: "Forbidden" }, 403);'],
+    runs: [["tests/suites/features.test.mjs", "a signed-in user without settings.manage cannot write"]],
+  },
+  {
+    // The `settings` row is the site layer of the precedence chain, and the
+    // resolver reads it under one fixed key (`FEATURE_SETTINGS_KEY`). If a write
+    // stored the switches under a different key, the row would be written and
+    // never read — a silent no-op, the shape this repo keeps fixing.
+    //
+    // The anchor is the **INSERT** branch deliberately. The UPDATE branch needs
+    // a pre-existing row, and a scenario that depends on which branch a suite
+    // happens to reach is fragile — the first draft used the UPDATE path and
+    // tripped a UNIQUE violation instead of the intended assertion, which read
+    // as "no summary" and proved nothing. The INSERT branch is exercised by
+    // section 3, which saves onto a clean table.
+    label: "a saved switch is written under the wrong settings key",
+    file: join(ROOT, "src/api.ts"),
+    before: ['.bind(await randomId(), siteId, FEATURE_SETTINGS_KEY, next).run();'],
+    after: ['.bind(await randomId(), siteId, FEATURE_SETTINGS_KEY + "-typo", next).run();'],
+    runs: [["tests/suites/features.test.mjs", "the row is now the source"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
 const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
+  join(ROOT, "src/shared/features.ts"),
+  join(ROOT, "src/api.ts"),
   join(ROOT, "src/extensions/contract/hooks.ts"),
   join(ROOT, "AGENTS.md"),
-  join(ROOT, "docs/guides/THEME-DEV.md")])];
+  join(ROOT, "docs/guides/THEME-DEV.md"),
+  join(ROOT, "public/admin/js/screens/account.js")])];
 
 function hashAll() {
   const out = {};
@@ -220,15 +321,38 @@ function runSuite(relPath) {
     // that works, and it is what the suites are written for (`"type":"module"`).
     // The first version used `require` and every load threw, which surfaced as
     // "no summary" — i.e. as a broken *runner*, not a broken *guard*.
+    //
+    // ⚠️ **`import()` resolving is not the suite finishing.** This was the
+    // second false-negative in this harness, and it was much harder to see than
+    // the first. Every suite ends with `process.exit(0)`, which is stubbed to
+    // `done` below — but the module body *also* completes while `main()` is
+    // still awaiting its first `await`. So `.then(() => done(0))` is a **second,
+    // premature** trigger: whichever fires first wins, and the worker is
+    // terminated with only the output written so far.
+    //
+    // The effect is a suite that reports "no summary (aborted)" — read as "the
+    // guard did not go red", the exact false negative this tool exists to rule
+    // out. It only bites suites slow enough to lose the race (esbuild compile
+    // time is the usual culprit), so it looks like a per-suite quirk rather
+    // than a harness bug: `architecture` and `admin-spa` passed, `features` did
+    // not, and the difference was milliseconds.
+    //
+    // The fix is to make the suite's own `process.exit` the *only* trigger. If
+    // the module itself throws before ever calling it, `esbuild`-style failures
+    // still need reporting — so the catch reports, but a clean resolve does not.
     const entry = `
       let out = "";
       process.stdout.write = (c) => { out += c; };
       process.stderr.write = (c) => { out += c; };
-      const done = (code) => { parentPort.postMessage({ out, code: code == null ? 0 : code }); };
+      let reported = false;
+      const done = (code) => {
+        if (reported) return;
+        reported = true;
+        parentPort.postMessage({ out, code: code == null ? 0 : code });
+      };
       process.exit = done;
       import(${JSON.stringify(pathToFileURL(join(ROOT, relPath)).href)})
-        .then(() => done(0))
-        .catch((e) => done(1));
+        .catch((e) => { out += "\\n[suite threw before process.exit] " + ((e && e.stack) || e) + "\\n"; done(1); });
     `;
     let settled = false;
     const w = new Worker(`const { parentPort } = require("node:worker_threads");\n${entry}`, {

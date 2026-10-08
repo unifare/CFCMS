@@ -121,6 +121,7 @@ export function baseGroups() {
         { key: "seo", title: t("core.nav.seo", "SEO"), icon: "chart", active: core("seo") },
         { key: "urls", title: t("core.nav.urls", "URL Manager"), icon: "route", active: core("urls") },
         { key: "settings", title: t("core.nav.settings", "Settings"), icon: "settings", active: core("settings") },
+        { key: "features", title: t("core.nav.features", "Features"), icon: "sliders-horizontal", active: core("features") },
       ],
     },
   ];

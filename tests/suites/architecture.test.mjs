@@ -672,12 +672,89 @@ const allowedScreens = allowedBlock
   : [];
 const EXPECTED_SCREENS = [
   "dashboard", "content-list", "content-edit", "settings", "media", "custom",
-  "theme-settings", "plugin-settings", "table-list", "table-edit",
+  "theme-settings", "plugin-settings", "table-list", "table-edit", "features",
 ];
+
+/** The switch keys the platform ships. Pinned so deleting or renaming one is a
+ *  deliberate edit here rather than a silent removal from the admin. */
+const FEATURE_SWITCH_KEYS_EXPECTED = ["cache_mirror_kv", "theme_runtime_worker"];
 check(
   "ALLOWED_ADMIN_SCREENS contains exactly the pinned set",
   JSON.stringify([...allowedScreens].sort()) === JSON.stringify([...EXPECTED_SCREENS].sort()),
   `implementation: ${JSON.stringify(allowedScreens)}\n       pinned:         ${JSON.stringify(EXPECTED_SCREENS)}`
+);
+
+/**
+ * The feature-switch vocabulary has exactly one definition, and it is in
+ * `shared/features.ts`.
+ *
+ * It lives in `shared/` and not in `contract/manifest.ts` because
+ * `shared/cache.ts` consumes one of the switches and `shared/` is a leaf that
+ * may not import `extensions/` (§7.3 rule 5) — the layering check above failed
+ * when the vocabulary was first put in `manifest.ts`, which is what caught it.
+ *
+ * A re-export from `manifest.ts` was tried and removed: it typechecked, but
+ * Node loads `manifest.ts` as plain ESM in this suite, and a *value* re-export
+ * needs an explicit `.ts` extension that `tsc` in turn rejects without
+ * `allowImportingTsExtensions`. Two constraints pointing opposite ways is a
+ * signal the extra hop was not wanted — importers go straight to the source.
+ *
+ * The guard is therefore: the array is defined in exactly one file, that file
+ * is the leaf, and nothing else defines a second copy.
+ */
+const featuresSrc = read(join(ROOT, "src/shared/features.ts"));
+const switchDefs = [...walk(join(ROOT, "src"), [".ts"])].filter((f) =>
+  /export\s+const\s+FEATURE_SWITCHES\s*(?::[^=]*)?=\s*\[/.test(read(f))
+);
+check(
+  "FEATURE_SWITCHES is defined in exactly one file",
+  switchDefs.length === 1 && rel(switchDefs[0]) === "src/shared/features.ts",
+  switchDefs.length
+    ? `defined in: ${switchDefs.map(rel).join(", ")}`
+    : "no definition found — the switch vocabulary has gone missing"
+);
+check(
+  "the switch vocabulary lives in the leaf layer, not in contract/",
+  !/FEATURE_SWITCHES/.test(manifestSrc),
+  "contract/manifest.ts mentions the switches — it must not own or re-export them"
+);
+
+// Every switch must carry all four fields, and the defaults must be explicit
+// booleans. A missing `defaultOn` would read as `undefined` -> falsy, which
+// happens to be the intended default today and would silently become "on" for
+// a future switch whose author forgot the field.
+const declaredSwitches = [...featuresSrc.matchAll(/\{\s*key:\s*"([a-z0-9_]+)",[\s\S]*?defaultOn:\s*(true|false),/g)]
+  .map((m) => ({ key: m[1], defaultOn: m[2] === "true" }));
+check(
+  "every declared feature switch states its default explicitly",
+  declaredSwitches.length === FEATURE_SWITCH_KEYS_EXPECTED.length,
+  `parsed ${declaredSwitches.length} of ${FEATURE_SWITCH_KEYS_EXPECTED.length}: ${declaredSwitches.map((s) => s.key).join(", ")}`
+);
+check(
+  "both switches default to off",
+  declaredSwitches.length > 0 && declaredSwitches.every((s) => s.defaultOn === false),
+  declaredSwitches.filter((s) => s.defaultOn).map((s) => `${s.key}=on`).join(", ")
+);
+check(
+  "declared switch keys match the expected set",
+  JSON.stringify(declaredSwitches.map((s) => s.key).sort()) ===
+    JSON.stringify([...FEATURE_SWITCH_KEYS_EXPECTED].sort()),
+  `implementation: ${JSON.stringify(declaredSwitches.map((s) => s.key))}\n       expected:      ${JSON.stringify(FEATURE_SWITCH_KEYS_EXPECTED)}`
+);
+
+// The `varName` in each switch must be a name the runtime can actually read
+// off `Env`. `types.ts` spells them out (an interface cannot be derived from
+// data), so the two are cross-checked here — a rename on one side only would
+// otherwise leave a switch whose deploy-time fallback silently never applies.
+const envSrc = read(join(ROOT, "src/shared/types.ts"));
+const varNames = [...featuresSrc.matchAll(/varName:\s*"([A-Z0-9_]+)"/g)].map((m) => m[1]);
+const undeclaredVars = varNames.filter(
+  (v) => !new RegExp(`\\b${v}\\??:\\s*string`).test(envSrc)
+);
+check(
+  "every switch varName is declared on the Env interface",
+  varNames.length > 0 && undeclaredVars.length === 0,
+  undeclaredVars.map((v) => `${v} is not declared in src/shared/types.ts`).join("\n       ")
 );
 
 const TABLE_SCREENS = ["table-list", "table-edit"];

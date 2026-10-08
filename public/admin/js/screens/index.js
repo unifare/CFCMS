@@ -11,6 +11,7 @@ import media from "./media.js";
 import resources from "./resources.js";
 import urls from "./urls.js";
 import settings from "./settings.js";
+import features from "./features.js";
 import seo from "./seo.js";
 import sites from "./sites.js";
 import users from "./users.js";
@@ -46,6 +47,7 @@ export const SCREENS = {
   seo,
   urls,
   settings,
+  features,
 
   // Targets of the dynamic `cpt:` / `menu:` / `table:` prefixes, resolved by
   // the shell. `table-list` and `table-edit` are also registered directly so
