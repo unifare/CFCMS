@@ -48,6 +48,18 @@ On first boot the Worker creates a single administrator account so you can log i
 Authentication uses PBKDF2-hashed passwords (`src/shared/crypto.ts`); the plaintext
 is never stored. Sessions are signed cookies with a 14-day TTL.
 
+## Multilingual URLs
+
+Content is multilingual at the storage level (translation rows per
+locale) and at the URL level: each language version can carry its own
+slug. `/en/blog/hello` and `/zh-CN/blog/ni-hao` can be the same piece;
+an explicitly prefixed URL that does not exist 404s instead of silently
+serving another language. The platform also emits `hreflang`
+alternates, serves a feed per locale (`/{locale}/feed.xml`, with the
+bare `/feed.xml` as the default language), and exposes a language
+switcher to themes as `lang_nav`. See AGENTS.md rules 56-59 and
+`tests/suites/locale-url.test.mjs`.
+
 ## Platform feature switches
 
 Some capabilities must not be on for every deploy — the Worker Loader binding

@@ -317,7 +317,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：19 套件 / 1004 条 / 0 失败）
+## 6. 测试与验证（当前全绿：22 套件 / 1128 条 / 0 失败，另有 `_schema-scope` 21 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -334,6 +334,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
 | scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
 | theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
+| locale-url | 29 | 按语言 slug 的路由/404/唯一性、hreflang、按语言 feed、切换器（规则 56–59） |
 | theme-fixture | 47 | fixture 主题的声明与模板自洽 |
 | multisite | 78 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**） |
 | i18n | 66 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
@@ -374,6 +375,7 @@ node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 �
 
 ```bash
 node tests/tools/_skeleton-inject.mjs        # 20 场景：schema / 事件契约 / 断言拼法 / 功能开关（含 5 个开关场景）
+node tests/tools/_locale-url-inject.mjs     # 4 场景：规则 56–59（slug COALESCE / 散落回退 / locale 正则 / feed 站点隔离）
 node tests/tools/_launcher-inject.mjs        # 16 场景：启动器两侧对齐 / BOM / stderr 提示 / EOF 退出
 ```
 
@@ -683,6 +685,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `public/admin/js/screens/features.js` | 功能开关后台屏（每开关一张卡：来源标注 / var 名 / 声明默认 / 继承值 / 重置为继承） |
 | `tests/suites/features.test.mjs` | 功能开关 API 契约（两层鉴权 / 三层优先级 / 脏行降级 / 未知 key 400 / INSERT+UPDATE 分支 / 屏幕接线） |
 | `tests/tools/_skeleton-inject.mjs` | 骨架 + 开关的反向验证工具（20 场景，含 5 个开关场景） |
+| `tests/tools/_locale-url-inject.mjs` | 多语言与 URL 规则 56–59 的反向验证工具（4 场景） |
 | `tests/suites/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表 + **规则 52/53 开关守卫**） |
 | `tests/suites/admin-menus.test.mjs` | 菜单注册表契约（归属隔离 / 安装级可见 / 停用只删自己 / 切主题切回） |
 | `tests/suites/i18n.test.mjs` | 多语言四层契约（§5.4① 八条 + 翻译组 + 主题自有表 + 9b 段 `lang_group` 回归） |
