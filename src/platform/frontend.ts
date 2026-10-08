@@ -116,9 +116,50 @@ export function coverFrom(content: unknown): string {
   return "";
 }
 export async function findContent(env:Env,type:string,slug:string,locale:string,siteId:string){
-  const row=await env.DB.prepare(`SELECT p.*,t.locale,t.title,t.excerpt,t.content FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type=? AND p.slug=? AND t.locale=? AND p.status='published' LIMIT 1`).bind(siteId,type,slug,locale).first<any>();
-  if(row){row.html=row.content?renderBlocks(String(row.content)):"";row.reading_time=readingTime(row.html,220,locale);row.date_display=formatDate(row.created_at,locale);row.cover=coverFrom(row.content);}
+  // The URL segment is per language: `post_translations.slug` when the
+  // translation declares one, else the main-table slug. Matching on the
+  // COALESCE (never on `p.slug` alone) is rule 58 — a lookup that skips it
+  // 404s every language that named its own slug.
+  const row=await env.DB.prepare(`SELECT p.*,t.locale,t.title,t.excerpt,t.content,t.slug AS slug_own FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type=? AND COALESCE(t.slug,p.slug)=? AND t.locale=? AND p.status='published' LIMIT 1`).bind(siteId,type,slug,locale).first<any>();
+  if(row){
+    row.slug=row.slug_own||row.slug;
+    row.html=row.content?renderBlocks(String(row.content)):"";
+    row.reading_time=readingTime(row.html,220,locale);
+    row.date_display=formatDate(row.created_at,locale);
+    row.cover=coverFrom(row.content);
+    row.alternates=await contentAlternates(env,siteId,row.id,row.type);
+  }
   return row;
+}
+/**
+ * The other language versions of the same piece of content, for `hreflang`.
+ *
+ * Membership is `lang_group` — the same tie the translations endpoint uses —
+ * so alternates can never list a language the group does not have. URLs use
+ * each version's own slug (rule 58), and the shape matches the sitemap's
+ * `/{locale}[/{type}/]/{slug}` convention so a crawler sees one story.
+ */
+export async function contentAlternates(env:Env,siteId:string,postId:string,type:string){
+  const r=await env.DB.prepare(`SELECT t.locale,COALESCE(t.slug,p.slug) AS slug FROM post_translations t JOIN posts p ON p.id=t.post_id WHERE p.site_id=? AND p.type=? AND p.lang_group=(SELECT lang_group FROM posts WHERE id=? AND site_id=?) AND p.status='published' ORDER BY t.locale`).bind(siteId,type,postId,siteId).all();
+  return ((r.results as any[])??[]).map(x=>({locale:String(x.locale),url:`/${x.locale}${type==="post"?"/blog/":"/"}${x.slug}`}));
+}
+/**
+ * The site's language switcher: one entry per locale the *site* declares,
+ * pointing at the same page in each language.
+ *
+ * Deliberately built only from the list a caller already resolved site-scoped —
+ * a switcher that offers a language the site has not enabled 404s on click
+ * (§10 rule 6: no site-blind fallbacks). `restPath` is the page path with any
+ * locale prefix already removed (`resolveLocale(...).rest`).
+ */
+export function langNav(rows:unknown[],currentLocale:string,restPath:string){
+  const rest=String(restPath??"").replace(/^\/+|\/+$/g,"");
+  return (rows as any[]).map((l)=>({
+    code:String(l.code),
+    name:String(l.name??l.code),
+    current:String(l.code)===currentLocale,
+    url:`/${l.code}${rest?"/"+rest:""}`,
+  }));
 }
 // `latestPosts` used to live here and returned only slug/title/excerpt. The
 // front page now runs the same query a theme route does (`runThemeQuery`), so

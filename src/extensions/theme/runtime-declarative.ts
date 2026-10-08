@@ -8,8 +8,9 @@
  * Worker's security model intact.
  */
 import { Env } from "../../shared/types";
-import { esc, setting, siteInfo, menu, locales, renderBlocks, formatDate, coverFrom } from "../../platform/frontend";
+import { esc, setting, siteInfo, menu, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale } from "../../platform/frontend";
 import { parsePack } from "../../platform/i18n/translate";
+import { resolveLocale } from "../../platform/i18n/resolve";
 import { themePackKey } from "./packs";
 import { resolveTemplate, templateCandidates, type TemplateContext } from "../../rendering/template-resolver";
 import { resolveContentLocale } from "../../platform/i18n/locale-registry";
@@ -247,7 +248,8 @@ export async function runThemeQuery(
   const binds: unknown[] = [siteId, type, status, locale];
 
   if (params.slug) {
-    conditions.push("p.slug = ?");
+    // Rule 58: per-language URL segment — match the COALESCE, never `p.slug`.
+    conditions.push("COALESCE(t.slug, p.slug) = ?");
     binds.push(String(params.slug));
   }
   if (params.ids && typeof params.ids === "string") {
@@ -263,7 +265,7 @@ export async function runThemeQuery(
     binds.push(String((scope.post as any).id));
   }
 
-  const sql = `SELECT p.id, p.slug, p.type, p.status, p.created_at, p.updated_at,
+  const sql = `SELECT p.id, p.slug AS slug_default, COALESCE(t.slug, p.slug) AS slug, p.type, p.status, p.created_at, p.updated_at,
                       t.locale, t.title, t.excerpt, t.content
                FROM posts p JOIN post_translations t ON t.post_id = p.id
                WHERE ${conditions.join(" AND ")}
@@ -413,12 +415,22 @@ export async function buildScope(
   o: ThemeRenderOptions
 ): Promise<Record<string, unknown>> {
   const siteId = o.siteId;
-  const [s, items, ls, strings] = await Promise.all([
+  const [s, items, ls, strings, siteDefault] = await Promise.all([
     siteInfo(env, siteId),
     menu(env, o.locale, siteId),
     locales(env, siteId),
     loadThemeStrings(env, theme, o.locale),
+    defaultLocale(env, siteId),
   ]);
+  // The language switcher. Locale parsing goes through `resolveLocale` (rule
+  // 56 — one definition), and the entries are built only from the locales this
+  // site declares (rule 59 — no site-blind fallback).
+  const langNavRows = langNav(ls as any[], o.locale, resolveLocale(o.path, {
+    codes: ((ls as any[]) ?? []).map((l) => String(l?.code ?? "")).filter(Boolean),
+    defaultLocale: siteDefault,
+  }).rest);
+  // One entry is not a switcher — a monolingual site gets no `lang_nav` at all
+  // rather than a control that points at the page it is already on.
   const navItems = (items as any[]).map((i) => ({
     title: i.title,
     url: i.url,
@@ -426,13 +438,23 @@ export async function buildScope(
   }));
   // Plugins may contribute extra scope keys via the `beforeRender` action by
   // mutating the payload object handed to them.
-  const extra: Record<string, unknown> = { ...(o.extra ?? {}) };
-  const hooks = hooksOf(o);
+  const extra: Record<string, unknown> = { ...(o.extra ?? {}) };  const hooks = hooksOf(o);
   await hooks.boot(env);
   try {
     await hooks.doAction("beforeRender", { env, siteId }, { siteId, locale: o.locale, path: o.path, kind: o.kind, scope: extra });
   } catch {
     /* a failing plugin must not break rendering */
+  }
+  // hreflang entries become absolute here, where the request origin is known —
+  // findContent runs without one. `default` marks the site's default language
+  // so a template can emit `hreflang="x-default"` without a lookup.
+  const post = o.post as any;
+  if (o.origin && post && Array.isArray(post.alternates)) {
+    post.alternates = post.alternates.map((a: any) => ({
+      ...a,
+      url: `${o.origin}${a.url}`,
+      default: a.locale === siteDefault,
+    }));
   }
   return {
     site: { title: s.title, description: s.description, robots: s.robots, locale: o.locale, url: o.origin ?? "" },
@@ -456,6 +478,7 @@ export async function buildScope(
       primary_html: navItems.map((i) => `<a href="${esc(i.url)}">${esc(i.title)}</a>`).join(" "),
     },
     post: o.post ?? null,
+    lang_nav: langNavRows.length > 1 ? langNavRows : [],
     theme: { name: theme.name, version: theme.version, title: theme.manifest.title, strings },
     ...extra,
   };

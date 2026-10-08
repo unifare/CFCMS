@@ -20,7 +20,9 @@ export async function editContent(type, id) {
   const d = await api(scoped(contentPath(type) + "/" + id));
   const x = d.items?.[0] || {};
   state.editing = {
-    id, slug: x.slug || "", title: x.title || "", excerpt: x.excerpt || "",
+    // `slug_own` is this language's own URL segment (NULL = follows the
+    // main-table slug); `slug` is always the row's main-table value.
+    id, slug: x.slug_own || x.slug || "", title: x.title || "", excerpt: x.excerpt || "",
     locale: x.locale || state.defaultLocale, status: x.status || "draft", content: x.content || "[]", meta: x.meta || {},
   };
   state.type = type;
@@ -158,7 +160,7 @@ export async function editor(c, type) {
     <div>
       <div class="panel">
         ${localeField}
-        <div class="field"><label for="slug">Slug</label><input id="slug" value="${attr(x.slug)}" placeholder="auto from title"><span class="hint">Must be unique across languages on this site</span></div>
+        <div class="field"><label for="slug">Slug</label><input id="slug" value="${attr(x.slug)}" placeholder="auto from title"><span class="hint">URL segment for this language — must be unique within the language</span></div>
         <div class="field"><label for="status">Status</label><select id="status">
           ${["draft", "published", "private", "scheduled"].map((s) => `<option${x.status === s ? " selected" : ""}>${s}</option>`).join("")}
         </select></div>

@@ -1,4 +1,4 @@
-import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap,feed}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setPluginTableSync}from "./extensions/plugin/menus";import{syncOwnerTables}from "./extensions/theme/tables";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo,listSites}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
+import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,contentAlternates,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap,feed}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setPluginTableSync}from "./extensions/plugin/menus";import{syncOwnerTables}from "./extensions/theme/tables";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo,listSites}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
 import{resolveLocale,langFromUrl,langFromCookie,langCookie}from "./platform/i18n/resolve";import{setPackProviders}from "./platform/i18n/packs";import{themePackProvider}from "./extensions/theme/packs";import{pluginPackProvider}from "./extensions/plugin/packs";
 // A theme-owned table is read through the same facade the admin screens use.
 // `resolveTableForSite` lives there precisely so that this route and the
@@ -144,6 +144,8 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  if(path==="/robots.txt")return robots(env,request,siteId);
  // `/rss.xml` is an alias: readers and humans both guess at this name, and
  // answering 404 for the more obvious of the two is a needless dead end.
+ // The bare feed serves the site's default language; `/{locale}/feed.xml`
+ // (routed after locale resolution, below) serves that language's feed.
  if(path==="/feed.xml"||path==="/rss.xml"||path==="/atom.xml")return feed(env,request,siteId);
 
  // Front-end paths may or may not carry a locale prefix. `/{locale}/...` is
@@ -177,6 +179,10 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  // A path prefix is already self-describing and gets no cookie.
  const langSetCookie=match.source==="query"?langCookie(locale,365):null;
  const respond=(html:string,template:string,status:number)=>htmlResponse(html,template,status,siteId,langSetCookie);
+ // A prefixed feed: `/{locale}/feed.xml` serves that language's feed. The bare
+ // `/feed.xml` was answered above (default language) because it is matched by
+ // exact path; here the locale prefix has already been consumed.
+ if(rest==="feed.xml")return feed(env,request,siteId,locale);
  const site=await siteInfo(env,siteId);
  // Attach plugin hooks once per isolate. The `beforeRender` action itself is
  // fired from `buildScope`, which has the fully-built render scope in hand.
@@ -254,11 +260,17 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
     const by=resolve.by==="id"?"id":"slug";
     if(capture){
       wantSingle=true;
+      // Rule 58: the URL segment is per language — match the COALESCE, never
+      // `p.slug` alone, or every language that named its own slug 404s.
       post=await env.DB.prepare(
-        `SELECT p.*,t.locale,t.title,t.excerpt,t.content FROM posts p JOIN post_translations t ON t.post_id=p.id
-         WHERE p.site_id=? AND p.type=? AND p.${by==="id"?"id":"slug"}=? AND t.locale=? AND p.status='published' LIMIT 1`
+        `SELECT p.*,t.locale,t.title,t.excerpt,t.content,t.slug AS slug_own FROM posts p JOIN post_translations t ON t.post_id=p.id
+         WHERE p.site_id=? AND p.type=? AND ${by==="id"?"p.id=?":"COALESCE(t.slug,p.slug)=?"} AND t.locale=? AND p.status='published' LIMIT 1`
       ).bind(siteId,postType,capture,locale).first<any>();
-      if(post)kind="single";
+      if(post){
+        post.slug=post.slug_own||post.slug;
+        post.alternates=await contentAlternates(env,siteId,post.id,postType);
+        kind="single";
+      }
     }
     // No capture for this route -> it is a listing even if it declares a type.
   }

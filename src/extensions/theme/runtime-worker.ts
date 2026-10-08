@@ -443,10 +443,10 @@ export async function handleThemeApi(env: Env, request: Request): Promise<Respon
       // Note: `meta` lives in `post_meta`, not on `posts` — selecting it from
       // the posts table is a SQL error, so it is fetched separately.
       const row = await env.DB.prepare(
-        `SELECT p.id, p.slug, p.type, p.created_at, p.updated_at,
+        `SELECT p.id, p.slug AS slug_default, COALESCE(t.slug, p.slug) AS slug, p.type, p.created_at, p.updated_at,
                 t.locale, t.title, t.excerpt, t.content
          FROM posts p JOIN post_translations t ON t.post_id = p.id
-         WHERE p.site_id = ? AND p.type = ? AND p.slug = ? AND t.locale = ? AND p.status = 'published'
+         WHERE p.site_id = ? AND p.type = ? AND COALESCE(t.slug, p.slug) = ? AND t.locale = ? AND p.status = 'published'
          LIMIT 1`
       )
         .bind(siteId, type, slug, locale)

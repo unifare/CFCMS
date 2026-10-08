@@ -259,6 +259,7 @@ $Script:Suites = [ordered]@{
     'template-engine'    = 'tests/suites/template-engine.test.mjs'
     'scaffold'           = 'tests/suites/scaffold.test.mjs'
     'theme-integration'  = 'tests/suites/theme-integration.test.mjs'
+    'locale-url'        = 'tests/suites/locale-url.test.mjs'
     'theme-fixture'      = 'tests/suites/theme-fixture.test.mjs'
     'theme-journal'      = 'tests/suites/theme-journal.test.mjs'
     'theme-mobai'        = 'tests/suites/theme-mobai.test.mjs'

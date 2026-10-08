@@ -1232,6 +1232,94 @@ function declaredHooksForEvents(src) {
 }
 
 // ---------------------------------------------------------------------------
+section("Multilingual and URL rules (AGENTS.md 56-59)");
+// ---------------------------------------------------------------------------
+
+// Rules 56-59 exist because every layer of i18n has a spelling that fails
+// *silently*: a hand-rolled locale regex drifts from the one definition, a
+// `|| "en"` fallback makes a zh-CN site read English rows at 200 OK, a slug
+// filter without COALESCE 404s every language that named its own slug while
+// the default language works fine, and a site-blind SEO endpoint serves
+// site A's sitemap on site B's host. Each guard below scans with comments
+// blanked and each scan is paired with a non-vacuity check, per §12.
+
+{
+  const srcDir = join(ROOT, "src");
+  const files = walk(srcDir, [".ts"]);
+  const blanked = files.map((f) => ({
+    path: relative(ROOT, f).split(sep).join("/"),
+    src: blankComments(read(f)),
+  }));
+
+  // -- Rule 56: the locale-segment matcher is defined exactly once ----------
+  // The BCP-47-ish shape is the fingerprint of "I am parsing a locale off a
+  // path". resolve.ts owns it; a second copy is a second policy that will
+  // disagree with the first.
+  const segRe = /\[\s*a-z\s*\]\s*\{\s*2\s*\}\s*\(\s*\?:\s*-\s*\[A-Za-z\]\s*\{\s*2\s*\}\s*\)\s*\?/;
+  const segOwners = blanked.filter((f) => f.path.startsWith("src/platform/i18n/") === false && segRe.test(f.src));
+  checkEmpty("the locale-segment matcher lives only in platform/i18n (rule 56)", segOwners.map((f) => f.path));
+  check(
+    "rule 56 scan actually saw resolve.ts (non-vacuity)",
+    blanked.some((f) => f.path.replace(/\\/g, "/") === "src/platform/i18n/resolve.ts") &&
+      segRe.test(blankComments(read(join(ROOT, "src/platform/i18n/resolve.ts"))))
+  );
+
+  // -- Rule 57: no hardcoded locale fallbacks outside the i18n layer --------
+  // `|| "en"` reads as "the caller forgot the locale" and answers with a
+  // literal. The blessed path is resolveContentLocale / defaultLocale, both
+  // site-scoped; anything else freezes one language into the code.
+  const fallbackRe = /(\|\||\?\?)\s*["'](en|zh(?:-CN)?|ja|ko|fr|de|es|pt(?:-BR)?)["']/g;
+  const fallbackers = blanked
+    .filter((f) => !f.path.startsWith("src/platform/i18n/"))
+    .map((f) => ({ path: f.path, hits: [...f.src.matchAll(fallbackRe)].length }))
+    .filter((f) => f.hits > 0);
+  checkEmpty("no hardcoded locale fallbacks outside platform/i18n (rule 57)", fallbackers.map((f) => `${f.path} (${f.hits})`));
+
+  // -- Rule 58: slug filters across the translations join are COALESCE'd ----
+  // Every statement that joins post_translations and filters on p.slug must
+  // read COALESCE(t.slug, p.slug) — the per-language URL segment wins, the
+  // main-table slug is the fallback. A bare `p.slug = ?` 404s every language
+  // that named its own slug.
+  const stmtRe = /`[^`]*FROM posts p\s*JOIN post_translations[^`]*`/g;
+  const slugStmts = [];
+  for (const f of blanked) {
+    for (const m of f.src.matchAll(stmtRe)) {
+      const stmt = m[0];
+      if (/(?:AND|WHERE)\s+p\.slug\s*=/i.test(stmt) && !stmt.includes("COALESCE")) {
+        slugStmts.push(`${f.path}: ${stmt.slice(0, 60)}…`);
+      }
+    }
+  }
+  checkEmpty("every posts⋈translations slug filter is COALESCE'd (rule 58)", slugStmts);
+  // Non-vacuity: the scan must be seeing the real join sites (there are at
+  // least four on disk: findContent, the front router's single lookup, the
+  // theme query, and the Worker theme's API). If this drops, the statement
+  // regex has stopped matching and rule 58 is unguarded.
+  const joinCount = blanked.reduce((n, f) => n + [...f.src.matchAll(stmtRe)].length, 0);
+  check(
+    "rule 58 scan actually saw the join sites (non-vacuity)",
+    joinCount >= 3,
+    `found ${joinCount} posts⋈translations statements`
+  );
+
+  // -- Rule 59: SEO endpoints are site-scoped -------------------------------
+  // sitemap/robots/feed each take siteId and use it. A function that "forgot"
+  // the parameter compiles fine and serves the default site on every host —
+  // exactly the bug the SEO endpoints already had once.
+  const seoSrc = blankComments(read(join(ROOT, "src/platform/seo.ts")));
+  const exports = [...seoSrc.matchAll(/export\s+(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/g)];
+  const siteBlind = exports
+    .filter(([, , params]) => !/\bsiteId\b/.test(params))
+    .map(([, name]) => name);
+  checkEmpty("every exported seo.ts function takes siteId (rule 59)", siteBlind);
+  check(
+    "rule 59 scan actually saw the SEO exports (non-vacuity)",
+    exports.length >= 3,
+    `found ${exports.length} exported functions`
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

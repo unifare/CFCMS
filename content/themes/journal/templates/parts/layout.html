@@ -8,7 +8,15 @@
 <meta name="robots" content="{{#if site.robots}}{{site.robots}}{{else}}index,follow{{/if}}">
 <meta name="generator" content="CFPress / {{theme.title}} {{theme.version}}">
 <meta name="color-scheme" content="light dark">
-<meta property="og:type" content="website">
+{{! hreflang. Language variants of this piece (post.alternates) or, on pages
+    without one, the site's locale homepages. Entries are absolute URLs where
+    the platform knows the request origin; `default` marks x-default. }}
+{{#if post}}{{#each post.alternates as alt}}<link rel="alternate" hreflang="{{alt.locale}}" href="{{alt.url}}">
+{{#if alt.default}}<link rel="alternate" hreflang="x-default" href="{{alt.url}}">
+{{/if}}{{/each}}{{else}}{{#if site.url}}{{#each locales as l}}<link rel="alternate" hreflang="{{l.code}}" href="{{site.url}}/{{l.code}}">
+{{/each}}{{/if}}{{/if}}
+<link rel="alternate" type="application/rss+xml" title="{{site.title}}" href="/{{locale}}/feed.xml">
+<meta property="og:type" content="{{#if post}}article{{else}}website{{/if}}">
 <meta property="og:title" content="{{page.title}}">
 {{#if page.description}}<meta property="og:description" content="{{page.description}}">{{/if}}
 <meta property="og:site_name" content="{{site.title}}">

@@ -286,6 +286,36 @@ KV 镜像在免费计划上纯属写入放大器。这类能力一律走**开关
 > （那是它们的主体），所以"出厂默认关"这件事**只有 §10 在守**。删掉 §10，套件照样全绿，
 > 而默认关这件事就再也没人验证了——这是本仓库第十三种假绿的形状。
 
+## 多语言与 URL（规则 56–59）
+
+多语言不只是"存了翻译"——URL、回退、SEO 输出每一层都有一种把错误**静默**藏起来的写法。
+规则 56–59 把这些写法变成红灯。
+
+| 规则 | 说明 |
+|---|---|
+| 56 | locale 前缀解析**只许** `platform/i18n/resolve.ts`（`resolveLocale`/`isKnownLocale`）。任何地方不得自写"取首段当语言"的正则或 split |
+| 57 | 内容语言回退**只许** `resolveContentLocale` 一处；`src/platform/i18n/` 之外禁止 `\|\| "en"` / `?? "zh-CN"` 式的硬编码 locale 兜底 |
+| 58 | 凡 SQL 同时触及 `posts p JOIN post_translations` 并按 slug 过滤，**必须** `COALESCE(t.slug, p.slug)`，不得只匹配 `p.slug` |
+| 59 | SEO 端点（sitemap/robots/feed）**必须**接收并使用 `siteId`；多语言输出（hreflang/feed/切换器）只能列**该站点声明**的语言 |
+
+**为什么 58 是硬规则**：migration 0016 起 slug 按语言——`posts.slug` 是默认语言值兼全行回退，
+`post_translations.slug` 是本语言自己的 URL 段（NULL = 跟随主表）。凡是漏掉 COALESCE 的查询，
+**每个给自己起了名字的语言全部 404**，而默认语言一切正常——这是最典型的"我只测了默认语言"缺陷。
+写作路径的判别：`p.slug` 只在「L 是站点默认语言」或「该行没有其他语言的翻译行」时才允许被改写
+（两种存储形态都合法：兄弟行共享 `lang_group`，或单行多翻译）。
+
+**为什么 56/57 要封"另一种写法"**：回退阶梯写在两处 = 两处各错一半；
+`|| "en"` 散落在调用点 = zh-CN 站**静默读写英文行**，页面照常 200，
+只有内容语言不对——观测面上和"没做翻译"一模一样。
+
+**为什么 59 存在**：`/sitemap.xml` 曾在站点解析之前匹配，第二个站点拿到的是默认站的站点地图；
+feed/hreflang 把别的站点的语言列出去是同样的病。守卫在
+`tests/suites/architecture.test.mjs`（四道，具名），注入验证在 `tests/tools/_locale-url-inject.mjs`。
+
+**一键门禁**：`npm run gate` = 架构测试 + 清单校验 + schema 作用域 + locale-url 注入（全为可移植的
+node 直调）。它**不含** `tsc --noEmit`——因为 lib.dom 与 workers-types 的既有上游冲突会淹没退出码——
+所以推送前的完整纪律是 **`tsc --noEmit`（src/ 0 错误）+ `npm run gate`**；红灯的提交不许推。
+
 ## 守卫失效记录（READ THIS）
 
 `tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。

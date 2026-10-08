@@ -192,14 +192,24 @@ async function savePost(
     /* plugin failure must not block a content save */
   }
   const entityId = id ?? `${kind}_${await randomId()}`;
-  const slug = String(body.slug ?? "").trim() || entityId;
-  const status = String(body.status ?? "draft");
-  const publishAt = body.publish_at ? Number(body.publish_at) : null;
   // The locale to write. Falling back to a literal `"en"` was wrong for the
   // same reason `siteId = "default"` was: on a site whose default language is
   // `zh-CN`, a client that omits `locale` would silently author an English
   // translation. The fallback belongs to the site, so it is looked up.
-  const locale = String(body.locale ?? "").trim() || (await siteDefaultLocale(env, siteId));
+  const defaultLocale = await siteDefaultLocale(env, siteId);
+  const locale = String(body.locale ?? "").trim() || defaultLocale;
+  const isDefaultLocale = locale === defaultLocale;
+  // The slug a client sends is the URL segment *for the locale being saved*.
+  // `posts.slug` keeps its meaning as the default-language slug (repo i18n
+  // invariant: the main table holds default-language values), so only a
+  // default-locale save may change it. Per-locale values live in
+  // `post_translations.slug`; NULL there means "follow the main table".
+  // `undefined` (field absent) leaves the translation's slug untouched; an
+  // empty string clears the override so the URL follows the main table.
+  const slugGiven = body.slug !== undefined;
+  const tSlug = String(body.slug ?? "").trim();
+  const status = String(body.status ?? "draft");
+  const publishAt = body.publish_at ? Number(body.publish_at) : null;
   const title = String(body.title ?? "");
   const excerpt = String(body.excerpt ?? "");
   const content = typeof body.content === "string" ? body.content : JSON.stringify(body.content ?? []);
@@ -220,23 +230,64 @@ async function savePost(
     return ok({ error: "id belongs to another site" }, 409);
   }
   const isCreate = !existingPost;
+  // An explicitly sent slug must be free *in this language*: two translations
+  // of different posts may not share a URL, while different posts never see
+  // each other's per-locale rows. The main-table check on top covers the
+  // default language, whose slug is also the post's identity.
+  if (tSlug) {
+    const clash = await env.DB.prepare(
+      `SELECT p.id FROM posts p JOIN post_translations t ON t.post_id=p.id
+        WHERE p.site_id=? AND p.type=? AND t.locale=? AND COALESCE(t.slug,p.slug)=? AND p.id<>? LIMIT 1`
+    ).bind(siteId, kind, locale, tSlug, entityId).first<any>();
+    if (clash) return ok({ error: "slug already used in this language" }, 409);
+    if (isDefaultLocale) {
+      const clashMain = await env.DB.prepare(
+        "SELECT id FROM posts WHERE site_id=? AND type=? AND slug=? AND id<>? LIMIT 1"
+      ).bind(siteId, kind, tSlug, entityId).first<any>();
+      if (clashMain) return ok({ error: "slug already used in this language" }, 409);
+    }
+  }
   if (isCreate) {
     // `lang_group` ties the language versions of one piece of content together.
     // A new post starts as its own group of one; a translation added later
     // adopts the existing group (see the i18n/translations endpoint).
     const langGroup = String(body.lang_group ?? "").trim() || entityId;
     await env.DB.prepare("INSERT INTO posts (id, site_id, author_id, type, slug, status, lang_group, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(entityId, siteId, userId, kind, slug, status, langGroup, now(), now()).run();
+      .bind(entityId, siteId, userId, kind, tSlug || entityId, status, langGroup, now(), now()).run();
   } else {
     const old = await env.DB.prepare("SELECT * FROM post_translations WHERE post_id=? AND locale=? LIMIT 1").bind(entityId,locale).first<any>();
     if(old) await createRevision(env,entityId,userId,locale,String(old.title||""),String(old.excerpt||""),String(old.content||""));
-    await env.DB.prepare("UPDATE posts SET slug = ?, status = ?, updated_at = ? WHERE id = ? AND site_id = ?").bind(slug, status, now(), entityId, siteId).run();
+    // Who owns the main-table slug? Two storage shapes exist and both are
+    // legitimate: a language version may be its own `posts` row (the
+    // translations endpoint creates siblings that share a `lang_group`), or
+    // one row may carry several translation rows. In the sibling shape the
+    // saved locale's URL IS this row's `p.slug` and the save must be allowed
+    // to rename it; in the shared shape renaming `p.slug` would move the
+    // *other* languages' URLs (their COALESCE falls through to it). So the
+    // main slug follows the save only when the locale is the site default or
+    // no other locale's translation lives on this row.
+    const others = await env.DB.prepare("SELECT COUNT(*) AS c FROM post_translations WHERE post_id=? AND locale<>?").bind(entityId, locale).first<any>();
+    const ownsMainSlug = isDefaultLocale || Number(others?.c ?? 0) === 0;
+    // ⚠️ The `tSlug || entityId` fallback is CREATE-only. On an update, a save
+    // that omits the slug (a status-only publish, an editor saving just the
+    // body) must not touch the URL at all — rewriting it to the entity id
+    // silently renamed every existing permalink.
+    if (ownsMainSlug && tSlug) {
+      await env.DB.prepare("UPDATE posts SET slug = ?, status = ?, updated_at = ? WHERE id = ? AND site_id = ?")
+        .bind(tSlug, status, now(), entityId, siteId).run();
+    } else {
+      await env.DB.prepare("UPDATE posts SET status = ?, updated_at = ? WHERE id = ? AND site_id = ?")
+        .bind(status, now(), entityId, siteId).run();
+    }
   }
-  const existing = await env.DB.prepare("SELECT id FROM post_translations WHERE post_id = ? AND locale = ? LIMIT 1").bind(entityId, locale).first<any>();
+  const existing = await env.DB.prepare("SELECT id, slug FROM post_translations WHERE post_id = ? AND locale = ? LIMIT 1").bind(entityId, locale).first<any>();
   if (existing) {
-    await env.DB.prepare("UPDATE post_translations SET title=?, excerpt=?, content=?, updated_at=? WHERE id=?").bind(title, excerpt, content, now(), existing.id).run();
+    // `slugGiven` absent → leave the override alone; empty → clear it (NULL
+    // makes the URL follow the main table again).
+    const nextSlug = slugGiven ? (tSlug || null) : (existing.slug ?? null);
+    await env.DB.prepare("UPDATE post_translations SET title=?, excerpt=?, content=?, slug=?, updated_at=? WHERE id=?").bind(title, excerpt, content, nextSlug, now(), existing.id).run();
   } else {
-    await env.DB.prepare("INSERT INTO post_translations (id, post_id, locale, title, excerpt, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(await randomId(), entityId, locale, title, excerpt, content, now(), now()).run();
+    await env.DB.prepare("INSERT INTO post_translations (id, post_id, locale, title, excerpt, content, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(await randomId(), entityId, locale, title, excerpt, content, tSlug || null, now(), now()).run();
   }
   if(publishAt && status === "scheduled") {
     await env.DB.prepare("INSERT INTO scheduled_posts(post_id,publish_at,processed_at) VALUES(?,?,NULL) ON CONFLICT(post_id) DO UPDATE SET publish_at=excluded.publish_at,processed_at=NULL").bind(entityId,publishAt).run();
@@ -259,9 +310,12 @@ async function savePost(
   }
   await bumpContentCache(env, siteId);
   await activity(env, userId, isCreate ? "create" : "update", kind, entityId, { locale, title, status, siteId });
+  // The URL segment this save left the locale with: the override just written,
+  // else the translation's standing override, else the main-table identity.
+  const effectiveSlug = tSlug || existing?.slug || entityId;
   // Notify plugins after the write has landed so they can index/notify.
   try {
-    await doAction("afterSavePost", { env, siteId }, { id: entityId, type: kind, slug, locale, title, status, siteId, created: isCreate });
+    await doAction("afterSavePost", { env, siteId }, { id: entityId, type: kind, slug: effectiveSlug, locale, title, status, siteId, created: isCreate });
   } catch {
     /* never surface a plugin failure to the editor */
   }
@@ -1011,7 +1065,16 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     if (already) return ok({ error: `a ${locale} version already exists`, post_id: already.id }, 409);
 
     const newId = `${source.type}_${await randomId()}`;
-    const slug = await freeSlug(env, siteId, String(source.type), String(source.slug));
+    // A client may name the new version's URL segment. The natural default is
+    // the source slug — slugs are per language now, so /en/blog/hello and
+    // /zh-CN/blog/hello can coexist — but another version may already hold
+    // that segment in this locale, in which case a suffixed one is minted.
+    const desired = String(b.slug ?? "").trim() || String(source.slug);
+    const slugTaken = await env.DB.prepare(
+      `SELECT p.id FROM posts p JOIN post_translations t ON t.post_id=p.id
+        WHERE p.site_id=? AND p.type=? AND t.locale=? AND COALESCE(t.slug,p.slug)=? LIMIT 1`
+    ).bind(siteId, String(source.type), locale, desired).first<any>();
+    const slug = slugTaken ? await freeSlug(env, siteId, String(source.type), desired) : desired;
     const ts = now();
     await env.DB.prepare(
       "INSERT INTO posts(id,site_id,author_id,type,slug,status,lang_group,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)"
@@ -1032,9 +1095,9 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
       content = String(src?.content ?? "");
     }
     await env.DB.prepare(
-      "INSERT INTO post_translations(id,post_id,locale,title,excerpt,content,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)"
+      "INSERT INTO post_translations(id,post_id,locale,title,excerpt,content,slug,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)"
     )
-      .bind(await randomId(), newId, locale, title, excerpt, content, ts, ts)
+      .bind(await randomId(), newId, locale, title, excerpt, content, slug, ts, ts)
       .run();
     await bumpContentCache(env, siteId);
     await activity(env, user.id, "translate", String(source.type), newId, { from: id, locale, mode, site: siteId });
@@ -1203,7 +1266,7 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     }
     if (method === "GET") {
       const row = await env.DB.prepare(`
-        SELECT p.*, t.locale, t.title, t.excerpt, t.content
+        SELECT p.*, t.locale, t.title, t.excerpt, t.content, t.slug AS slug_own
         FROM posts p LEFT JOIN post_translations t ON t.post_id=p.id
         WHERE p.id=? ORDER BY t.locale
       `).bind(id).all();
@@ -1221,7 +1284,7 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     if (method === "PUT") return savePost(env, user.id, id, await jsonBody(request), kind, siteId);
     if (method === "GET") {
       const row = await env.DB.prepare(`
-        SELECT p.*, t.locale, t.title, t.excerpt, t.content
+        SELECT p.*, t.locale, t.title, t.excerpt, t.content, t.slug AS slug_own
         FROM posts p LEFT JOIN post_translations t ON t.post_id=p.id
         WHERE p.id=? ORDER BY t.locale
       `).bind(id).all();
@@ -1235,7 +1298,7 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
   if (path === "search" && method === "GET") {
     const q=String(url.searchParams.get("q")||"").trim(); const locale=await resolveContentLocale(env,siteId,url.searchParams.get("locale"));
     if(!q)return ok({items:[]});
-    const r=await env.DB.prepare(`SELECT p.id,p.type,p.slug,p.status,t.locale,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.status='published' AND t.locale=? AND (t.title LIKE ? OR t.excerpt LIKE ? OR t.content LIKE ?) ORDER BY p.updated_at DESC LIMIT 50`).bind(siteId,locale,`%${q}%`,`%${q}%`,`%${q}%`).all();
+    const r=await env.DB.prepare(`SELECT p.id,p.type,COALESCE(t.slug,p.slug) AS slug,p.status,t.locale,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.status='published' AND t.locale=? AND (t.title LIKE ? OR t.excerpt LIKE ? OR t.content LIKE ?) ORDER BY p.updated_at DESC LIMIT 50`).bind(siteId,locale,`%${q}%`,`%${q}%`,`%${q}%`).all();
     return ok({items:r.results});
   }
 

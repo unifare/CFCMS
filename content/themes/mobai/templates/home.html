@@ -86,7 +86,7 @@
         <div class="side-lede">{{default(theme.strings.side.title, "One email a week, nothing more.")}}</div>
         <p>{{default(theme.strings.side.desc, "Subscribe in any RSS reader.")}}</p>
         <div class="row">
-          <input id="feedUrl" type="text" readonly value="/feed.xml" aria-label="RSS">
+          <input id="feedUrl" type="text" readonly value="/{{locale}}/feed.xml" aria-label="RSS">
           <button class="btn" type="button" id="copyFeed" data-copied="{{default(theme.strings.side.copied, "Feed URL copied")}}">{{default(theme.strings.side.copy, "Copy")}}</button>
         </div>
       </div>
@@ -101,7 +101,7 @@
       {{#if site.description}}<p>{{site.description}}</p>{{/if}}
       <div class="quote">{{default(theme.strings.about.quote, "“Slow is not behind.”")}}</div>
       <div class="hero-cta">
-        <a class="btn" href="/feed.xml">{{default(theme.strings.footer.rss, "RSS feed")}}</a>
+        <a class="btn" href="/{{locale}}/feed.xml">{{default(theme.strings.footer.rss, "RSS feed")}}</a>
         <a class="btn btn-ghost" href="/sitemap.xml">{{default(theme.strings.footer.sitemap, "Sitemap")}}</a>
       </div>
     </div>
@@ -214,7 +214,7 @@
   }
   var copy = document.getElementById("copyFeed");
   if (copy) copy.addEventListener("click", function () {
-    var abs = location.origin + "/feed.xml";
+    var abs = location.origin + "/{{locale}}/feed.xml";
     if (navigator.clipboard) navigator.clipboard.writeText(abs).then(function () { window.mobaiToast(copy.dataset.copied || abs); }, function () { window.mobaiToast(abs); });
     else window.mobaiToast(abs);
   });

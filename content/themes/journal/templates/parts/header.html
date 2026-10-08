@@ -3,6 +3,9 @@
     <a class="brand" href="/{{locale}}">{{site.title}}<span class="brand-dot">.</span></a>
     <nav class="site-nav">
       {{#if menu.primary_html}}{{{menu.primary_html}}}{{/if}}
+      {{! Language switcher — one entry per enabled site locale; the platform
+          omits it entirely on a monolingual site. }}
+      {{#if lang_nav}}<nav class="lang-nav" aria-label="Language">{{#each lang_nav as l}}<a href="{{l.url}}"{{#if l.current}} class="on" aria-current="true"{{/if}}>{{l.code}}</a>{{/each}}</nav>{{/if}}
       <button class="theme-toggle" type="button"
         aria-label="{{#if (contains(locale, "zh"))}}切换明暗主题{{else}}Toggle light and dark theme{{/if}}"
         title="{{#if (contains(locale, "zh"))}}切换明暗主题{{else}}Toggle light and dark theme{{/if}}">

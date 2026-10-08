@@ -473,7 +473,10 @@ async function main() {
   check("both versions now exist", group1.versions.filter((v) => v.exists).map((v) => v.locale).sort(), ["en", "zh-CN"]);
   check("they share one group", group1.group, group0.group);
   check("copied translation starts as a draft", group1.versions.find((v) => v.locale === "en").status, "draft");
-  checkTruthy("copied translation took a free slug", group1.versions.find((v) => v.locale === "en").slug !== "i18n-zh-only");
+  // Slugs are per language (migration 0016): the new version follows the
+  // source slug because /en/blog/x and /zh-CN/blog/x may share a segment.
+  // Uniqueness is enforced per locale on the write paths, not globally.
+  checkTruthy("copied translation follows the source slug", group1.versions.find((v) => v.locale === "en").slug === "i18n-zh-only");
 
   // -- 9b. a self-naming group survives a NULL lang_group -----------------
   // `lang_group` is nullable. A row that has none identifies its group by its

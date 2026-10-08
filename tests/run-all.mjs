@@ -50,6 +50,7 @@ const suites = [
   // the only suite that reads markup back out of a response.
   ["plugin pages (declare -> render)", "suites/plugin-pages.test.mjs"],
   ["theme sandbox (L3)", "suites/theme-worker.test.mjs"],
+  ["locale urls", "suites/locale-url.test.mjs"],
   ["fixture theme", "suites/theme-fixture.test.mjs"],
   ["journal theme", "suites/theme-journal.test.mjs"],
   ["mobai theme", "suites/theme-mobai.test.mjs"],
