@@ -646,6 +646,21 @@ async function mediaUpload(env: Env, userId: string, request: Request, siteId: s
 }
 
 export async function handleApi(env: Env, request: Request): Promise<Response> {
+  try {
+    return await routeApi(env, request);
+  } catch (e) {
+    // Without this the exception escapes to the runtime, which answers with a
+    // platform error page instead of JSON. `state.js` parses that as `{}` and
+    // reports the opaque "Request failed", so the real cause is invisible from
+    // the client and undiagnosable without live logs. Returning the message
+    // keeps the failure legible; `console.error` keeps it in Workers Logs.
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("api error:", message);
+    return ok({ error: message }, 500);
+  }
+}
+
+async function routeApi(env: Env, request: Request): Promise<Response> {
   await bootstrapAdmin(env);
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/v1\/?/, "");

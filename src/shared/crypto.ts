@@ -13,6 +13,27 @@ function fromBase64Url(value: string): Uint8Array {
   return Uint8Array.from(raw, c => c.charCodeAt(0));
 }
 
+/**
+ * PBKDF2 iteration count for **new** hashes.
+ *
+ * Sized against the Cloudflare Workers **free** plan's 10 ms CPU budget per
+ * request, not against OWASP's 600k recommendation. A request that hashes a
+ * password runs exactly one `deriveBits`, and 120k iterations measured ~22 ms
+ * on a dev machine — over budget, so the runtime kills the worker before it
+ * can write anything. The symptom is nasty because it is invisible in code:
+ * `bootstrapAdmin` never finishes, so `site_users` stays empty, and the login
+ * response is a platform error page rather than JSON, which the admin SPA
+ * reports as "Request failed".
+ *
+ * 25k keeps one derivation near 3.5 ms, leaving room for the rest of the
+ * request. A deployment on the paid plan (50 ms, adjustable up to 3000 ms) can
+ * raise this. The count is embedded in every stored hash
+ * (`pbkdf2$<iterations>$salt$hash`), so raising it later does **not**
+ * invalidate existing passwords — `verifyPassword` derives using the count it
+ * reads from the stored value.
+ */
+export const PBKDF2_ITERATIONS = 25000;
+
 export async function randomId(bytes = 16): Promise<string> {
   const data = crypto.getRandomValues(new Uint8Array(bytes));
   return toBase64Url(data);
@@ -22,11 +43,14 @@ export async function hashPassword(password: string, salt?: Uint8Array) {
   const actualSalt = salt ?? crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: actualSalt as unknown as BufferSource, iterations: 120000, hash: "SHA-256" },
+    { name: "PBKDF2", salt: actualSalt as unknown as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     key,
     256
   );
-  return `pbkdf2$120000$${toBase64Url(actualSalt)}$${toBase64Url(new Uint8Array(bits))}`;
+  // The literal must be the same number that was just used: a mismatch here
+  // would make every hash unverifiable, since `verifyPassword` trusts this
+  // field over any default.
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${toBase64Url(actualSalt)}$${toBase64Url(new Uint8Array(bits))}`;
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
