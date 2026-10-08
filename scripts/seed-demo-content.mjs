@@ -116,11 +116,72 @@ const ABOUT = body(
     "run code."),
   b("core/heading", "About this theme"),
   b("core/paragraph",
-    "Aurora is a long-form editorial theme. It exists to show that a theming " +
-    "layer built for constrained runtimes does not have to look constrained: " +
-    "warm paper tones, real typographic hierarchy, a drop cap on the opening " +
-    "paragraph, and an automatic table of contents that appears only when an " +
-    "article is long enough to need one."),
+    "Journal is a reading-first theme. A single centred column, a serif body " +
+    "against a sans-serif chrome, and light and dark palettes that were designed " +
+    "separately rather than inverted from each other. There is no build step, no " +
+    "external font request, and no JavaScript beyond the theme toggle."),
+);
+
+const EDGE = body(
+  b("core/paragraph",
+    "A request for a page reaches a data centre that may be a hundred kilometres " +
+    "from the reader, or ten. It is answered there, in one pass, and nothing is " +
+    "kept warm between requests. That single constraint — no process to reuse, no " +
+    "warm cache to lean on — is what makes the rest of this system look the way " +
+    "it does."),
+  b("core/heading", "What you give up"),
+  b("core/list",
+    "A long-lived connection to a database you control.\n" +
+    "The freedom to run a background job whenever you feel like it.\n" +
+    "The assumption that the same machine will answer the next request."),
+  b("core/heading", "What you get back"),
+  b("core/paragraph",
+    "Latency that does not depend on where the reader happens to be standing, and " +
+    "a deployment that is a single atomic upload rather than a rolling restart. " +
+    "The trade is real and worth naming: you are exchanging the ability to keep " +
+    "state in memory for the guarantee that every request starts from the same " +
+    "known place."),
+  b("core/quote",
+    "Every design decision in this codebase can be traced back to a runtime that " +
+    "forgets you between requests."),
+);
+
+const TEMPLATES = body(
+  b("core/paragraph",
+    "The template language has no arithmetic, no loops you can build yourself, and " +
+    "no way to call out to anything. It is deliberately too small to be a " +
+    "programming language, because the moment it becomes one, every theme becomes " +
+    "an application that has to be maintained."),
+  b("core/heading", "Ten helpers, and that is the whole vocabulary"),
+  b("core/code",
+    "len  default  lower  upper  truncate\n" +
+    "join  number  date  contains"),
+  b("core/paragraph",
+    "Anything that needs a computation happens on the server, before the template " +
+    "is handed a value. Reading time, formatted dates, resolved URLs — all of them " +
+    "arrive ready to print. The template's only job is to decide what goes where."),
+  b("core/heading", "Why this is a feature"),
+  b("core/paragraph",
+    "A theme that can compute is a theme that can be wrong in ways nobody can see. " +
+    "A theme that can only place values can be wrong in exactly one way, and that " +
+    "way shows up the first time you render it."),
+);
+
+const I18N = body(
+  b("core/paragraph",
+    "Content is stored once per language, side by side with the language it is " +
+    "written in. Adding a second language is not a migration: the columns for it " +
+    "already exist, holding the default language's text until something replaces " +
+    "them."),
+  b("core/heading", "The rule that keeps it honest"),
+  b("core/list",
+    "A translation table is never dropped and never emptied.\n" +
+    "A main table only ever gains columns; it never loses one.\n" +
+    "A field holding prose is translatable; a field holding a number is not."),
+  b("core/paragraph",
+    "That last rule is the one people argue about, and it is the one that matters " +
+    "most. A price is not a sentence. Translating it is not a feature, it is a bug " +
+    "waiting to happen at three in the morning."),
 );
 
 const CONTENTS = {
@@ -137,6 +198,27 @@ const CONTENTS = {
     title: "Second Post",
     excerpt: "A shorter note about uniformity of mechanism and variety of output.",
     content: SECOND,
+  },
+  "post_EDGE01aaaaaaaaaaaaaaaa": {
+    kind: "posts",
+    slug: "rendering-at-the-edge",
+    title: "Rendering at the edge, one pass at a time",
+    excerpt: "A runtime that forgets you between requests is not a limitation to work around. It is the design.",
+    content: EDGE,
+  },
+  "post_TMPL02bbbbbbbbbbbbbbbb": {
+    kind: "posts",
+    slug: "a-template-language-small-enough-to-reason-about",
+    title: "A template language small enough to reason about",
+    excerpt: "Ten helpers, no arithmetic, and no way to call out. That is the whole vocabulary, on purpose.",
+    content: TEMPLATES,
+  },
+  "post_I18N03cccccccccccccccc": {
+    kind: "posts",
+    slug: "two-languages-one-row",
+    title: "Two languages, one row",
+    excerpt: "Adding a language should not be a migration, and a price should never be translated.",
+    content: I18N,
   },
   "page_JJEanMucBzmj-l6Lmju3VQ": {
     kind: "pages",

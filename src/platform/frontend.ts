@@ -53,17 +53,55 @@ export async function siteInfo(env:Env,siteId:string){return {title:await settin
  * placeholder glyph on first paint. Returning a ready-to-print string keeps
  * the template free of both problems.
  */
-export function readingTime(html:string, wpm=220){
+export function readingTime(html:string, wpm=220, locale="en"){
   const text=String(html).replace(/<[^>]*>/g," ").replace(/&[a-z]+;|&#\d+;/gi," ");
-  const words=text.split(/\s+/).filter(Boolean).length;
-  return Math.max(1,Math.round(words/wpm))+" min read";
+  // Counting whitespace-delimited words reports "1 min read" for a long
+  // Chinese article, because CJK text has no spaces. CJK characters are
+  // counted separately (at a slower ~350/min) and added to the latin words.
+  const cjk=(text.match(/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/g)||[]).length;
+  const latin=text.replace(/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/g," ").split(/\s+/).filter(Boolean).length;
+  const mins=Math.max(1,Math.round(cjk/350+latin/wpm));
+  // The label is prose the reader sees, so it follows the content language.
+  return /^zh/i.test(locale)?`${mins} 分钟阅读`:`${mins} min read`;
+}
+/**
+ * A ready-to-print date for a piece of content, in the reader's language.
+ *
+ * Formatted server-side for the same reason as `readingTime`: the template
+ * language has no arithmetic and no locale formatting, and `date()` emits ISO
+ * (`2026-10-08`) which is a machine string, not a masthead. The formatter is
+ * memoised per locale because constructing an `Intl.DateTimeFormat` measures
+ * ~0.15 ms while reusing one is ~0.002 ms — ten rows would otherwise spend
+ * 1.5 ms of a free-plan request's 10 ms CPU budget on nothing.
+ *
+ * `timeZone: "UTC"` keeps the printed day stable regardless of which edge
+ * colo renders the page; a blog's publication date should not shift by a day
+ * depending on the reader's latitude.
+ */
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+export function formatDate(secs: unknown, locale: string): string {
+  const n = Number(secs);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const opts: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" };
+  let fmt = dateFormatters.get(locale);
+  if (!fmt) {
+    try { fmt = new Intl.DateTimeFormat(locale, opts); }
+    catch { fmt = new Intl.DateTimeFormat("en", opts); }
+    dateFormatters.set(locale, fmt);
+  }
+  return fmt.format(new Date(n * 1000));
 }
 export async function findContent(env:Env,type:string,slug:string,locale:string,siteId:string){
   const row=await env.DB.prepare(`SELECT p.*,t.locale,t.title,t.excerpt,t.content FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type=? AND p.slug=? AND t.locale=? AND p.status='published' LIMIT 1`).bind(siteId,type,slug,locale).first<any>();
-  if(row){row.html=row.content?renderBlocks(String(row.content)):"";row.reading_time=readingTime(row.html);}
+  if(row){row.html=row.content?renderBlocks(String(row.content)):"";row.reading_time=readingTime(row.html,220,locale);row.date_display=formatDate(row.created_at,locale);}
   return row;
 }
-export async function latestPosts(env:Env,locale:string,siteId:string){const r=await env.DB.prepare(`SELECT p.slug,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type='post' AND p.status='published' AND t.locale=? ORDER BY p.created_at DESC LIMIT 10`).bind(siteId,locale).all();return r.results as any[]}
+export async function latestPosts(env:Env,locale:string,siteId:string){
+  const r=await env.DB.prepare(`SELECT p.slug,p.created_at,t.title,t.excerpt FROM posts p JOIN post_translations t ON t.post_id=p.id WHERE p.site_id=? AND p.type='post' AND p.status='published' AND t.locale=? ORDER BY p.created_at DESC LIMIT 10`).bind(siteId,locale).all();
+  // `created_at` is selected (not just ordered by) so listings can show when a
+  // piece was published; `date_display` is the pre-formatted form of it.
+  return (r.results as any[]).map((p)=>({...p,date_display:formatDate(p.created_at,locale)}));
+}
 /**
  * Header navigation for a site. Menus are looked up by `site_id` when the
  * schema supports it, falling back to the legacy global lookup so pre-0008

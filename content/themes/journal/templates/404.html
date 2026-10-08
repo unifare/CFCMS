@@ -1,0 +1,13 @@
+{{@extends "parts/layout"}}
+{{@section "content"}}
+
+<div class="wrap">
+  <div class="notfound">
+    <p class="code">404</p>
+    <h1>{{#if (contains(locale, "zh"))}}找不到这个页面{{else}}This page doesn't exist{{/if}}</h1>
+    <p>{{#if (contains(locale, "zh"))}}它可能被移动或删除了。{{else}}It may have been moved, or it never existed. Either way, the writing is still where you left it.{{/if}}</p>
+    <p class="back"><a href="/{{locale}}">← {{#if (contains(locale, "zh"))}}返回首页{{else}}Back to the front page{{/if}}</a></p>
+  </div>
+</div>
+
+{{/section}}

@@ -8,7 +8,7 @@
  * Worker's security model intact.
  */
 import { Env } from "../../shared/types";
-import { esc, setting, siteInfo, menu, locales, renderBlocks, latestPosts } from "../../platform/frontend";
+import { esc, setting, siteInfo, menu, locales, renderBlocks, latestPosts, formatDate } from "../../platform/frontend";
 import { resolveTemplate, templateCandidates, type TemplateContext } from "../../rendering/template-resolver";
 import { resolveContentLocale } from "../../platform/i18n/locale-registry";
 import { renderTemplateSource, TemplateError, type RenderOptions } from "../../rendering/template-engine";
@@ -272,6 +272,9 @@ export async function runThemeQuery(
   const rows = await env.DB.prepare(sql).bind(...binds).all();
   const items = (rows.results as any[]) ?? [];
   await attachMeta(env, items);
+  // Listings carry a print-ready date, like single objects do — a route-based
+  // archive should not be the one page where the date is missing.
+  for (const it of items) it.date_display = formatDate(it.created_at, locale);
   return items as QueryRow[];
 }
 

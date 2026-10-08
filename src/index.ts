@@ -179,7 +179,7 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
    const ps=await latestPosts(env,locale,siteId) as any[];
    const r=await renderPage(env,{
      siteId,locale,path:u.pathname,kind:"home",title:site.title,description:site.description,
-     extra:{posts:ps.map((p:any)=>({slug:p.slug,title:p.title,excerpt:p.excerpt,url:`/${locale}/blog/${p.slug}`}))}
+     extra:{posts:ps.map((p:any)=>({slug:p.slug,title:p.title,excerpt:p.excerpt,created_at:p.created_at,date_display:p.date_display,url:`/${locale}/blog/${p.slug}`}))}
    },request);
    return respond(r.html,r.template,r.status);
  };
