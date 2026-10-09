@@ -64,7 +64,7 @@ const suites = [
   ["locale urls", "suites/locale-url.test.mjs"],
   ["fixture theme", "suites/theme-fixture.test.mjs"],
   ["journal theme", "suites/theme-journal.test.mjs"],
-  ["mobai theme", "suites/theme-mobai.test.mjs"],
+  ["default theme", "suites/theme-default.test.mjs"],
   // The launcher parity check is pure text analysis over scripts/cfpress.sh and
   // scripts/cfpress.ps1 — no Worker, no database. It guards the promise those
   // two files make to each other ("one set of actions"), which decays silently

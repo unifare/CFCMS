@@ -36,7 +36,7 @@
 <script>
 (function () {
   try {
-    var saved = localStorage.getItem("mobai-theme");
+    var saved = localStorage.getItem("default-theme");
     var dark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
     var root = document.documentElement;
     root.dataset.theme = dark ? "dark" : "";
@@ -60,7 +60,7 @@
     a reader who lands on a 404 should still be able to switch the lights. }}
 <script>
 (function () {
-  window.mobaiToast = function (t) {
+  window.defaultToast = function (t) {
     var el = document.getElementById("toast");
     if (!el) return;
     el.textContent = t;
@@ -74,7 +74,7 @@
     var dark = root.dataset.theme !== "dark";
     root.dataset.theme = dark ? "dark" : "";
     root.style.colorScheme = dark ? "dark" : "light";
-    try { localStorage.setItem("mobai-theme", dark ? "dark" : "light"); } catch (e) {}
+    try { localStorage.setItem("default-theme", dark ? "dark" : "light"); } catch (e) {}
   });
 })();
 </script>

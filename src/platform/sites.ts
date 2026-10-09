@@ -236,5 +236,10 @@ export async function deleteSite(env: Env, id: string): Promise<{ ok: true } | {
   if (!row) return { error: "site not found" };
   if (row.is_default) return { error: "the default site cannot be deleted" };
   await env.DB.prepare("DELETE FROM sites WHERE id=?").bind(id).run();
+  // A deleted site must stop selecting a theme. `settings.theme.active` is what
+  // theme uninstall checks per site, so leaving the row behind would block the
+  // uninstall of a theme nobody can see or deactivate — the failure surfaces as
+  // "still active on: <deleted site>" with nothing the operator can do about it.
+  await env.DB.prepare("DELETE FROM settings WHERE site_id=? AND key='theme.active'").bind(id).run();
   return { ok: true };
 }

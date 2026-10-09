@@ -350,6 +350,12 @@ async function main() {
 
   // -- 5. settings isolation ----------------------------------------------
   console.log("\n5. Per-site settings");
+  // ⚠️ The default site is real — this suite runs against the shared local D1 —
+  // so the operator's title is saved before the test writes over it and put
+  // back at the end of the section. 9b does the same; leaving either
+  // unrestored is how a test value ended up on the operator's front page.
+  const titleBefore = (await (await req(worker, env, "/api/v1/settings", { headers: auth })).json())
+    .items?.find((x) => x.key === "site.title")?.value ?? "";
   await req(worker, env, "/api/v1/settings", {
     method: "POST", headers: { ...auth, "Content-Type": "application/json" },
     body: JSON.stringify({ key: "site.title", value: "My Shop" }),
@@ -371,6 +377,13 @@ async function main() {
   const sShop = await (await req(worker, env, "/api/v1/settings?site=shop", { headers: auth })).json();
   check("settings scoped to default", sDef.items.find((x) => x.key === "site.title").value, "My Shop");
   check("settings scoped to shop", sShop.items.find((x) => x.key === "site.title").value, "Shop Title");
+
+  if (titleBefore) {
+    await req(worker, env, "/api/v1/settings", {
+      method: "POST", headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "site.title", value: titleBefore }),
+    });
+  }
 
   // -- 6. theme isolation --------------------------------------------------
   console.log("\n6. Per-site theme + CPT isolation");
@@ -500,6 +513,11 @@ async function main() {
   console.log("\n9b. SEO endpoints are site-scoped");
 
   // Give each site a distinct title so the robots output is distinguishable.
+  // ⚠️ The default site is a *real* site here — this suite runs against the
+  // shared local D1 — so whatever it had is saved and put back, otherwise the
+  // operator\x27s site title is silently replaced by a test value.
+  const seoTitleBefore = (await (await req(worker, env, "/api/v1/settings", { headers: auth })).json())
+    .items?.find((x) => x.key === "site.title")?.value ?? "";
   await req(worker, env, "/api/v1/settings", {
     method: "POST", headers: { ...auth, "Content-Type": "application/json" },
     body: JSON.stringify({ key: "site.title", value: "Default Title" }),
@@ -557,6 +575,13 @@ async function main() {
   checkTruthy("feed declares its own url", fdDefaultXml.includes("<atom:link href="));
   checkTruthy("guid is a permalink", fdDefaultXml.includes('isPermaLink="true"'));
   checkTruthy("feed carries the site's own title", fdDefaultXml.includes("Default Title"));
+  // Put the operator's site title back — see the save in 9b above. The default
+  // site is real; leaving a test value here is how "Default Title" ended up on
+  // the operator's front page.
+  await req(worker, env, "/api/v1/settings", {
+    method: "POST", headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "site.title", value: seoTitleBefore }),
+  });
   // The discriminating pair, exactly as in 9b: a feed that ignores `site_id`
   // lists BOTH slugs on every host.
   checkTruthy("default feed lists its own post", fdDefaultXml.includes("/default-post"));

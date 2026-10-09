@@ -504,8 +504,15 @@ async function main() {
       method: "POST", headers: { ...auth, "Content-Type": "application/json" },
       body: JSON.stringify({ id: "pagesite2", name: "Page Site 2" }),
     });
-    // The second site's table is materialised on the next boot for that site.
-    await req(worker, env, "/api/v1/extensions/plugins", { headers: auth });
+    // The second site's table is materialised by the *plugin runtime boot*, not
+    // by the table read. `loadEnabledPlugins` is memoised for `ENABLED_TTL_MS`
+    // (5s) and the fan-out over sites happens only on a cache miss, so a plain
+    // `GET /extensions/plugins` here rides the memo and syncs nothing — the new
+    // site's table then appears only if it already existed, which is exactly how
+    // this assertion used to pass against a polluted database and fail against
+    // a clean one. Re-enabling the plugin resets the memo and re-runs the sync
+    // over every site, including the one just created.
+    await req(worker, env, `/api/v1/extensions/plugins/${PLUGIN}/enable`, { method: "POST", headers: auth });
     const otherPhysical = `plugin_${PLUGIN}_entry`;
     const otherCount = await req(worker, env, "/api/v1/theme-tables/entry?aggregate=count&site=pagesite2", { headers: auth });
     const otherBody = await otherCount.json();

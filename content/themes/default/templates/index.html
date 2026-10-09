@@ -1,1 +1,25 @@
-<!doctype html><html lang="{{site.locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{page.title}} | {{site.title}}</title><meta name="description" content="{{page.description}}"><style>body{font-family:system-ui;max-width:980px;margin:auto;padding:24px}nav{display:flex;gap:16px;margin:20px 0}img{max-width:100%}</style></head><body><header><strong>{{site.title}}</strong><nav>{{menu.primary_html}}</nav></header><main><h1>{{page.title}}</h1>{{#if posts}}<ul class="posts">{{#each posts as post}}<li><h2><a href="{{post.url}}">{{post.title}}</a></h2>{{#if post.excerpt}}<p>{{post.excerpt}}</p>{{/if}}</li>{{/each}}</ul>{{else}}<p>Nothing published yet.</p>{{/if}}</main><footer>{{site.title}}</footer></body></html>
+{{@extends "parts/layout"}}
+{{@section "content"}}
+
+<div class="wrap">
+  <div class="sec-head tight"><h2>{{#if page.title}}{{page.title}}{{else}}{{site.title}}{{/if}}</h2><div class="line"></div></div>
+  {{#if posts}}
+    <div class="grid">
+      {{#each posts as post}}
+        <a class="card" href="{{post.url}}">
+          <div class="card-img">{{#if post.cover}}<img loading="lazy" src="{{post.cover}}" alt="{{post.title}}">{{/if}}</div>
+          <div class="card-body">
+            <div class="card-cat"><span><em>◆</em> {{#if post.meta.category}}{{post.meta.category}}{{else}}{{default(theme.strings.uncategorized, "Uncategorised")}}{{/if}}</span><span>{{#if post.reading_time}}{{post.reading_time}}{{/if}}</span></div>
+            <h3>{{post.title}}</h3>
+            {{#if post.excerpt}}<p>{{post.excerpt}}</p>{{/if}}
+            <div class="card-foot"><span class="avatar">{{#if post.meta.category}}{{truncate(post.meta.category, 1)}}{{else}}文{{/if}}</span>{{#if post.date_display}}<span>{{post.date_display}}</span>{{/if}}</div>
+          </div>
+        </a>
+      {{/each}}
+    </div>
+  {{else}}
+    <p class="empty">{{default(theme.strings.articles.empty, "Nothing published yet.")}}</p>
+  {{/if}}
+</div>
+
+{{/section}}

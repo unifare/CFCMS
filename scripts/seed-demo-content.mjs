@@ -288,7 +288,7 @@ for (const [id, c] of Object.entries(CONTENTS)) {
       content: c.content,
       status: "published",
       // Theme-declared fields (`category`, `tags`) land in `post_meta` and are
-      // what the mobai theme's chips and tag cloud are built from.
+      // what the default theme's chips and tag cloud are built from.
       meta: c.meta,
     }),
   });

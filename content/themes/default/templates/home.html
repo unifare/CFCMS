@@ -215,8 +215,8 @@
   var copy = document.getElementById("copyFeed");
   if (copy) copy.addEventListener("click", function () {
     var abs = location.origin + "/{{locale}}/feed.xml";
-    if (navigator.clipboard) navigator.clipboard.writeText(abs).then(function () { window.mobaiToast(copy.dataset.copied || abs); }, function () { window.mobaiToast(abs); });
-    else window.mobaiToast(abs);
+    if (navigator.clipboard) navigator.clipboard.writeText(abs).then(function () { window.defaultToast(copy.dataset.copied || abs); }, function () { window.defaultToast(abs); });
+    else window.defaultToast(abs);
   });
   apply();
 })();

@@ -1,5 +1,5 @@
 /**
- * The 墨白 MOBAI theme, validated end to end — `content/themes/mobai/`.
+ * The 墨白 MOBAI theme, validated end to end — `content/themes/default/`.
  *
  * ## Why this suite exists
  *
@@ -20,7 +20,7 @@
  * lives: a canonical URL, Open Graph tags, and the `<link rel="alternate">`
  * that is the only thing making `/feed.xml` discoverable.
  *
- * Usage: node tests/suites/theme-mobai.test.mjs
+ * Usage: node tests/suites/theme-default.test.mjs
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -64,7 +64,7 @@ async function bundle(entry, outName) {
   return import(pathToFileURL(tmp).href + "?t=" + Date.now());
 }
 
-const THEME = "mobai";
+const THEME = "default";
 const themeDir = join(root, "content", "themes", THEME);
 const read = (p) => readFileSync(join(themeDir, p), "utf8");
 
@@ -90,8 +90,8 @@ function nest(messages, name) {
 const lookup = (obj, path) => path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 
 async function main() {
-  const { validateManifest } = await bundle("src/extensions/contract/validation.ts", "mobai-validation.mjs");
-  const { renderTemplateSource } = await bundle("src/rendering/template-engine.ts", "mobai-engine.mjs");
+  const { validateManifest } = await bundle("src/extensions/contract/validation.ts", "default-validation.mjs");
+  const { renderTemplateSource } = await bundle("src/rendering/template-engine.ts", "default-engine.mjs");
 
   // The theme's own dictionaries, nested exactly as `buildScope` nests them.
   const zhPack = nest(JSON.parse(read("langs/zh-CN.json")), THEME);
@@ -146,7 +146,7 @@ async function main() {
     cover, meta: { category: "设计", tags: "长阅读,设计系统" }, url: "/zh-CN/blog/hello",
   };
   const base = (over = {}) => ({
-    site: { title: "墨白", description: "一份独立中文博客。", robots: "index,follow", locale: "zh-CN", url: "https://mobai.example" },
+    site: { title: "墨白", description: "一份独立中文博客。", robots: "index,follow", locale: "zh-CN", url: "https://default.example" },
     page: { title: "墨白", description: "一份独立中文博客。", path: "/zh-CN", kind: "home", document_title: "墨白" },
     locale: "zh-CN",
     locales: [{ code: "zh-CN", name: "简体中文", is_default: true }],
@@ -192,8 +192,8 @@ async function main() {
   // pass for the wrong reason.
   const postPage = base({ post, page: { title: post.title, kind: "single", document_title: post.title + " · 墨白", path: "/zh-CN/blog/hello" } });
   const singlePost = await render("single.html", postPage);
-  checkTruthy("canonical is absolute", singlePost.includes('<link rel="canonical" href="https://mobai.example/zh-CN/blog/hello">'), singlePost.match(/<link rel="canonical"[^>]*>/)?.[0] || "(no canonical)");
-  checkTruthy("og:url is absolute", singlePost.includes('<meta property="og:url" content="https://mobai.example/zh-CN/blog/hello">'), singlePost.match(/<meta property="og:url"[^>]*>/)?.[0] || "(no og:url)");
+  checkTruthy("canonical is absolute", singlePost.includes('<link rel="canonical" href="https://default.example/zh-CN/blog/hello">'), singlePost.match(/<link rel="canonical"[^>]*>/)?.[0] || "(no canonical)");
+  checkTruthy("og:url is absolute", singlePost.includes('<meta property="og:url" content="https://default.example/zh-CN/blog/hello">'), singlePost.match(/<meta property="og:url"[^>]*>/)?.[0] || "(no og:url)");
   checkTruthy("og:image uses the cover", singlePost.includes(`<meta property="og:image" content="${cover}">`));
   checkTruthy("the feed is discoverable", singlePost.includes('rel="alternate"') && singlePost.includes("/feed.xml"));
   checkTruthy("article:published_time is set", singlePost.includes('property="article:published_time"'));
@@ -241,7 +241,7 @@ async function main() {
   // -- 8. no-flash bootstrap ------------------------------------------------
   section("8. The palette is resolved before first paint");
   const layout = read("templates/parts/layout.html");
-  const scriptAt = layout.indexOf("mobai-theme");
+  const scriptAt = layout.indexOf("default-theme");
   const styleAt = layout.indexOf("parts/styles");
   checkTruthy("the bootstrap reads localStorage", scriptAt > -1);
   checkTruthy("it runs before the stylesheet", scriptAt > -1 && styleAt > -1 && scriptAt < styleAt);
