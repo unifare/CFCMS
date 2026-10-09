@@ -629,7 +629,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 98 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
+| architecture | 111 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**规则 66 捆绑主题经 assets 分发：`BUNDLED_THEMES` ↔ `content/themes` 对齐、`public/themes` 逐文件逐字节同步、每个消费点都有兜底、上传/卸载守卫**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
 | _schema-scope | 26 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
@@ -768,10 +768,13 @@ fixture 的那一项**；修正方式是再加一个**同类型**的第二个 ow
 + `deployments status` 证明；要真验证请开浏览器。
 
 - **部署顺序**：`wrangler d1 migrations apply cfpress --remote -c wrangler.local.jsonc`
-  → `wrangler deploy -c wrangler.local.jsonc` → 主题文件有变化时逐个
-  `wrangler r2 object put "cfpress-media/extensions/themes/<name>/<ver>/files/<path>" --file=… --remote`。
+  → `wrangler deploy -c wrangler.local.jsonc`（**捆绑主题文件经 Worker assets 自动带上**：
+  `predeploy` 先跑 `scripts/sync-bundled-themes.mjs` 把 `content/themes/**` 同步进
+  `public/themes/**`，`wrangler deploy` 上传 assets，运行时 `bundledThemeFile` 兜底读——
+  **规则 66**。曾经"主题文件逐个 `wrangler r2 object put`"的那一步已从流程中删除）。
   **迁移必须先于 deploy**（新代码写新列，列不存在即 500；旧代码+新列无害）。
-  ⚠️ **远端 `theme_installs` 有行 ≠ 远端 R2 有文件**（踩过两次的老坑）。
+  ⚠️ **远端 `theme_installs` 有行 ≠ 远端 R2 有文件**（踩过两次的老坑）——对**捆绑主题**
+  这不再是坑（文件走 assets，与 R2 无关）；对**用户上传的主题**依然成立。
 - **远端灌内容**：`wrangler d1 execute cfpress --remote --file=…`。大 SQL 会报
   `{"D1_RESET_DO":true}` → **按 ~4 条语句一批**分次执行。写完 bump
   `content_cache_versions` 让前台缓存失效。

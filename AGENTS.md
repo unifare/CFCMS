@@ -53,7 +53,7 @@
    本仓库已经发生过**十三种**（见下方「守卫失效记录」与「同一意图的两种写法」）；
    十三条压缩成**七层**之后的判据见 `docs/ARCHITECTURE.md` §12「共同盲区」。
    工具（都在 `tests/tools/`，全部用 Worker 线程、内容哈希、`assertPristine`）：
-   `_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 围栏块路径 / 正文命令路径 / 图标名 / 功能开关 / 块 attrs 契约 / 媒体控件 / 词典，**35 个场景**）、
+   `_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 围栏块路径 / 正文命令路径 / 图标名 / 功能开关 / 块 attrs 契约 / 媒体控件 / 词典 / 捆绑主题 assets（规则 66），**42 个场景**）、
    `_launcher-inject.mjs`（启动器两侧对齐 / BOM / stderr 提示 / EOF 退出 / 孤儿套件，**16 个场景**）、
    `_i18n-field-inject.mjs`（字段分类，**6 个场景**）、
    `_plugin-pages-inject.mjs`（声明式后台页面，**10 个场景**）、
@@ -485,6 +485,25 @@ Playwright 的请求上下文在 http 上不发它，每个调用都会 401（�
 吞成空列表，于是搜索框看起来像"没有结果"。两个调用点都犯过。
 现在 `scoped()` **直接抛错**（三行检查，症状从外面完全认不出来，这正是检查值得存在的时候）。
 正确写法：`scoped(\`media?${query}\`)`。
+
+## 捆绑主题经 Worker assets 分发（规则 66）
+
+捆绑主题（`default`、`journal`，定义在 `src/shared/bundled.ts` 的 `BUNDLED_THEMES`）
+曾经**没有分发渠道**：注册行写进了 `theme_installs`，模板文件却只在 R2——而 R2 清空后
+是空的。于是**每次清库/重部署，首页都是 `__fallback__` 壳**，要手工逐个上传 13 个对象
+才能恢复。那是补丁。设计是：
+
+| 规则 | 说明 |
+|---|---|
+| 66a | 捆绑主题运行时经 **ASSETS 绑定**读 `public/themes/**`（`bundledThemeFile`）；R2 只承载用户上传的主题。`content/themes/**` 是源，`public/themes/**` 是同步副本——**两棵树逐文件、逐字节一致**（`scripts/sync-bundled-themes.mjs` 生成；`predeploy` 与两个启动器先跑它再 deploy/dev） |
+| 66b | 每个捆绑名必须对应真实的 `content/themes/<name>/theme.json`；`content/themes/` 下的目录要么捆绑、要么豁免（`fixture` 是测试夹具） |
+| 66c | 主题内容加载的**每个消费点**（`runtime-declarative.ts` 的模板读取 / `activeTheme` 探测 / 语言包读取，以及 `packs.ts`）都必须走 assets 兜底。删掉任意一处兜底 = 对应路径清库后 `__fallback__` 回归（守卫逐点钉住，不是全文搜标识符——全文搜在删一处时依旧绿，注入验证抓过这个） |
+| 66d | 捆绑名**不可被上传覆盖、不可被卸载**（`src/api.ts` 的 "ships with the product" 守卫读 `BUNDLED_THEMES`——不许手抄名单） |
+
+改 `content/themes/` 下任何文件后**必须跑 `node scripts/sync-bundled-themes.mjs`**
+（或直接 `npm run deploy`——`predeploy` 会跑）。守卫在 `architecture.test.mjs`（规则 66 节，
+13 条断言含非空）；注入场景在 `_skeleton-inject.mjs`（删兜底 / 树漂移）；
+行为验证在 `theme-integration.test.mjs` §10（**空 R2 仍渲染 `home`**）。
 
 ## 守卫失效记录（READ THIS）
 

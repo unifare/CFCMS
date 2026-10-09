@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
+import { assetsStub } from "../fixtures/_assets-stub.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -153,7 +154,7 @@ function makeEnv(sqlite) {
       const m = new Map();
       return { async get(k) { return m.has(k) ? m.get(k) : null; }, async put(k, v) { m.set(k, v); }, async delete(k) { m.delete(k); } };
     })(),
-    ASSETS: { async fetch() { return new Response("asset", { status: 200 }); } },
+    ASSETS: assetsStub(),
   };
 }
 
@@ -747,6 +748,49 @@ async function main() {
   // §7 left realestate active; restore the default theme this suite started on,
   // so a later suite reads the state it expects.
   await req(worker, env, "/api/v1/extensions/themes/default/activate", { method: "POST", headers: authHeaders });
+
+  // -- 10. Bundled themes render from assets, not R2 ------------------------
+  console.log("\n10. A wiped R2 still renders the bundled theme");
+  // This is the "no more patching" contract: bundled themes ship through the
+  // Worker's ASSETS binding (public/themes, synced by
+  // scripts/sync-bundled-themes.mjs), so a database wipe — or any state where
+  // R2 holds zero theme files — must still render the homepage through the
+  // real theme templates instead of the __fallback__ shell. Historically the
+  // fallback only lived in R2, and every wipe produced __fallback__ until
+  // someone hand-uploaded 13 objects; a fake ASSETS stub (200 for everything)
+  // made that regression untestable, which is why this suite now serves real
+  // files from disk.
+  const wipedEnv = { ...env, MEDIA: makeR2() };
+  checkTruthy("R2 starts empty for this section", wipedEnv.MEDIA._dump().length === 0);
+  const wipedRes = await req(worker, wipedEnv, "/", { headers: authHeaders });
+  const wipedTpl = wipedRes.headers.get("X-CFPress-Template");
+  // The default theme declares `home` as its front-page template (the template
+  // hierarchy prefers it over `index`), so a real resolution says "home" — the
+  // fallback shell would say "__fallback__".
+  check("empty MEDIA still resolves the active theme's template", wipedTpl, "home");
+  checkTruthy("and it is not the fallback shell", wipedTpl && wipedTpl !== "__fallback__" && wipedTpl !== "__none__");
+  const wipedBody = await wipedRes.text();
+  checkTruthy("the body looks like theme markup, not the shell",
+    wipedBody.includes("<html") && !wipedBody.includes("__fallback__"));
+
+  // The other half of the contract: the bundled names are product-owned, so
+  // they cannot be displaced by an upload or removed by an uninstall.
+  const guardFd = new FormData();
+  guardFd.append("file", new File([buildThemeZip("default")], "default.zip", { type: "application/zip" }));
+  const guardRes = await req(worker, env, "/api/v1/extensions/themes/upload", {
+    method: "POST", headers: authHeaders, body: guardFd,
+  });
+  const guardBody = await guardRes.json();
+  check("uploading over a bundled name is refused", guardRes.status, 400);
+  checkTruthy("and the refusal says why", String(guardBody.error || "").includes("ships with the product"));
+  const unRes = await req(worker, env, "/api/v1/extensions/themes/default", { method: "DELETE", headers: authHeaders });
+  const unBody = await unRes.json();
+  check("uninstalling a bundled theme is refused", unRes.status, 400);
+  checkTruthy("and the refusal says why", String(unBody.error || "").includes("ships with the product"));
+  // The refused uninstall must not have removed the install row either —
+  // a 400 that still mutated state would be worse than a 500.
+  check("the bundled theme is still installed",
+    sqlite.prepare("SELECT COUNT(*) AS n FROM theme_installs WHERE name='default'").get().n, 1);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

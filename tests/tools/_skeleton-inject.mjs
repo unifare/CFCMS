@@ -482,11 +482,37 @@ const SCENARIOS = [
     after: [''],
     runs: [["tests/suites/theme-integration.test.mjs", "its capability grants are gone"]],
   },
+  // --- rule 66: bundled themes ship through Worker assets -------------------
+  {
+    label: "declarative template loading loses the bundled-assets fallback",
+    // The whole reason a wiped database used to render `__fallback__`: the
+    // R2 miss threw away the request instead of falling through to the
+    // worker assets. The structural guard must go red on exactly this.
+    file: join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
+    before: [`  const text = obj ? await obj.text() : await bundledThemeFile(env, theme.name, \`templates/\${name}.html\`);`],
+    after: [`  const text = obj ? await obj.text() : null;`],
+    runs: [["tests/suites/architecture.test.mjs", "every theme-content consumer falls back to bundled assets (rule 66c)"]],
+  },
+  {
+    label: "the synced assets tree drifts from content/themes",
+    // A template edited in `content/` but never synced ships stale markup
+    // from `public/` — invisible until someone compares bytes. The
+    // byte-identity guard is the pin; this proves it can fail. The anchor is
+    // the file's first line (`{{@extends "parts/layout"}}`), replaced by a
+    // drifted copy so the trees no longer agree byte-for-byte.
+    file: join(ROOT, "public/themes/default/templates/home.html"),
+    before: ['{{@extends "parts/layout"}}'],
+    after: ['{{@extends "parts/layout"}}{{!-- drift: content/ was edited, public/ never re-synced --}}'],
+    runs: [["tests/suites/architecture.test.mjs", "every synced theme file is byte-identical to its source"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
 const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "src/shared/features.ts"),
+  join(ROOT, "src/shared/bundled.ts"),
+  join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
+  join(ROOT, "public/themes/default/templates/home.html"),
   join(ROOT, "src/api.ts"),
   join(ROOT, "src/extensions/contract/hooks.ts"),
   join(ROOT, "AGENTS.md"),

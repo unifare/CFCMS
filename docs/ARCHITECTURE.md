@@ -2134,6 +2134,23 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    c) **同步必须修复它自己写下的映射**：回读 `i18n_table`，非空就 `CREATE TABLE IF NOT EXISTS`（幂等）
    ⚠️ `scoped(path)` 的参数必须是路径：`scoped("media&page=1")` → `media&page=1?site=default`
       不匹配任何路由 → 404（在选择器里被吞成空列表 = "搜索无结果"）。`scoped()` 现在直接抛错
+
+【捆绑主题经 Worker assets 分发】（AGENTS.md 规则 66）
+66. 捆绑主题（`BUNDLED_THEMES`，`src/shared/bundled.ts`）的模板/语言文件**经 ASSETS 绑定
+    分发**，运行时从 `public/themes/**` 读（`bundledThemeFile`），R2 只承载用户上传的主题
+   a) 每个捆绑名必须对应真实的 `content/themes/<name>/theme.json`（清单 name 一致）；
+      `content/themes/` 下的目录要么捆绑、要么在豁免名单（`fixture`——测试夹具）
+   b) `public/themes/**` 与 `content/themes/**` **逐文件、逐字节一致**——由
+      `scripts/sync-bundled-themes.mjs` 生成（`predeploy` 与两个启动器都会先跑它）；
+      两棵树不同步 = 用旧模板上线 = 架构测试红
+   c) 主题内容加载的**每个消费点**（`runtime-declarative.ts` 的模板读取 / `activeTheme`
+      探测 / 语言包读取，以及 `packs.ts`）都必须走 assets 兜底；删掉任意一处 = 清库后
+      该路径退回 `__fallback__`（历史上 R2 是唯一来源，每次清库都要手工逐个上传 13 个
+      对象才能恢复——那是补丁，不是设计）
+   d) 捆绑名**不可被上传覆盖、不可被卸载**（`src/api.ts` 两处 "ships with the product"
+      守卫读 `BUNDLED_THEMES`，不许抄一份名单）
+   反向验证：`_skeleton-inject.mjs`（删兜底 / 两棵树漂移 → 对应断言必须变红）；
+   行为验证：`theme-integration.test.mjs` §10（空 R2 仍渲染 `home`，非 `__fallback__`）
 ```
 
 ---

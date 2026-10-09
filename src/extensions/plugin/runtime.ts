@@ -1,5 +1,6 @@
 import { Env } from "../../shared/types";
 import { randomId } from "../../shared/crypto";
+import { BUNDLED_THEMES, bundledThemeFile } from "../../shared/bundled";
 import { isCapability } from "../contract/capabilities";
 import type { ChannelMessage, ChannelSendResult } from "../contract/channels";
 import { readChannelConfig, deliverNotification } from "./notify";
@@ -356,12 +357,29 @@ export async function seedBundledExtensions(env: Env) {
     .bind("plugin_example", "example", plugin.title, plugin.version, 0, JSON.stringify(plugin), now, now)
     .run()
     .catch(() => {});
-  const theme = { name: "default", title: "CFPress Default", version: "1.0.0", supports: ["blocks", "menus", "widgets"], templates: ["index", "home", "single", "page", "archive", "404"] };
-  await env.DB
-    .prepare(`INSERT OR IGNORE INTO theme_installs(id,name,title,version,active,manifest,installed_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`)
-    .bind("theme_default", "default", theme.title, theme.version, 1, JSON.stringify(theme), now, now)
-    .run()
-    .catch(() => {});
+  // Bundled themes are registered from their real `theme.json`, read out of
+  // the worker assets — the very copy the front end renders from. The old
+  // hard-coded manifest drifted silently from what actually renders: the
+  // registry said "CFPress Default" while every page said 墨白 MOBAI, and the
+  // templates[] list activation applied came from that fiction too.
+  // Upsert (not INSERT OR IGNORE) because nothing else may write these rows:
+  // `uploadExtension` refuses bundled names, so this stays the authority.
+  for (const name of BUNDLED_THEMES) {
+    let manifest: any = null;
+    try {
+      const raw = await bundledThemeFile(env, name, "theme.json");
+      if (raw) manifest = JSON.parse(raw);
+    } catch {
+      manifest = null;
+    }
+    if (!manifest?.name) continue;
+    await env.DB
+      .prepare(`INSERT INTO theme_installs(id,name,title,version,active,manifest,installed_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(name) DO UPDATE SET title=excluded.title,version=excluded.version,manifest=excluded.manifest,updated_at=excluded.updated_at`)
+      .bind(`theme_${name}`, name, String(manifest.title ?? name), String(manifest.version ?? "1.0.0"), name === "default" ? 1 : 0, JSON.stringify(manifest), now, now)
+      .run()
+      .catch(() => {});
+  }
 }
 export async function shortcode(env: Env, name: string, attrs: any, content: string, siteId?: string) {
   const row = await env.DB.prepare("SELECT enabled,config FROM shortcodes WHERE name=?").bind(name).first<any>();

@@ -1,0 +1,13 @@
+{
+  "name": "journal",
+  "title": "Journal",
+  "version": "1.0.0",
+  "author": "CFPress",
+  "description": "A modern editorial blog theme: a reading-first serif column, quiet sans-serif chrome, light and dark palettes that both ship, and a front page that leads with the newest piece. No build step, no external fonts, no JavaScript beyond the theme toggle.",
+  "supports": ["blocks", "menus", "widgets"],
+
+  "templates": ["index", "home", "single", "page", "archive", "404"],
+  "parts": ["layout", "styles", "header", "footer"],
+
+  "locales": ["en", "zh-CN"]
+}

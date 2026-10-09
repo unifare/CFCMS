@@ -11,6 +11,7 @@ import { safeZipPath, sha256 } from "./extensions/security";
 import { createRevision, autosave } from "./platform/revisions";
 import { requirePermission, can } from "./platform/permissions";
 import { bumpContentCache } from "./shared/cache";
+import { BUNDLED_THEMES } from "./shared/bundled";
 import { featureSnapshot, inheritedValue, truthy, FEATURE_SETTINGS_KEY, FEATURE_SWITCHES, type FeatureSwitch } from "./shared/features";
 import { clearOwnerMenusAllSites, listAdminMenuGroups } from "./platform/admin-menus";
 import { clearPluginMenus } from "./extensions/plugin/menus";
@@ -368,6 +369,12 @@ async function uploadExtension(env:Env,userId:string,request:Request,type:"plugi
   if(!manifestEntry)return ok({error:`${type}.json not found`},400);
   let manifest:any;try{manifest=JSON.parse(new TextDecoder().decode(manifestEntry[1]))}catch{return ok({error:"invalid manifest JSON"},400)}
   let meta:any;try{meta=validateManifest(manifest,type)}catch(e:any){return ok({error:e?.message||"invalid manifest"},400)}
+  // A bundled theme's files ship inside the worker assets, and the assets copy
+  // is the authority: `bundledThemeFile` is consulted on every R2 miss, so an
+  // uploaded override would be silently shadowed while the registry claimed
+  // the upload had won. Refuse rather than pretend — the fork should ship under
+  // its own name.
+  if(type==="theme"&&(BUNDLED_THEMES as readonly string[]).includes(String(meta.name)))return ok({error:`"${meta.name}" ships with the product; upload your variant under a different name`},400);
   const checksum=await sha256(await file.arrayBuffer());
   const packageKey=`extensions/${type}s/${meta.name}/${meta.version}/${checksum}.zip`;
   await env.MEDIA.put(packageKey,file.stream(),{httpMetadata:{contentType:"application/zip",cacheControl:"private, max-age=0"},customMetadata:{type,name:meta.name,version:meta.version}});
@@ -794,6 +801,9 @@ async function mediaRowForWrite(
  * admin believes exists and cannot load.
  */
 async function uninstallTheme(env: Env, userId: string, name: string) {
+  // A bundled theme has no R2 package to remove and its files come back with
+  // the next deploy anyway; uninstalling it would only pretend to work.
+  if((BUNDLED_THEMES as readonly string[]).includes(name)) return ok({error:`"${name}" ships with the product and cannot be uninstalled`},400);
   const row=await env.DB.prepare("SELECT name,version FROM theme_installs WHERE name=?").bind(name).first<any>();
   if(!row) return ok({error:"theme not found"},404);
   const active=await env.DB.prepare("SELECT site_id FROM settings WHERE key='theme.active' AND value=?").bind(name).all();

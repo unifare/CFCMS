@@ -1719,6 +1719,167 @@ section("The autosave timer has one cleanup path (rule 64)");
 }
 
 // ---------------------------------------------------------------------------
+section("Bundled themes ship through Worker assets (rule 66)");
+// ---------------------------------------------------------------------------
+
+/**
+ * Rule 65 exists because bundled themes used to have **no distribution
+ * channel**: `seedBundledExtensions` wrote a registry row, but the actual
+ * template/lang files only ever lived in R2 — and R2 starts empty. Every
+ * database wipe therefore produced a homepage stuck in the `__fallback__`
+ * shell at HTTP 200 until someone hand-uploaded the theme files object by
+ * object; the "fix" was a manual `deploy-theme.mjs` run after every reset,
+ * which is a patch, not a design.
+ *
+ * The design: bundled themes are read at runtime through the Worker's ASSETS
+ * binding (`src/shared/bundled.ts`), served from `public/themes/**` — the
+ * same directory wrangler uploads on every deploy. `content/themes/**` is the
+ * editable source, `public/themes/**` is the synced copy (produced by
+ * `scripts/sync-bundled-themes.mjs`, wired into `predeploy` and both
+ * launchers), and this suite pins the two trees **file-for-file and
+ * byte-for-byte**, so a template edited in `content/` but never synced fails
+ * here instead of quietly serving stale markup in production.
+ *
+ * Paired with the runtime fallback come the ownership guards: the bundled
+ * names cannot be displaced by an upload or removed by an uninstall, because
+ * "uninstall the default theme" would re-create the very fallback this rule
+ * exists to prevent.
+ *
+ * Reverse validation: `tests/tools/_skeleton-inject.mjs` removes the assets
+ * fallback and desynchronises the two trees; the named assertions below must
+ * go red on each defect.
+ */
+{
+  // Parsed from source, not imported: `bundled.ts` sits above shared code that
+  // uses extensionless relative imports, which Node's native TS stripping
+  // cannot resolve — the same reason the schema section below parses
+  // `PLATFORM_SCHEMA` out of `schema.ts` instead of importing it. The parse is
+  // pinned by the non-vacuity check immediately after it.
+  const bundledSrcRaw = read(join(ROOT, "src/shared/bundled.ts"));
+  const listBlock = bundledSrcRaw.match(/export const BUNDLED_THEMES(?::\s*readonly string\[\])?\s*=\s*\[([\s\S]*?)\]\s*(?:as const)?;/);
+  const BUNDLED_THEMES = listBlock
+    ? [...listBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+    : [];
+
+  // -- the registry side -----------------------------------------------------
+  check(
+    "BUNDLED_THEMES was actually parsed (non-vacuity)",
+    Array.isArray(BUNDLED_THEMES) && BUNDLED_THEMES.length >= 1,
+    `got ${Array.isArray(BUNDLED_THEMES) ? BUNDLED_THEMES.length : typeof BUNDLED_THEMES} entries`
+  );
+
+  // Every bundled name must be a real, loadable theme package on disk. A
+  // registry entry with no `theme.json` behind it seeds a theme that can be
+  // activated but never rendered.
+  const missingPackages = BUNDLED_THEMES.filter((n) => {
+    const p = join(ROOT, "content", "themes", n, "theme.json");
+    if (!existsSync(p)) return true;
+    try { return JSON.parse(read(p)).name !== n; } catch { return true; }
+  });
+  checkEmpty("every bundled theme exists as a real package whose manifest name matches", missingPackages);
+
+  // And the reverse direction: a directory under content/themes is either
+  // bundled (seeded + guarded) or explicitly exempt. Without this, a theme
+  // could exist on disk unseeded and unguarded — neither shipped nor
+  // protected — which is exactly the half-state that made the original gap
+  // invisible.
+  const EXEMPT = new Set(["fixture"]); // test fixture: read by suites, not shipped as a product theme
+  const themeDirs = readdirSync(join(ROOT, "content", "themes")).filter((d) =>
+    statSync(join(ROOT, "content", "themes", d)).isDirectory()
+  );
+  check("the content/themes scan found the theme directories (non-vacuity)", themeDirs.length >= 3, themeDirs.join(", "));
+  checkEmpty(
+    "every content/themes directory is bundled or explicitly exempt",
+    themeDirs.filter((d) => !BUNDLED_THEMES.includes(d) && !EXEMPT.has(d))
+  );
+
+  // -- the assets side: the two trees agree ----------------------------------
+  const contentRoot = join(ROOT, "content", "themes");
+  const publicRoot = join(ROOT, "public", "themes");
+  const listFiles = (base) => {
+    if (!existsSync(base)) return [];
+    const out = [];
+    const walkFiles = (dir) => {
+      for (const e of readdirSync(dir)) {
+        const abs = join(dir, e);
+        if (statSync(abs).isDirectory()) walkFiles(abs);
+        else out.push(relative(base, abs).split(sep).join("/"));
+      }
+    };
+    walkFiles(base);
+    return out.sort();
+  };
+  const srcFiles = listFiles(contentRoot);
+  const syncedFiles = listFiles(publicRoot);
+  check("the synced assets tree was actually scanned (non-vacuity)", syncedFiles.length >= 20, `${syncedFiles.length} files under public/themes`);
+
+  const onlyInContent = srcFiles.filter((f) => !syncedFiles.includes(f));
+  const onlyInPublic = syncedFiles.filter((f) => !srcFiles.includes(f));
+  checkEmpty(
+    "public/themes matches content/themes file-for-file (run scripts/sync-bundled-themes.mjs)",
+    [
+      ...onlyInContent.map((f) => `missing from public/themes: ${f}`),
+      ...onlyInPublic.map((f) => `stale in public/themes: ${f}`),
+    ]
+  );
+
+  // Byte-for-byte, not just same names: a template edited in content/ but
+  // never synced would otherwise keep shipping the old markup from public/.
+  const drifted = srcFiles
+    .filter((f) => syncedFiles.includes(f))
+    .filter((f) => read(join(contentRoot, f)) !== read(join(publicRoot, f)));
+  checkEmpty("every synced theme file is byte-identical to its source", drifted);
+
+  // -- the runtime fallback is wired -----------------------------------------
+  // The whole design rests on `bundledThemeFile` being reachable from **every**
+  // place that loads theme content at runtime — which is why the check pins
+  // each consumer site individually rather than testing "the identifier
+  // appears somewhere in the file": the first draft did the latter, and
+  // deleting the fallback in `loadThemeTemplate` alone left the identifier
+  // matched by the probe and the langs reader, so the guard stayed green on a
+  // build where templates render from nothing (caught by
+  // `_skeleton-inject.mjs`, which is exactly what it is for).
+  const runtimeSrc = blankComments(read(join(ROOT, "src/extensions/theme/runtime-declarative.ts")));
+  const packsSrc = blankComments(read(join(ROOT, "src/extensions/theme/packs.ts")));
+  const bundledSrc = blankComments(read(join(ROOT, "src/shared/bundled.ts")));
+  check("the assets reader is defined in shared/bundled.ts", /export async function bundledThemeFile/.test(bundledSrc));
+  check("the assets reader really goes through env.ASSETS (non-vacuity)", /env\.ASSETS\.fetch/.test(bundledSrc));
+
+  const templateFallback = new RegExp(
+    "await bundledThemeFile\\(env, theme\\.name, `templates/\\$\\{name\\}\\.html`\\)"
+  ).test(runtimeSrc);
+  const probeFallback = /await bundledThemeFile\(env, String\(c\.name\), "templates\/index\.html"\)/.test(runtimeSrc);
+  const langsFallback = new RegExp(
+    "await bundledThemeFile\\(env, theme\\.name, `langs/\\$\\{locale\\}\\.json`\\)"
+  ).test(runtimeSrc);
+  const packsFallback = /bundledThemeFile/.test(packsSrc);
+  checkEmpty(
+    "every theme-content consumer falls back to bundled assets (rule 66c)",
+    [
+      ...(templateFallback ? [] : ["runtime-declarative.ts loadThemeTemplate: no assets fallback on R2 miss"]),
+      ...(probeFallback ? [] : ["runtime-declarative.ts activeTheme probe: no assets fallback"]),
+      ...(langsFallback ? [] : ["runtime-declarative.ts loadThemeStrings: no assets fallback on R2 miss"]),
+      ...(packsFallback ? [] : ["packs.ts: no assets fallback"]),
+    ]
+  );
+  check(
+    "the consumer scan actually saw the fallback sites (non-vacuity)",
+    templateFallback && probeFallback && langsFallback && packsFallback,
+    `template=${templateFallback} probe=${probeFallback} langs=${langsFallback} packs=${packsFallback}`
+  );
+
+  // -- the ownership guards ---------------------------------------------------
+  // `ships with the product` is the refusal wording in src/api.ts for both the
+  // upload and the uninstall guard. Two occurrences = both paths guarded;
+  // one occurrence means someone deleted a guard, and a bundled name is
+  // mutable again.
+  const apiSrc = blankComments(read(join(ROOT, "src/api.ts")));
+  check("both bundled-name guards exist in src/api.ts", (apiSrc.match(/ships with the product/g) || []).length >= 2,
+    `found ${(apiSrc.match(/ships with the product/g) || []).length} occurrence(s)`);
+  check("the guards read BUNDLED_THEMES (not a hand-copied list)", /BUNDLED_THEMES/.test(apiSrc));
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

@@ -8,6 +8,7 @@
  * Worker's security model intact.
  */
 import { Env } from "../../shared/types";
+import { bundledThemeFile } from "../../shared/bundled";
 import { esc, setting, siteInfo, menu, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale } from "../../platform/frontend";
 import { parsePack } from "../../platform/i18n/translate";
 import { resolveLocale } from "../../platform/i18n/resolve";
@@ -141,7 +142,12 @@ export async function activeTheme(env: Env, siteId: string): Promise<ActiveTheme
     for (const c of (candidates.results as any[]) ?? []) {
       const probe = `extensions/themes/${c.name}/${c.version}/files/templates/index.html`;
       const obj = await env.MEDIA.get(probe);
-      if (obj) { name = String(c.name); break; }
+      // Bundled themes have no R2 package at all — their index.html ships in
+      // the worker assets. Probing both keeps "can really render" true on a
+      // fresh install where nothing was ever uploaded to R2.
+      if (obj || (await bundledThemeFile(env, String(c.name), "templates/index.html")) !== null) {
+        name = String(c.name); break;
+      }
     }
     if (!name) name = "default";
   }
@@ -166,13 +172,17 @@ export async function activeTheme(env: Env, siteId: string): Promise<ActiveTheme
 }
 
 // ---------------------------------------------------------------------------
-// Template loading (R2)
+// Template loading (R2 for uploaded themes, worker assets for bundled themes)
 // ---------------------------------------------------------------------------
 
 /** R2 key prefix holding a theme version's unpacked files. */
 export function themeFilePrefix(theme: ActiveTheme): string {
   return `extensions/themes/${theme.name}/${theme.version}/files`;
 }
+
+// The bundled-theme assets reader (`bundledThemeFile`) lives in
+// `shared/bundled.ts` — plugin seeding needs it too, and plugin code may not
+// import theme code. Every R2 miss below falls back to it.
 
 /**
  * Load a template by logical name, e.g. `single-product`. `name` may contain
@@ -187,7 +197,9 @@ export async function loadThemeTemplate(
   if (cache?.has(name)) return cache.get(name)!;
   const key = `${themeFilePrefix(theme)}/templates/${name}.html`;
   const obj = await env.MEDIA.get(key);
-  const text = obj ? await obj.text() : null;
+  // R2 only ever holds uploaded themes; a bundled theme's files ship inside
+  // the worker assets, so a miss here is normal for them, not an error.
+  const text = obj ? await obj.text() : await bundledThemeFile(env, theme.name, `templates/${name}.html`);
   cache?.set(name, text);
   return text;
 }
@@ -402,8 +414,11 @@ function nestThemeStrings(messages: Record<string, string>, themeName: string): 
 async function loadThemeStrings(env: Env, theme: ActiveTheme, locale: string): Promise<Record<string, unknown>> {
   try {
     const obj = await env.MEDIA.get(themePackKey(theme as any, locale));
-    if (!obj) return Object.create(null);
-    const pack = parsePack(await obj.text());
+    // Same two-source rule as templates: uploaded themes live in R2, bundled
+    // themes ship their `langs/` inside the worker assets.
+    const raw = obj ? await obj.text() : await bundledThemeFile(env, theme.name, `langs/${locale}.json`);
+    if (!raw) return Object.create(null);
+    const pack = parsePack(raw);
     return pack ? nestThemeStrings(pack, theme.name) : Object.create(null);
   } catch {
     return Object.create(null);

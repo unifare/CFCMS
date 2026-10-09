@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
+import { assetsStub } from "../fixtures/_assets-stub.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -120,7 +121,7 @@ function makeEnv(sqlite, vars = {}) {
       async put(k, v) { media.set(k, v); return { key: k }; },
       async delete(k) { media.delete(k); },
     },
-    ASSETS: { async fetch() { return new Response("asset"); } },
+    ASSETS: assetsStub(),
     ...vars,
   };
 }

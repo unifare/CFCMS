@@ -212,7 +212,9 @@ function Invoke-Dev {
     Assert-Deps
     Write-Head "wrangler dev  ($DevUrl)"
     Write-Dim 'Ctrl-C to stop. First run: apply local migrations first (menu 2) or tables will be missing.'
-    Write-Dim 'If the front page renders __fallback__, the active theme lives in R2 — deploy it (menu 3).'
+    Write-Dim 'Bundled themes ship via Worker assets — syncing them into public/themes first.'
+    & node scripts/sync-bundled-themes.mjs
+    if ($LASTEXITCODE -ne 0) { return $LASTEXITCODE }
     Write-Line ''
     $null = Invoke-Npx wrangler dev --port $DevPort --ip $DevHost
     return $LASTEXITCODE
@@ -418,6 +420,9 @@ function Invoke-Deploy {
         if (-not (Test-DeployPrecheck)) { return 3 }
     }
     Assert-Deps
+    Write-Head 'sync bundled themes (content/themes -> public/themes assets)'
+    & node scripts/sync-bundled-themes.mjs
+    if ($LASTEXITCODE -ne 0) { return $LASTEXITCODE }
     Write-Head 'wrangler deploy'
     $null = Invoke-Npx wrangler deploy
     return $LASTEXITCODE

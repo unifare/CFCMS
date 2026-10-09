@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
+import { assetsStub } from "../fixtures/_assets-stub.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -134,7 +135,7 @@ function makeEnv(sqlite) {
       async put(k, v) { kvWrites.push(k); kv.set(k, v); },
       async delete(k) { kvWrites.push(k); kv.delete(k); },
     },
-    ASSETS: { async fetch() { return new Response("asset", { status: 200 }); } },
+    ASSETS: assetsStub(),
     _kv: kv,
     _kvWrites: kvWrites,
   };

@@ -145,7 +145,8 @@ act_dev() {
   require_wrangler
   head1 "wrangler dev  (http://$DEV_HOST:$DEV_PORT)"
   dim "Ctrl-C to stop. First run: apply local migrations first (menu 2) or tables will be missing."
-  dim "If the front page renders __fallback__, the active theme lives in R2 — deploy it (menu 3)."
+  dim "Bundled themes ship via Worker assets — sync them into public/themes first."
+  node scripts/sync-bundled-themes.mjs || return $?
   say ""
   exec npx --no-install wrangler dev --port "$DEV_PORT" --ip "$DEV_HOST"
 }
@@ -329,6 +330,8 @@ act_deploy() {
     deploy_precheck || return $?
   fi
   require_wrangler
+  head1 "sync bundled themes (content/themes -> public/themes assets)"
+  node scripts/sync-bundled-themes.mjs || return $?
   head1 "wrangler deploy"
   npx --no-install wrangler deploy
 }

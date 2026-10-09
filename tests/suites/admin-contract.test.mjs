@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
+import { assetsStub } from "../fixtures/_assets-stub.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -98,7 +99,7 @@ function makeEnv(sqlite) {
   return {
     DB: makeD1(sqlite), MEDIA: makeR2(),
     CACHE: { async get(k) { return kv.has(k) ? kv.get(k) : null; }, async put(k, v) { kv.set(k, v); }, async delete(k) { kv.delete(k); } },
-    ASSETS: { async fetch() { return new Response("asset"); } },
+    ASSETS: assetsStub(),
   };
 }
 

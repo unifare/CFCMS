@@ -1,0 +1,29 @@
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <a class="brand" href="/{{locale}}"><span class="brand-mark">墨</span>{{site.title}}</a>
+        {{#if site.description}}<p>{{site.description}}</p>{{/if}}
+      </div>
+      <div>
+        <h6>{{default(theme.strings.footer.content, "Content")}}</h6>
+        <a href="/{{locale}}">{{default(theme.strings.footer.all, "All articles")}}</a>
+        <a href="/sitemap.xml">{{default(theme.strings.footer.sitemap, "Sitemap")}}</a>
+      </div>
+      <div>
+        <h6>{{default(theme.strings.footer.subscribe, "Subscribe")}}</h6>
+        <a href="/{{locale}}/feed.xml">{{default(theme.strings.footer.rss, "RSS feed")}}</a>
+        <a href="/robots.txt">{{default(theme.strings.footer.robots, "robots.txt")}}</a>
+      </div>
+      <div>
+        <h6>{{default(theme.strings.footer.about, "About")}}</h6>
+        <a href="/{{locale}}">{{default(theme.strings.footer.home, "Back to the front page")}}</a>
+        <a href="/admin/">{{default(theme.strings.footer.admin, "Admin")}}</a>
+      </div>
+    </div>
+    <div class="copy">
+      <span>{{site.title}}{{#if site.description}} · {{site.description}}{{/if}}</span>
+      <span>{{theme.title}} {{theme.version}}</span>
+    </div>
+  </div>
+</footer>
