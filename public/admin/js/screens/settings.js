@@ -4,6 +4,7 @@
 import { api, scoped, state } from "../state.js";
 import { pageHead } from "../shell.js";
 import { icon } from "../../icons.js";
+import { t } from "../i18n.js";
 import { attr, esc, toast } from "../../ui.js";
 
 export default async function settings(c) {
@@ -19,18 +20,18 @@ export default async function settings(c) {
   }
   const sections = Object.entries(groups).map(([g, rows]) => `<div class="panel" style="margin-bottom:1rem">
       <div class="card-title" style="text-transform:capitalize">${esc(g)}</div>
-      <div class="card-desc" style="margin-bottom:1rem">${rows.length} setting${rows.length === 1 ? "" : "s"}</div>
+      <div class="card-desc" style="margin-bottom:1rem">${esc(t("core.settings.count", "{n} setting(s)", { n: rows.length }))}</div>
       ${rows.map((x) => `<div class="field"><label>${esc(x.key)}</label><input data-key="${attr(x.key)}" value="${attr(x.value)}"></div>`).join("")}
     </div>`).join("");
 
   c.innerHTML = `${pageHead({
-    title: "Settings",
-    sub: `Stored per site · ${site?.name || state.site}`,
-    actions: `<button class="btn primary" data-action="save-settings">${icon("save")}Save all</button>`,
-    crumbs: [{ label: "Tools" }, { label: "Settings" }],
+    title: t("core.nav.settings", "Settings"),
+    sub: t("core.settings.sub", "Stored per site · {site}", { site: site?.name || state.site }),
+    actions: `<button class="btn primary" data-action="save-settings">${icon("save")}${esc(t("core.settings.saveAll", "Save all"))}</button>`,
+    crumbs: [{ label: t("core.nav.tools", "Tools") }, { label: t("core.nav.settings", "Settings") }],
   })}
-  ${sections || `<div class="panel"><div class="empty">This site has no settings yet.</div></div>`}
-  <p class="muted text-sm">Settings are stored per site. Switch sites from the sidebar to edit another one.</p>`;
+  ${sections || `<div class="panel"><div class="empty">${esc(t("core.settings.noneYet", "This site has no settings yet."))}</div></div>`}
+  <p class="muted text-sm">${esc(t("core.settings.storedPerSite", "Settings are stored per site. Switch sites from the sidebar to edit another one."))}</p>`;
 }
 
 document.addEventListener("click", async (e) => {
@@ -39,5 +40,5 @@ document.addEventListener("click", async (e) => {
   for (const el of document.querySelectorAll("[data-key]")) {
     await api(scoped("settings"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: el.dataset.key, value: el.value }) });
   }
-  toast("Settings saved");
+  toast(t("core.settings.saved", "Settings saved"));
 });

@@ -4,6 +4,7 @@
 import { api } from "../state.js";
 import { pageHead, render } from "../shell.js";
 import { icon } from "../../icons.js";
+import { t } from "../i18n.js";
 import { emptyRow, esc, openDialog, toast } from "../../ui.js";
 
 export default async function widgets(c) {
@@ -16,14 +17,19 @@ export default async function widgets(c) {
     </tr>`).join("");
 
   c.innerHTML = `${pageHead({
-    title: "Widgets",
-    sub: "Sidebar widgets rendered by the active theme",
-    actions: `<button class="btn primary" data-action="new-widget">${icon("plus")}Add widget</button>`,
-    crumbs: [{ label: "Appearance" }, { label: "Widgets" }],
+    title: t("core.nav.widgets", "Widgets"),
+    sub: t("core.widgets.sub", "Sidebar widgets rendered by the active theme"),
+    actions: `<button class="btn primary" data-action="new-widget">${icon("plus")}${esc(t("core.widgets.add", "Add widget"))}</button>`,
+    crumbs: [{ label: t("core.nav.appearance", "Appearance") }, { label: t("core.nav.widgets", "Widgets") }],
   })}
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>Sidebar</th><th>Type</th><th>Title</th><th>Order</th></tr></thead>
-    <tbody>${rows || emptyRow(4, "No widgets.")}</tbody>
+    <thead><tr>
+      <th>${esc(t("core.widgets.colSidebar", "Sidebar"))}</th>
+      <th>${esc(t("core.widgets.colType", "Type"))}</th>
+      <th>${esc(t("core.widgets.colTitle", "Title"))}</th>
+      <th>${esc(t("core.widgets.colOrder", "Order"))}</th>
+    </tr></thead>
+    <tbody>${rows || emptyRow(4, t("core.widgets.none", "No widgets."))}</tbody>
   </table></div>`;
 }
 
@@ -31,19 +37,19 @@ document.addEventListener("click", async (e) => {
   const a = e.target.closest("[data-action]");
   if (a?.dataset.action !== "new-widget") return;
   const v = await openDialog({
-    title: "Add a widget",
-    confirmLabel: "Add widget",
+    title: t("core.widgets.addTitle", "Add a widget"),
+    confirmLabel: t("core.widgets.add", "Add widget"),
     fields: [
-      { name: "title", label: "Widget title", placeholder: "About this site" },
-      { name: "widget_type", label: "Type", type: "select", value: "text", options: [
-        { value: "text", label: "Text" }, { value: "html", label: "HTML" },
-        { value: "recent-posts", label: "Recent posts" }, { value: "menu", label: "Menu" },
+      { name: "title", label: t("core.widgets.fieldTitle", "Widget title"), placeholder: "About this site" },
+      { name: "widget_type", label: t("core.widgets.fieldType", "Type"), type: "select", value: "text", options: [
+        { value: "text", label: t("core.widgets.typeText", "Text") }, { value: "html", label: t("core.widgets.typeHtml", "HTML") },
+        { value: "recent-posts", label: t("core.widgets.typeRecent", "Recent posts") }, { value: "menu", label: t("core.widgets.typeMenu", "Menu") },
       ] },
-      { name: "sidebar", label: "Sidebar", type: "select", value: "sidebar", options: ["sidebar", "footer", "header"] },
+      { name: "sidebar", label: t("core.widgets.fieldSidebar", "Sidebar"), type: "select", value: "sidebar", options: ["sidebar", "footer", "header"] },
     ],
   });
   if (!v) return;
   await api("widgets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) });
-  toast("Widget added");
+  toast(t("core.widgets.added", "Widget added"));
   render();
 });
