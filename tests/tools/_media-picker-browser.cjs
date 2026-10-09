@@ -71,9 +71,15 @@ async function main() {
 
   const consoleErrors = [];
   const failedRequests = [];
+  // Named, not just counted: "a 404 happened" is not a diagnosis, and this run
+  // has already produced one 404 whose only trace was a console line with no URL.
+  const badResponses = [];
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
   page.on("pageerror", (e) => consoleErrors.push(`pageerror: ${e.message}`));
-  page.on("response", (r) => { if (r.status() >= 500) failedRequests.push(`${r.status()} ${r.url()}`); });
+  page.on("response", (r) => {
+    if (r.status() >= 500) failedRequests.push(`${r.status()} ${r.url()}`);
+    if (r.status() >= 400) badResponses.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}${new URL(r.url()).search}`);
+  });
 
   const cookie = "session lives in the page's own jar";
   let postId = null;
@@ -132,11 +138,11 @@ async function main() {
     await page.locator("[data-media-pick]").first().click();
     await page.waitForSelector("#media-picker-host .overlay", { timeout: 5000 });
     check("the dialog opened", await page.locator("#media-picker-host .overlay").count() === 1);
-    // Assert the grid *loaded*, not that the library is empty: whether it is
-    // empty depends on what else this site holds, and an assertion that only
-    // holds on a pristine database is a flake waiting to happen. (The first run
-    // of this script failed here for exactly that reason — it had left a file
-    // behind, so the empty state was correctly absent.)
+    // The grid is filled by an async load that starts when the dialog opens, so
+    // asserting its content straight after `.overlay` appears is a race — the
+    // first request after a cold worker is easily slower than the next
+    // statement. Wait for the load to land, then assert.
+    await page.waitForFunction(() => document.querySelector("#mp-grid")?.textContent.trim().length > 0, null, { timeout: 20000 });
     check("the dialog loads the library from the server",
       (await page.locator("#mp-grid").innerText()).trim().length > 0);
     check("and reports how many files it holds", (await page.locator("#mp-count").innerText()).trim().length > 0);
@@ -217,7 +223,73 @@ async function main() {
     await page.waitForSelector("#media-picker-host .overlay", { state: "detached", timeout: 5000 });
     check("cancelling leaves the field untouched", (await page.locator(".media-field input").first().inputValue()) === "");
 
-    check("no console errors during the run", consoleErrors.length === 0, consoleErrors.slice(0, 4).join(" | "));
+    console.log("\n7. the library screen: tiles, search, inline alt text, delete");
+    // The library screen and the picker must show the same objects, through the
+    // same URL builder — a second way of building `/media/<key>` is a second way
+    // to build a 404 (rule 62). So this section drives the screen itself.
+    const uploaded = [];
+    const png2 = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+      "base64"
+    );
+    await page.evaluate(() => window.go("media"));
+    await page.waitForSelector("#media-drop", { timeout: 15000 });
+    check("the library screen renders its toolbar and drop zone",
+      (await page.locator("#media-q").count()) === 1 && (await page.locator("#media-type").count()) === 1
+      && (await page.locator("#media-drop").count()) === 1);
+
+    // Upload two files through the screen's own control, so the tiles are the
+    // screen's own rendering rather than something the test fabricated.
+    await page.setInputFiles("#upload", [
+      { name: "alpha-acceptance.png", mimeType: "image/png", buffer: png2 },
+      { name: "beta-acceptance.png", mimeType: "image/png", buffer: png2 },
+    ]);
+    await page.waitForFunction(() => document.querySelectorAll("[data-media-row]").length >= 2, null, { timeout: 20000 });
+    check("both uploads render as tiles", await page.locator("[data-media-row]").count() >= 2);
+    check("a tile previews the image through the shared URL builder",
+      (await page.locator('[data-media-row] .media-thumb img[src^="/media/"]').count()) >= 2);
+
+    const lib = await api(page, `/api/v1/media?site=${SITE}&q=acceptance&limit=50`);
+    for (const m of lib.body?.items ?? []) uploaded.push(m.id);
+    check("the screen's uploads are in this site's library", uploaded.length >= 2, `found ${uploaded.length}`);
+
+    // Search narrows the grid (the endpoint has always supported it; the screen
+    // used to show the first page and nothing else).
+    await page.fill("#media-q", "alpha-acceptance");
+    await page.waitForFunction(() => document.querySelectorAll("[data-media-row]").length === 1, null, { timeout: 15000 });
+    check("search narrows the grid to one tile", (await page.locator("[data-media-row]").count()) === 1);
+
+    // Alt text saves in place, and survives a reload — the value is the point,
+    // not the toast.
+    await page.fill(".media-alt", "Acceptance alt");
+    await page.locator(".media-alt").blur();
+    await page.waitForTimeout(600);
+    const alphaId = (await page.locator("[data-media-row]").first().getAttribute("data-media-row"));
+    const afterAlt = await api(page, `/api/v1/media?site=${SITE}&q=alpha-acceptance`);
+    const savedAlt = (afterAlt.body?.items ?? []).find((m) => String(m.id) === String(alphaId))?.alt_text;
+    check("editing alt text in place saves it", savedAlt === "Acceptance alt", `stored alt_text=${JSON.stringify(savedAlt)}`);
+
+    // Delete through the tile's own button, then confirm the dialog.
+    await page.click(`[data-media-del^="${alphaId}|"]`);
+    await page.waitForSelector(".overlay #dlg-ok", { timeout: 5000 });
+    await page.click(".overlay #dlg-ok");
+    await page.waitForFunction((id) => !document.querySelector(`[data-media-row="${id}"]`), alphaId, { timeout: 15000 });
+    check("deleting a tile removes it from the grid", (await page.locator(`[data-media-row="${alphaId}"]`).count()) === 0);
+    const afterDelete = await api(page, `/api/v1/media?site=${SITE}&q=alpha-acceptance`);
+    check("and the row is gone from the library", (afterDelete.body?.items ?? []).length === 0);
+
+    // Clean up whatever the tile's own delete did not already remove. Issuing a
+    // second DELETE for it would log a 404 that reads like a product failure —
+    // the harness has to know what it already did.
+    for (const id of uploaded.filter((x) => String(x) !== String(alphaId))) {
+      try { await api(page, `/api/v1/media/${id}?site=${SITE}`, { method: "DELETE" }); } catch { /* best effort */ }
+    }
+    const leftovers = await api(page, `/api/v1/media?site=${SITE}&q=acceptance`);
+    check("the library screen section cleaned up after itself", (leftovers.body?.items ?? []).length === 0,
+      `left ${(leftovers.body?.items ?? []).length}`);
+
+    check("no console errors during the run", consoleErrors.length === 0,
+      `${consoleErrors.slice(0, 3).join(" | ")}  ||  4xx: ${badResponses.join(", ") || "none"}`);
     check("no 5xx responses during the run", failedRequests.length === 0, failedRequests.slice(0, 4).join(" | "));
   } finally {
     // Self-clean: the row and the object go together, and the fixture post is

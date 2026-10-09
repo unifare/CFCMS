@@ -32,6 +32,23 @@ let failed = 0;
 const failures = [];
 
 function check(name, condition, detail = "") {
+  // The condition must be a **boolean**, for the same reason as in
+  // `architecture.test.mjs`: `check("…", someArray, …)` and
+  // `check("…", someString, …)` both read as assertions and assert nothing,
+  // because a non-empty array and a non-empty string are truthy. Writing this
+  // suite's media section produced three of them in one sitting, which is the
+  // argument for the guard being here too.
+  //
+  // ⚠️ Every suite in this repo has its own `check()`, so this guard is
+  // per-suite — a shared assertion helper would be the real fix, and until then
+  // a suite that has not been visited since is a suite where the mistake is
+  // still silent.
+  if (typeof condition !== "boolean") {
+    const kind = Array.isArray(condition) ? "array" : condition === null ? "null" : typeof condition;
+    throw new TypeError(
+      `check("${name}") needs a boolean condition, got ${kind}: ${String(condition).slice(0, 90)}`
+    );
+  }
   if (condition) {
     passed++;
     console.log(`  ok   ${name}`);
@@ -410,6 +427,7 @@ try {
     // has to be reached directly to be rendered at all — see the last section.
     editor: await import(pathToFileURL(join(tmpDir, "js/screens/editor.js")).href),
     tableForm: await import(pathToFileURL(join(tmpDir, "js/table-form.js")).href),
+    mediaScreen: await import(pathToFileURL(join(tmpDir, "js/screens/media.js")).href),
   };
 } catch (e) {
   bootError = e;
@@ -584,6 +602,57 @@ if (modules && !bootError) {
     state.autosaveTimer !== null && state.autosaveTimer !== undefined);
   await modules.shell.go("dashboard");
   check("and navigating away stops it", state.autosaveTimer === null);
+
+  // -------------------------------------------------------------------------
+  section("The media library screen: paging, filtering and tiles");
+  // -------------------------------------------------------------------------
+  //
+  // The library screen was showing the first page of the list endpoint and
+  // nothing else, so a library of 60 files looked like a library of 50. The
+  // endpoint had supported `page` / `q` / `type` all along. The arithmetic and
+  // the query string live in exported helpers so they are checkable here.
+
+  const { mediaQuery, mediaPageInfo, mediaTileHtml, mediaGridHtml, mediaBodyHtml } = modules.mediaScreen;
+
+  check("the query string asks for a page and a size", mediaQuery({}) === "page=1&limit=24", mediaQuery({}));
+  check("and encodes the search and the MIME prefix",
+    mediaQuery({ q: "a b", type: "image/", page: 3 }) === "page=3&limit=24&q=a%20b&type=image%2F",
+    mediaQuery({ q: "a b", type: "image/", page: 3 }));
+  check("a nonsense page falls back to the first", mediaQuery({ page: "x" }) === "page=1&limit=24", mediaQuery({ page: "x" }));
+
+  const firstPage = mediaPageInfo({ page: 1, limit: 24, total: 50 });
+  check("paging arithmetic knows there is more",
+    JSON.stringify([firstPage.pages, firstPage.hasMore]) === "[3,true]",
+    JSON.stringify([firstPage.pages, firstPage.hasMore]));
+  check("and knows when it is done", mediaPageInfo({ page: 3, limit: 24, total: 50 }).hasMore === false);
+  // A payload with nothing in it must not produce NaN, because `NaN < total` is
+  // false and the "load more" button would simply never appear.
+  const emptyPage = mediaPageInfo({});
+  check("an empty payload yields real numbers",
+    JSON.stringify([emptyPage.page, emptyPage.limit, emptyPage.total, emptyPage.hasMore]) === "[1,24,0,false]",
+    JSON.stringify(emptyPage));
+
+  const row = { id: "mf_9", object_key: "uploads/default/2026/10/shot.png", filename: "shot.png", mime_type: "image/png", size: 2048, alt_text: "A shot" };
+  const tile = mediaTileHtml(row);
+  check("a tile shows the image through the shared URL builder",
+    tile.includes('src="/media/uploads%2Fdefault%2F2026%2F10%2Fshot.png"'), tile.slice(0, 160));
+  check("and carries its alt text", tile.includes('value="A shot"'));
+  check("and its id, for the delegated actions", tile.includes('data-media-alt="mf_9"') && tile.includes("data-media-del="));
+  // `mediaItem()` refuses a row it cannot name, so a junk row produces no tile
+  // rather than a broken one with an empty `src`.
+  check("a row with no object key renders nothing", mediaTileHtml({ id: "x" }) === "", mediaTileHtml({ id: "x" }));
+  check("an empty library renders the empty state",
+    mediaGridHtml([]).includes("No media uploaded yet."), mediaGridHtml([]));
+  check("and the footer reports the totals", mediaBodyHtml([row], { total: 50, hasMore: true }).includes("Showing 1 of 50"));
+
+  // The screen itself: toolbar, drop zone, upload control, empty state.
+  contentEl.innerHTML = "";
+  await modules.screens.SCREENS.media(contentEl);
+  const mediaHtml = contentEl.innerHTML;
+  check("the media screen renders its search and filter",
+    mediaHtml.includes('id="media-q"') && mediaHtml.includes('id="media-type"'), mediaHtml.slice(0, 200));
+  check("a drop zone and an upload control", mediaHtml.includes('id="media-drop"') && mediaHtml.includes('id="upload"'));
+  check("and says the library is empty", mediaHtml.includes('class="empty"'));
 }
 
 if (tmpDir) {

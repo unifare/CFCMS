@@ -2124,6 +2124,16 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    d) 保存/自动保存从 `state.editing.locale` 读语言，不从 DOM 读
    ⚠️ `publish_at` 必须往返（`table-form.js` 的 `toLocalInput`/`fromLocalInput`）；
       丢掉它 = "打开已排期文章再保存"会**静默取消排期**
+
+【主题表的 i18n 侧表】（AGENTS.md 规则 65）
+65. `theme_table_defs.i18n_table` 是门面唯一信任的字段
+   a) 它的**粘性是有意的**（`COALESCE` 保留旧名）：禁用语言应当**隐藏**翻译，
+      而不是重新启用时用主表值**重新播种**（会覆盖已保留的翻译）
+   b) 但粘性 ⇒ 该字段**可以比它的表活得久**（夹具 drop / 手工清理）→ 首次写入报
+      `no such table: …_i18n`（schema 形状的错误，成因是一条陈旧的行）
+   c) **同步必须修复它自己写下的映射**：回读 `i18n_table`，非空就 `CREATE TABLE IF NOT EXISTS`（幂等）
+   ⚠️ `scoped(path)` 的参数必须是路径：`scoped("media&page=1")` → `media&page=1?site=default`
+      不匹配任何路由 → 404（在选择器里被吞成空列表 = "搜索无结果"）。`scoped()` 现在直接抛错
 ```
 
 ---

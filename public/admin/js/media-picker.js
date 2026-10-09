@@ -218,7 +218,7 @@ export async function openMediaPicker({ multiple = false, accept = "image/*", on
 
   const load = async () => {
     try {
-      const payload = await api(scoped("media" + (query ? `&q=${encodeURIComponent(query)}` : "")));
+      const payload = await api(scoped("media" + (query ? `?q=${encodeURIComponent(query)}` : "")));
       items = mediaItemsFromPayload(payload);
     } catch (e) {
       items = [];

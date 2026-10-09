@@ -117,6 +117,7 @@ const REVIEWED = {
   "src/extensions/plugin/notify.ts:108": "UPDATE notification_log … WHERE id=? — the row is this send's own claim, addressed by the PK minted a few lines above for this siteId; ok/error are not identity",
   "src/extensions/theme/runtime-worker.ts:411": "menu_items … WHERE menu_id=? — the menu row was resolved per site (`location='header' AND site_id=?`) two lines above; locale is the remaining filter",
   "src/extensions/theme/tables.ts:383": "UPDATE theme_table_defs WHERE id=? — registry row addressed by its own PK",
+  "src/extensions/theme/tables.ts:404": "SELECT theme_table_defs … WHERE site_id=? AND owner_type=? AND owner_name=? AND logical_name=? — reads back the mapping this same call just wrote, to repair a recorded i18n_table whose table is gone; fully site-scoped",
   "src/platform/frontend.ts:186": "menu_items … WHERE menu_id=? — same reasoning as runtime-worker: the menu row was resolved per site two lines above",
   "src/shared/scheduler.ts:23": "UPDATE posts … WHERE id=? — the site was just read from that very row",
 };

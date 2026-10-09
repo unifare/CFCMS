@@ -223,6 +223,38 @@ try {
   check("it created the business table", synced.map((r) => r.table), ["theme_scopeprobe_item"]);
   check("it created the i18n sidecar (site serves 2 languages)", synced.map((r) => r.i18nTable), ["theme_scopeprobe_item_i18n"]);
 
+  // A recorded sidecar whose table is gone must be repaired, not trusted.
+  //
+  // `i18n_table` is deliberately sticky (`COALESCE` keeps the name when a later
+  // sync is monolingual, so disabling a language hides the translations rather
+  // than re-seeding them). That makes it a claim which can outlive its table —
+  // a fixture that drops generated tables, or an operator tidying up by hand —
+  // and the facade trusts the column, so the failure surfaces as
+  // `no such table: …_i18n` on the first write. That is exactly how this was
+  // found (the menu acceptance script's fixture).
+  db.exec("DROP TABLE theme_scopeprobe_item_i18n");
+  const gone = db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='theme_scopeprobe_item_i18n'").get();
+  check("the sidecar really is gone before the repair (non-vacuity)", gone.n, 0);
+
+  let repairErr = null;
+  try {
+    await syncOwnerTables({ DB: shim }, "theme", "scopeprobe", probeManifest, "default");
+  } catch (e) {
+    repairErr = e?.message ?? String(e);
+  }
+  check("re-syncing after the sidecar vanished does not throw", repairErr, null);
+  const repaired = db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='theme_scopeprobe_item_i18n'").get();
+  check("and the sidecar the registry names is back", repaired.n, 1);
+
+  // The general invariant, stated once: every recorded sidecar exists. A row
+  // naming a table that is not there is the state the facade cannot survive.
+  const recorded = db.prepare("SELECT i18n_table FROM theme_table_defs WHERE i18n_table IS NOT NULL").all();
+  const missingSidecars = recorded
+    .map((r) => r.i18n_table)
+    .filter((name) => db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(name).n === 0);
+  check("every recorded i18n_table exists in the database", missingSidecars, []);
+  check("and the check had something to look at (non-vacuity)", recorded.length > 0, true);
+
   // The same *logical* name under a plugin owner must NOT resolve to the theme's
   // table. This is the whole reason `owner_type` is in the physical prefix, and
   // the assertion is on distinct physical names — a guard that only checked

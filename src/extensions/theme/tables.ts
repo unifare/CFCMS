@@ -341,6 +341,27 @@ export async function syncOwnerTables(
       )
       .run();
 
+    // Repair the mapping we just wrote: if a sidecar is named, it must exist.
+    //
+    // `i18n_table` is sticky on purpose — `COALESCE` keeps the name when this
+    // sync is monolingual, so that disabling a language hides the translations
+    // instead of re-seeding them from the main table on the way back. But that
+    // makes the column a claim that can outlive its table: a test fixture that
+    // drops generated tables, or an operator tidying up by hand, leaves a row
+    // naming a sidecar that is gone. The facade trusts the column, and its
+    // failure mode is `no such table: …_i18n` on the first write — a
+    // schema-shaped error for a stale row, which is how this was found.
+    //
+    // So: whatever the column says, make it true. `CREATE TABLE IF NOT EXISTS`
+    // is idempotent, so the normal path costs one statement and no behaviour
+    // changes.
+    const recorded = await env.DB.prepare(
+      "SELECT i18n_table FROM theme_table_defs WHERE site_id=? AND owner_type=? AND owner_name=? AND logical_name=?"
+    ).bind(siteId, ownerType, ownerName, logical).first<{ i18n_table: string | null }>();
+    if (recorded?.i18n_table && translatable.length) {
+      await env.DB.prepare(i18nTableDdl(recorded.i18n_table, translatable)).run();
+    }
+
     out.push({ logical, table: tableName, i18nTable, created: !existed, i18nCreated, addedColumns });
   }
 

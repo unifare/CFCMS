@@ -941,6 +941,58 @@ input.control:focus {
   .scrim { display: none; }
 }
 
+/* --------------------------------------------------------------------------
+   Media library — a grid of tiles rather than a table.
+
+   A table row can show a filename and a byte count; it cannot show you the
+   picture, and "which of these is the right photo" is the only question this
+   screen exists to answer. Everything below uses the same oklch tokens as the
+   rest of the admin, so it follows the light/dark theme without its own rules.
+   -------------------------------------------------------------------------- */
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.75rem;
+}
+.media-tile {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.media-thumb {
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.media-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.media-file { display: flex; }
+.media-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-alt { width: 100%; margin-top: 0.25rem; font-size: 0.8125rem; }
+.media-tile .toolbar { margin-top: auto; }
+
+/* The drop target is the whole panel, because the thing a user aims at is
+   "somewhere on this screen" rather than a three-pixel border — and the
+   highlight is the only feedback a drop ever gets. */
+.media-drop {
+  border-radius: var(--radius);
+  outline: 2px dashed transparent;
+  outline-offset: 0.5rem;
+  transition: background-color 0.12s ease, outline-color 0.12s ease;
+}
+.media-drop.over { background: var(--accent); outline-color: var(--ring); }
+.media-drop-hint { display: none; margin-bottom: 0.75rem; }
+.media-drop.over .media-drop-hint { display: block; }
+
 @media (max-width: 640px) {
   .cards.cols-4, .cards.cols-2 { grid-template-columns: 1fr; }
   .page { padding: 1rem; }

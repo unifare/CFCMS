@@ -68,8 +68,20 @@ export async function api(path, opts = {}) {
   return data;
 }
 
-/** Append the current site so the API scopes the request. */
+/**
+ * Append the current site so the API scopes the request.
+ *
+ * ⚠️ The path must not already contain a query. `scoped("media&page=1")` used to
+ * produce `media&page=1?site=default`, which matches no route and answers 404 —
+ * and in the media picker that 404 was swallowed into an empty list, so the
+ * search box looked like it had found nothing. Two call sites had it. The check
+ * is three lines and the symptom is unrecognisable from the outside, which is
+ * exactly when a check earns its place.
+ */
 export function scoped(path) {
+  if (path.includes("&") && !path.includes("?")) {
+    throw new Error(`scoped() got a query string, not a path: ${JSON.stringify(path)}`);
+  }
   const sep = path.includes("?") ? "&" : "?";
   return path + sep + "site=" + encodeURIComponent(state.site);
 }
