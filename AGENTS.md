@@ -415,6 +415,14 @@ node 直调）。它**不含** `tsc --noEmit`——因为 lib.dom 与 workers-ty
 
 ⚠️ 媒体屏也曾自己拼三处 `/media/` URL；现在它走 `mediaUrl()`，62b 才有意义。
 
+⚠️ **这个控件有真浏览器验收**：`tests/tools/_media-picker-browser.cjs`（25 条，需要
+`wrangler dev --port 47913`）。它抓到的第一个缺陷就是 Node 侧永远看不见的：
+**选完文件后没有预览**（编辑器为了不丢焦点不重渲染，预览只在渲染时画一次）。
+⚠️ 写这类脚本时**不要用 `context.request` 调后台 API**——会话 cookie 是 `Secure`，
+Playwright 的请求上下文在 http 上不发它，每个调用都会 401（而页面本身是登录的）；
+也不要用 `context.request` 登录，那会把浏览器一起登录掉、登录屏永不出现。
+**走页面自己的 `fetch`**（`page.evaluate`）。
+
 ## 守卫失效记录（READ THIS）
 
 `tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。

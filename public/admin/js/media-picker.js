@@ -120,6 +120,24 @@ export function pickerGridHtml(items, selectedIds, multiple) {
 }
 
 /**
+ * A preview for a media value, or a plain rendering of the URL when it is not
+ * something an `<img>` can show. Pointing `<img>` at a PDF renders a
+ * broken-image box, which reads as "the editor is broken".
+ *
+ * Exported because the picker has to refresh it **in place** after a pick: the
+ * block editor deliberately does not re-render while you type (that would drop
+ * focus), so a preview drawn only at render time would not appear until the
+ * next structural change — the file you just chose would look like it was not
+ * taken.
+ */
+export function mediaPreviewHtml(value) {
+  const v = String(value ?? "").trim();
+  if (!v) return "";
+  if (!isImageUrl(v)) return `<div class="muted text-sm" style="margin-top:.25rem">${esc(v)}</div>`;
+  return `<img src="${attr(v)}" alt="" style="max-width:8rem;max-height:8rem;border-radius:.375rem;margin-top:.375rem">`;
+}
+
+/**
  * The control markup — **the** definition of "a media field".
  *
  * `inputAttrs` is the caller's addressing (`data-block-attr`, `data-meta`, …),
@@ -131,15 +149,12 @@ export function pickerGridHtml(items, selectedIds, multiple) {
 export function mediaFieldHtml({ value = "", multiple = false, label = "", required = false, hint = "", inputAttrs = "" }) {
   const labelHtml = label ? `<label${required ? ' class="req"' : ""}>${esc(label)}</label>` : "";
   const hintHtml = hint ? `<span class="hint">${esc(hint)}</span>` : "";
-  const first = multiple
-    ? String(value ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] ?? ""
-    : String(value ?? "");
-  const preview = !multiple && isImageUrl(first)
-    ? `<img src="${attr(first)}" alt="" style="max-width:8rem;max-height:8rem;border-radius:.375rem;margin-top:.375rem">`
-    : "";
   const input = multiple
     ? `<textarea ${inputAttrs} placeholder="/media/…">${esc(value ?? "")}</textarea>`
     : `<input ${inputAttrs} value="${attr(value ?? "")}" placeholder="/media/…">`;
+  // The preview lives in a slot the picker can refresh without re-rendering the
+  // whole screen. A multi-value field has no single thing to preview.
+  const preview = multiple ? "" : `<span data-media-preview>${mediaPreviewHtml(value)}</span>`;
   return `<div class="media-field" data-media-field data-media-multiple="${multiple ? "1" : "0"}">
     ${labelHtml}
     ${input}
@@ -321,4 +336,9 @@ document.addEventListener("click", async (e) => {
   // custom field is read from `[data-meta]` at save time. No new plumbing.
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+  // ...and refresh the preview in place. The editor does not re-render on every
+  // keystroke (that would drop focus), so without this the file you just chose
+  // would show no thumbnail until the next structural change.
+  const slot = wrapper.querySelector("[data-media-preview]");
+  if (slot && !multiple) slot.innerHTML = mediaPreviewHtml(input.value);
 });

@@ -214,7 +214,14 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 | 新套件 `tests/suites/media-picker.test.mjs`（**31 条**）：URL 形状（**编码后能被读取路径解回同一个 key**）/ 归一化（行与已存值两种输入）/ 坏 payload 不炸对话框 / 控件两种形态与转义 / **"选择器给的 URL，真实渲染器画得出来"** 的闭环（图片与画廊）/ 三个消费点都走共享控件 | ✅ |
 | 架构守卫（+5 条，规则 62）：`data-media-field` / `data-media-pick` / `/media/${encodeURIComponent` **各只出现在 `media-picker.js`**（都配非空断言） | ✅ |
 | `_skeleton-inject.mjs` +3 场景（屏幕自造控件 / 屏幕手拼 URL / URL 不再编码 key）→ **31 场景 0 问题** | ✅ |
+| **真浏览器验收 `tests/tools/_media-picker-browser.cjs`（25 条，连跑两次全绿、自清理）**：真 Chromium 里登录 → 编辑器加图片块 → 打开对话框 → **在对话框里上传** → 选中 → URL 落进字段 → **保存后确认它写在 `url` 而不是 `text`** → 会话内可取到对象、匿名被拒 → 取消路径 | ✅ |
 | 规则 62 写进 `AGENTS.md` + `ARCHITECTURE.md` §10；`core-pack.ts` 新增 8 个 `core.media.*`（en+zh 同步） | ✅ |
+
+**浏览器验收当场抓到的一个真 UX 缺陷**：选完文件后**没有预览**。
+块编辑器为了不丢焦点刻意不在每次输入时重渲染，而预览原本只在渲染时画一次——
+于是"刚选好的图看起来没被采纳"。修法：控件里留一个 `[data-media-preview]` 槽，
+选择器写值后就地刷新它（`mediaPreviewHtml`）。**这类缺陷只有真浏览器点一遍才会现形**，
+Node 侧断言"标记里含有 `<img>`"永远是对的——因为它检查的是模板，不是交互。
 
 **本轮最重要的一条**：**`check()` 现在要求条件是真正的布尔值**。
 这个文件在**两个批次里累计三次**写出恒真断言——集合当条件、`JSON.stringify(...)` 当条件、
@@ -595,9 +602,14 @@ node tests/tools/_i18n-data-inventory.mjs    # 清点所有承载数据的声明
 ```bash
 npx wrangler dev --port 47913 --ip 127.0.0.1     # 另开一个 shell
 node tests/tools/_i18n-browser.cjs                     # 多语言：22 条断言
-node tests/tools/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言（本轮新增）
+node tests/tools/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言
+node tests/tools/_media-picker-browser.cjs             # 媒体控件：25 条断言（批次 16 A3）
 node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 新功能：47 条断言
 ```
+
+⚠️ **`_media-picker-browser.cjs` 的 API 调用必须走页面自己的 `fetch`**（见坑位 43）——
+用 `context.request` 会 401，因为会话 cookie 是 `Secure` 而 Playwright 的请求上下文
+在 http 上不发它。
 
 ⚠️ **浏览器验收必须放在所有测试套件之后跑**（先测试 → 再 `theme:deploy` + 恢复 locale
 → 最后验收）。15 个套件共享同一块本地 D1，幂等清理会清掉 `site_locales` 的 zh-CN 行
@@ -635,6 +647,15 @@ fixture 的那一项**；修正方式是再加一个**同类型**的第二个 ow
 本轮 6 项注入（见 §5 批次 3）全部如期变红。
 
 ## 6b. 线上部署与运维（免费计划）
+
+**当前线上状态（2026-10-09）**：`cfpress.2aass.workers.dev` 已部署到批次 16 全部三个 track，
+远端 D1 已到 **0018**（`wrangler d1 migrations list --remote` 报 "No migrations to apply"）。
+部署前的线上抽查（方案文档里承诺的那一步）结果：**0 个媒体文件、0 处内容引用 `/media/`、1 个站点**——
+所以规则 60 的两条行为变更（要求会话 + key 站点校验）当时**没有任何东西可破坏**。
+⚠️ 一旦开始上传媒体并在内容里引用，`require_session` 默认**开**就意味着前台图片对匿名读者 404
+（规则 60e）；Media 屏里改一行即可放开。
+⚠️ 沙箱内**无法**用 HTTP 验证线上（代理拦截 `*.workers.dev`），只能靠 `wrangler deploy` 输出
++ `deployments status` 证明；要真验证请开浏览器。
 
 - **部署顺序**：`wrangler d1 migrations apply cfpress --remote -c wrangler.local.jsonc`
   → `wrangler deploy -c wrangler.local.jsonc` → 主题文件有变化时逐个
@@ -948,6 +969,19 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     抓它的是 `admin-spa.test.mjs` 的"入口能启动"那一条（真实 import 入口 + DOM 替身）——
     静态模块图检查看不见语法错误（它只解析 import 说明符）。
     **一条"真的 import 一次"的断言，价值高于十条文本扫描。**
+43. **浏览器验收脚本不能用 `context.request` 调这个后台的 API**（批次 16）：
+    会话 cookie 是 `Secure`，而 Playwright 的 `APIRequestContext` **不套用浏览器那条
+    "localhost 可信"例外**，于是它一个 cookie 都不发，每个调用都是 401——
+    而同一个 context 里的**页面**明明是已登录的。症状极具迷惑性：上传成功（页面发起）、
+    随后用 `context.request` 查库却 401，看起来像"上传没落库"。
+    **正解**：走页面自己的 `fetch`（`page.evaluate`），本目录既有的两个验收脚本就是这么做的。
+    另一条同源陷阱：**先用 `context.request` 登录会把浏览器也登录掉**，登录屏因此永远不出现，
+    `#u` 等到超时——登录必须由页面驱动。
+44. **块编辑器不重渲染，所以"选完之后的样子"要自己刷新**（批次 16）。
+    预览只在渲染时画一次 → 选完文件看不到缩略图，读起来像"没选上"。
+    Node 断言"模板里有 `<img>`"永远是对的（它检查模板，不检查交互），**只有真浏览器能发现**。
+    修法是控件里留一个可被就地刷新的槽（`[data-media-preview]`）。
+    **推论：凡是"用户做了一个动作、界面应当立刻变化"的地方，都必须有真浏览器验收。**
 
 ## 9. 权威文档索引
 
@@ -975,6 +1009,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `tests/suites/editor-blocks.test.mjs` | 块 attrs 的往返契约（契约 → 控件 → 写入的键 → 真实渲染器 markup + 嵌套寻址 + §8 反向对照） |
 | `public/admin/js/media-picker.js` | **媒体控件的唯一定义**（规则 62）：`mediaUrl()`（唯一构造 `/media/<key>`）/ `mediaItem()` 归一化 / `mediaFieldHtml()`（唯一控件标记）/ `openMediaPicker()`（搜索 + 网格 + 上传 + 单选多选）——块属性、自定义字段、扩展设置三处共用 |
 | `tests/suites/media-picker.test.mjs` | 上者的契约：URL 形状与读取路径一致 + 归一化 + 控件形态 + **"选择器给的 URL，真实渲染器画得出来"的闭环** + 三个消费点都走共享控件 |
+| `tests/tools/_media-picker-browser.cjs` | 上者的**真浏览器**验收（25 条，自清理可重复）：登录 → 加图片块 → 对话框内上传 → 选中 → 落值 → **保存后确认写在 `url` 而非 `text`** → 会话/匿名两种读取 → 取消路径 |
 | `docs/design/MEDIA-EDITOR-PLAN.md` | 批次 16 的四轨道拆分（**Track 0 / B1 / A3 已实现，A4 / B3 / B4 / B5 未实现**）——含已拍板的媒体语义与编辑器缺陷清单 |
 | `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
 | `tests/tools/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
