@@ -161,6 +161,9 @@ function buildThemeZip(name, cpt) {
   };
   const index = `<!doctype html><html><head><title>{{site.title}}</title></head><body>`
     + `<h1 class="site-title">{{site.title}}</h1><p class="theme">THEME-${name.toUpperCase()}</p>`
+    // Renders the site's navigation, so the suite can assert that one tenant's
+    // menu items never show up in another tenant's page.
+    + `<nav class="nav">{{menu.primary_html}}</nav>`
     + `<ul>{{#each posts as p}}<li><a href="{{p.url}}">{{p.title}}</a></li>{{/each}}</ul></body></html>`;
   const archive = `<!doctype html><html><body><h1>ARCHIVE-${cpt.toUpperCase()}</h1>`
     + `{{#each posts as p}}<article data-slug="{{p.slug}}">{{p.title}}</article>{{/each}}</body></html>`;
@@ -439,6 +442,25 @@ async function main() {
   const defItems = await (await req(worker, env, "/api/v1/menus/primary/items", { headers: auth })).json();
   checkTruthy("default menu items not polluted by shop",
     !defItems.items.some((i) => i.title === "Shop Nav"));
+
+  // The API was clean while the *rendered page* leaked: `menu.primary` came from
+  // a query that filtered on `menu_id` alone, and `menu_id` is only unique per
+  // site — so the shop's nav item rendered inside the default site's page at
+  // HTTP 200. An API-level assertion cannot see that layer; the rendered page
+  // must be asserted too, in both directions.
+  // ⚠️ Cache-bust both fetches: earlier sections already rendered `/en` for each
+  // site, and a cached page predates the menu item this section creates — the
+  // positive control would read yesterday's render and report the nav as empty.
+  const bust = `navcheck=${Date.now()}`;
+  const navHome = await req(worker, env, `/en?${bust}`);
+  const defNav = (await navHome.text()).match(/<nav class="nav">([\s\S]*?)<\/nav>/)?.[1] ?? "";
+  check("default's rendered nav has no shop item", defNav.includes("Shop Nav"), false);
+  check("default's rendered nav is otherwise empty (non-vacuity)", defNav.trim(), "");
+  // Resolve shop by **host** (as a real request would): the `X-CFPress-Site`
+  // header is only honoured on the theme-api paths, not on page renders.
+  const shopNavHome = await req(worker, env, `/en?${bust}`, {}, "shop.example.com");
+  const shopNav = (await shopNavHome.text()).match(/<nav class="nav">([\s\S]*?)<\/nav>/)?.[1] ?? "";
+  checkTruthy("shop's rendered nav does carry its own item", shopNav.includes("Shop Nav"));
 
   // -- 9. cache isolation --------------------------------------------------
   console.log("\n9. Cache generation isolation");

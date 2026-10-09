@@ -183,7 +183,13 @@ export async function menu(env:Env,locale:string,siteId:string){
   // correct; see §10 rule 6 (no site-blind fallbacks).
   if(!m) m=await env.DB.prepare("SELECT id FROM menus WHERE location='header' AND site_id=? LIMIT 1").bind(siteId).first<any>();
   if(!m)return[];
-  const r=await env.DB.prepare("SELECT * FROM menu_items WHERE menu_id=? AND (locale IS NULL OR locale=?) ORDER BY sort_order,id").bind(m.id,locale).all();
+  // ⚠️ `menu_id` is only unique **per site** (`UNIQUE(site_id, id)` on `menus`).
+  // Two sites can both have a menu called `primary`, so filtering by `menu_id`
+  // alone pulls in the other tenant's items — the exact leak this function's
+  // own comment above warns about, and how a shop's nav item ended up on the
+  // default site's front page. The menu row being site-scoped does not
+  // disambiguate the items; the items carry `site_id` too, so use it.
+  const r=await env.DB.prepare("SELECT * FROM menu_items WHERE menu_id=? AND site_id=? AND (locale IS NULL OR locale=?) ORDER BY sort_order,id").bind(m.id,siteId,locale).all();
   return r.results as any[];
 }
 export function renderBlocks(content:string){

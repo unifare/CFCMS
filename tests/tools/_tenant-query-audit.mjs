@@ -115,10 +115,10 @@ const REVIEWED = {
   // as NEW, so the next reader sees only genuinely new statements.
   "src/api.ts:1610": "UPDATE theme_installs … WHERE name IN (SELECT value FROM settings WHERE key='theme.active') — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
   "src/extensions/plugin/notify.ts:108": "UPDATE notification_log … WHERE id=? — the row is this send's own claim, addressed by the PK minted a few lines above for this siteId; ok/error are not identity",
-  "src/extensions/theme/runtime-worker.ts:411": "menu_items … WHERE menu_id=? — the menu row was resolved per site (`location='header' AND site_id=?`) two lines above; locale is the remaining filter",
+  "src/extensions/theme/runtime-worker.ts:411": "menu_items … WHERE menu_id=? AND site_id=? — ⚠️ rewritten in batch 16: `menu_id` is only unique per site (menus is UNIQUE(site_id,id)), so the earlier `WHERE menu_id=?` leaked another tenant's items onto this site's nav; `site_id` is required, not optional",
   "src/extensions/theme/tables.ts:383": "UPDATE theme_table_defs WHERE id=? — registry row addressed by its own PK",
   "src/extensions/theme/tables.ts:404": "SELECT theme_table_defs … WHERE site_id=? AND owner_type=? AND owner_name=? AND logical_name=? — reads back the mapping this same call just wrote, to repair a recorded i18n_table whose table is gone; fully site-scoped",
-  "src/platform/frontend.ts:186": "menu_items … WHERE menu_id=? — same reasoning as runtime-worker: the menu row was resolved per site two lines above",
+  "src/platform/frontend.ts:186": "menu_items … WHERE menu_id=? AND site_id=? — ⚠️ rewritten in batch 16 (see runtime-worker:411): `menu_id` is only unique per site, so the earlier site-blind filter rendered the shop site's nav item on the default site's front page",
   "src/shared/scheduler.ts:23": "UPDATE posts … WHERE id=? — the site was just read from that very row",
 };
 
