@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
 import { langPackProblems, themeManifestProblems } from "../fixtures/_extension-rules.mjs";
 // The editor palette must be this array (see the one-definition guard below).
-import { CORE_BLOCKS } from "../../src/rendering/blocks.ts";
+import { CORE_BLOCKS, BLOCK_ATTR_TYPES } from "../../src/rendering/blocks.ts";
 // The field-type classification is imported, never re-listed: the validator and
 // the scaffolder read the same source, so "is this field prose?" has one answer.
 import {
@@ -1441,6 +1441,104 @@ section("The media read path resolves the site before it reads the object (rule 
 }
 
 // ---------------------------------------------------------------------------
+section("A block's attributes are declared once and agreed on both sides (rule 61)");
+// ---------------------------------------------------------------------------
+
+/**
+ * The editor used to write `attrs.text` for **every** block type while the
+ * renderer read a different attribute per type (`url`+`alt` for an image,
+ * `items` for a gallery, `html` for raw HTML, nested `content` for
+ * group/columns). Nothing compared the two, so six of the twelve types produced
+ * empty output at HTTP 200 when inserted from the admin — and every guard
+ * stayed green, because the renderer is a one-line `switch` and the editor was
+ * a single `<textarea>`.
+ *
+ * So the attribute list is declared in `rendering/blocks.ts`, shipped by
+ * `GET /api/v1/blocks`, and **both sides are parsed and compared against it**:
+ *
+ *   1. the renderer must read exactly the attributes a block declares;
+ *   2. every declared attribute type must have a control branch, and the list
+ *      the control module exports must be the contract's closed set;
+ *   3. a `media-list` attribute must declare its item keys (a control that has
+ *      to be told them by its caller renders an empty field when nobody does).
+ *
+ * `tests/suites/editor-blocks.test.mjs` proves the same chain by *running* it;
+ * these three are structural so `npm run gate` — which does not run that suite
+ * — still catches a drift.
+ */
+{
+  // 1. The renderer. `renderBlocks` is a dense one-liner, so the cases are
+  //    parsed rather than grepped: a per-case scan is the only way to attribute
+  //    an `a.<key>` read to the block that reads it.
+  const frontend = blankComments(read(join(ROOT, "src", "platform", "frontend.ts")));
+  const start = frontend.indexOf("export function renderBlocks");
+  const end = frontend.indexOf("\n}", start);
+  const body = start >= 0 && end > start ? frontend.slice(start, end) : "";
+  const cases = [...body.matchAll(/case\s*"([^"]+)"\s*:\s*([\s\S]*?)(?=case\s*"|default\s*:)/g)];
+  check(
+    "the renderer's block switch was parsed (non-vacuity)",
+    cases.length >= CORE_BLOCKS.length,
+    `parsed ${cases.length} case bodies for ${CORE_BLOCKS.length} declared blocks`
+  );
+
+  const declaredAttrs = new Map(CORE_BLOCKS.map((b) => [b.name, b.attrs.map((a) => a.key).sort()]));
+  const mismatches = [];
+  for (const [, name, caseBody] of cases) {
+    const readKeys = [...new Set([...caseBody.matchAll(/\ba\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]))].sort();
+    const declared = declaredAttrs.get(name);
+    if (!declared) { mismatches.push(`${name}: rendered but not declared`); continue; }
+    if (JSON.stringify(readKeys) !== JSON.stringify(declared)) {
+      mismatches.push(`${name}: reads [${readKeys}] but declares [${declared}]`);
+    }
+  }
+  checkEmpty("the renderer reads exactly the attributes each block declares", mismatches);
+  checkEmpty(
+    "every declared block has a renderer case",
+    [...declaredAttrs.keys()].filter((n) => !cases.some((m) => m[1] === n))
+  );
+
+  // 2. The editor's controls. The exported list is compared against the
+  //    contract AND against the switch, so a type cannot be declared covered
+  //    without a branch that actually renders it.
+  const fieldsSrc = blankComments(read(join(ROOT, "public", "admin", "js", "block-fields.js")));
+  const exported = (fieldsSrc.match(/export const RENDERED_ATTR_TYPES\s*=\s*\[([\s\S]*?)\]/)?.[1] ?? "");
+  const exportedTypes = [...exported.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  check(
+    "the control module's type list matches the contract's closed set",
+    // ⚠️ The comparison, not a JSON string of it. Passing the stringified
+    // value as the condition is the same vacuous shape as passing an array:
+    // `check` tests truthiness, and a non-empty string is always truthy. This
+    // exact mistake shipped for one run and was caught by
+    // `_skeleton-inject.mjs`'s "exported type list drifts" scenario, which is
+    // the whole reason that tool exists.
+    JSON.stringify([...exportedTypes].sort()) === JSON.stringify([...BLOCK_ATTR_TYPES].sort()),
+    `implementation: ${JSON.stringify(exportedTypes)}\n       contract:       ${JSON.stringify(BLOCK_ATTR_TYPES)}`
+  );
+  const branches = [...fieldsSrc.matchAll(/case\s*"([a-z-]+)"\s*:/g)].map((m) => m[1]);
+  checkEmpty(
+    "every attribute type has a control branch",
+    BLOCK_ATTR_TYPES.filter((t) => !branches.includes(t))
+  );
+  check(
+    "the control switch was parsed (non-vacuity)",
+    branches.length >= BLOCK_ATTR_TYPES.length,
+    `found ${branches.length} case labels for ${BLOCK_ATTR_TYPES.length} types`
+  );
+
+  // 3. A media-list's item shape is part of the attribute.
+  checkEmpty(
+    "every media-list attribute declares its item keys",
+    CORE_BLOCKS.flatMap((b) => b.attrs
+      .filter((a) => a.type === "media-list" && !(Array.isArray(a.itemKeys) && a.itemKeys.length))
+      .map((a) => `${b.name}.${a.key}`))
+  );
+  check(
+    "the contract really declares a media-list (non-vacuity)",
+    CORE_BLOCKS.some((b) => b.attrs.some((a) => a.type === "media-list"))
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 
@@ -1468,6 +1566,20 @@ section("This suite's own assertions can actually fail (meta-guard)");
   const offenders = [...selfSrc.matchAll(banned)].map((m) => m[1]);
 
   checkEmpty("no assertion passes a collection as its truthiness condition", offenders);
+
+  // The same vacuity in a different spelling: a condition that is a **literal**
+  // rather than a comparison. `check("…", "some string", …)` is always true for
+  // exactly the reason an empty array is, and it reads as a real assertion.
+  //
+  // This is not hypothetical — the block-attribute guard shipped
+  // `check(name, JSON.stringify(a), JSON.stringify(b))` for one run, i.e. the
+  // expected and actual values handed over as the condition and the detail.
+  // The injection tool caught it (`_skeleton-inject.mjs`, "the control module's
+  // exported type list drifts"), *not* this section — which is why the ban is
+  // now extended to cover it rather than left to the tool.
+  const literalCond = /check\(\s*"(?:[^"\\]|\\.)*"\s*,\s*("(?:[^"\\]|\\.)*"|`[^`]*`|\[[^\]]*\]|\{[^{}]*\}|true)\s*,/g;
+  const literalOffenders = [...selfSrc.matchAll(literalCond)].map((m) => m[1].slice(0, 48));
+  checkEmpty("no assertion passes a literal as its condition", literalOffenders);
 
   // And prove the scan is looking at something: the file must contain the
   // helper and enough `check*` calls that a zero-result scan is meaningful.

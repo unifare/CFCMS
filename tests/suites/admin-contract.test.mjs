@@ -283,8 +283,43 @@ async function main() {
     ["core/paragraph","core/heading","core/list","core/quote","core/code","core/image","core/gallery","core/button","core/separator","core/html","core/group","core/columns"].join(",")
   );
   check("english label", blocksEn.items.find((b) => b.type === "core/paragraph").label, "Paragraph");
+  // The palette ships the **attribute contract**, not just the block list.
+  // Before it did, the editor wrote `attrs.text` for every type and six of the
+  // twelve blocks rendered empty at HTTP 200 — see `editor-blocks.test.mjs`,
+  // which walks the whole chain. These assertions pin the wire shape the
+  // editor's controls are built from.
+  check(
+    "every palette entry ships its attribute list",
+    blocksEn.items.every((b) => Array.isArray(b.attrs)),
+    true
+  );
+  const img = blocksEn.items.find((b) => b.type === "core/image");
+  check(
+    "the image ships url + alt, url required",
+    img.attrs.map((a) => [a.key, a.type, a.required === true]),
+    [["url", "media", true], ["alt", "text", false]]
+  );
+  check("the image's labels are translated for the locale", [img.attrs[0].label, img.attrs[1].label], ["Image", "Alt text"]);
+  check("a separator declares no attributes", blocksEn.items.find((b) => b.type === "core/separator").attrs, []);
+  check(
+    "the nesting blocks are marked as containers with no attributes",
+    blocksEn.items.filter((b) => b.children).map((b) => [b.type, b.attrs.length]),
+    [["core/group", 0], ["core/columns", 0]]
+  );
+  // A media-list's item shape travels with the attribute, so the editor's
+  // repeatable row does not hardcode the item keys a second time.
+  check(
+    "the gallery ships the item keys of its media-list attribute",
+    blocksEn.items.find((b) => b.type === "core/gallery").attrs[0].itemKeys,
+    ["url", "alt"]
+  );
   const blocksZh = await (await req(worker, env, "/api/v1/blocks?locale=zh-CN", { headers: auth })).json();
   check("labels follow the requested UI locale", blocksZh.items.find((b) => b.type === "core/paragraph").label, "段落");
+  check(
+    "attribute labels follow it too",
+    blocksZh.items.find((b) => b.type === "core/image").attrs[0].label,
+    "图片"
+  );
   // Without an explicit locale the palette follows the admin's own ui_lang —
   // this suite's shared dev database has it as zh-CN, so the fallback must
   // agree with that rather than with any assumed language.

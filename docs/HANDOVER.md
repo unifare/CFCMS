@@ -1,13 +1,14 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 16 Track 0 —— 媒体隔离地基**
+> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 16 Track 0 + Track B1 —— 媒体隔离地基 + 块 attrs 契约**
 > （批次 15 数据驱动后台；批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；
 > 批次 13 mobai 主题 + RSS；批次 12 写入路径修复 + journal 主题；批次 11 平台功能开关。
 > 批次 10 及更早见下方各节与 `docs/history/`。）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
 >
-> ⚠️ 批次 16 只做完了 Track 0（隔离地基）。媒体子系统与内容编辑器的其余部分在
-> `docs/design/MEDIA-EDITOR-PLAN.md`（**已定稿、未实现**，含四条轨道的完整拆分与已拍板语义）。
+> ⚠️ 批次 16 已完成 **Track 0**（媒体隔离地基）与 **Track B1**（块 attrs 契约 + 编辑器按类型控件）。
+> 其余部分（统一媒体控件 A3、编辑器界面翻译 B3、多语言编辑体验 B4、`post_meta` 语言维度 B5）
+> 在 `docs/design/MEDIA-EDITOR-PLAN.md`（**已定稿、未实现**，含四条轨道的完整拆分与已拍板语义）。
 > ⚠️ 本轮的批次过程文档在 `docs/history/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
 > 每日工作日志在 `.workbuddy-ai/memory/YYYY-MM-DD.md`（gitignore，本机才有）。
 
@@ -69,6 +70,7 @@ a81e5e0  Re-key tenant audit verdicts after the mobai batch
 60f9a24  Dropdown check mark: show only on the active row
 176331b  Data-driven admin: block palette, dashboard cards, typed settings forms  ← 批次 15 基线
 (batch 16 Track 0: media ownership + isolation, and the site-list memo fix — 见 §5)
+(batch 16 Track B1: the block attribute contract, and the editor's per-type controls — 见 §5)
 ```
 
 **批次 16 Track 0（媒体隔离地基）**：`media_files` 自 0009 起就有 `site_id`，但
@@ -150,6 +152,44 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
+
+### 批次 16 Track B1（块 attrs 契约）—— ✅ 本轮完成
+
+**起点是一个用户看得见、而所有守卫都看不见的缺陷**：编辑器给**所有**块写 `attrs.text`，
+渲染器按类型读**不同**的属性——`core/image`→`url`+`alt`、`gallery`→`items`、
+`html`→`html`、`group`/`columns`→嵌套 `content`、`button`→`url`+`text`。
+于是 **12 种块里有 6 种从后台插入后前台渲染为空**：**HTTP 200、零异常、零 5xx**。
+这是「声明先于运行时」缺陷族的**第八例**，且是**没有任何守卫**的一例——
+清单校验器查声明，架构测试查结构，`admin-spa.test.mjs` 从不打开编辑器屏幕。
+
+| 项 | 状态 |
+|---|---|
+| `src/rendering/blocks.ts`：`CORE_BLOCKS` 升级为**契约**（每块声明 `attrs[{key,type,labelKey,fallback,required?}]`、`children?`、`media-list` 的 `itemKeys`）+ `BLOCK_ATTR_TYPES` 闭集合 + `blockSpec`/`blockAttrKeys` | ✅ |
+| `GET /api/v1/blocks` 下发属性清单（标签按 UI 语言翻译，`itemKeys` 从契约转发） | ✅ |
+| **新** `public/admin/js/block-fields.js`（叶子模块）：属性类型 → 控件的**唯一**映射（`RENDERED_ATTR_TYPES` + `renderBlockAttr(s)`）+ **块树的寻址与变更纯函数**（`locateBlock`/`insertBlock`/`setAttrAt`/`setItemAt`/`moveBlockAt`/…） | ✅ |
+| `screens/editor.js`：逐属性出控件、写入**声明过的键**（不再恒写 `text`）；`group`/`columns` 渲染嵌套容器与内层面板；块标题用服务端翻译后的 label | ✅ |
+| 新套件 `tests/suites/editor-blocks.test.mjs`（**40 条**）：契约 → 控件 → 写入的键 → **真实渲染器 markup** 的**往返**断言 + 嵌套寻址 + **§8 刻意的反向对照** | ✅ |
+| 架构守卫（`architecture.test.mjs`，+9 条，规则 61）：**解析** `renderBlocks` 每个 case 体的 `a.<key>` 读取集合并与声明比对 / 每个声明块都有 case / `RENDERED_ATTR_TYPES` == `BLOCK_ATTR_TYPES` 且每种类型都有分支 / 每个 `media-list` 都声明 `itemKeys` | ✅ |
+| `_skeleton-inject.mjs` 新增 **5 个场景**（渲染器读未声明的属性 / 契约改名 / 控件丢分支 / 导出清单漂移 / 丢 `itemKeys`）→ **28 场景 0 问题** | ✅ |
+| `admin-contract.test.mjs` +7 条：调色板下发 `attrs`（类型/必填/翻译标签/`itemKeys`/容器标记） | ✅ |
+| 规则 61 写进 `AGENTS.md` + `ARCHITECTURE.md` §10 | ✅ |
+
+**本轮抓到的两类东西**（都值得单独记）：
+
+1. **元守卫的盲区：`check(name, condition, detail)` 的 condition 传字面量恒为真。**
+   我在新守卫里写成 `check(name, JSON.stringify(a), JSON.stringify(b))`——把期望值与实际值
+   当成了条件与详情。**架构套件全绿**，是 `_skeleton-inject` 的"导出清单漂移"场景报
+   `did NOT go red` 才发现的。修法两层：修正那一条，并把元守卫从"禁集合当条件"
+   扩到"**禁字面量当条件**"（字符串/模板/数组/对象/`true`）。
+   ⚠️ 元守卫只扫 `architecture.test.mjs` 自己，**其它套件里同样的拼法只能靠注入工具抓**。
+2. **"声明了但没人读"的反向：契约自己漏了一半。** `media-list` 的条目键原本由 `api.ts`
+   在出口处附加，契约本身不描述条目形状——于是**只用契约**（不经过 API）渲染控件时，
+   画廊字段渲染成一个**没有任何输入框**的空字段。修法是把 `itemKeys` 声明在属性上（61c）。
+   **判据**：一个控件如果需要调用方告诉它"你由什么组成"，那部分组成就还没被声明。
+
+**新基线**：**24 套件 + `_schema-scope`，25 项 / 1296 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
+`npm run gate` 四项全绿；`_skeleton-inject` 28/28 场景有效；`_tenant-query-audit` 每条命中都有裁决
+（`api.ts` 的 `theme_installs` 一条随行号移到 `:1610`）。
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
 
@@ -428,7 +468,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：23 套件 / 1219 条 / 0 失败，另有 `_schema-scope` 21 条 —— 合计 24 项 / 1240 条）
+## 6. 测试与验证（当前全绿：24 套件 / 1275 条 / 0 失败，另有 `_schema-scope` 21 条 —— 合计 25 项 / 1296 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -437,7 +477,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 72 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支** |
+| architecture | 81 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫同时禁"集合当条件"与"字面量当条件"** |
 | _schema-scope | 21 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
@@ -451,7 +491,8 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | theme-mobai | 52 | mobai 主题：模板真渲染 + head 的 SEO 契约（canonical/og/hreflang/feed）+ 语言包键完整性 |
 | multisite | 91 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |
 | i18n | 66 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
-| admin-contract | 44 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、dashboard cards 数组、设置 options 往返） |
+| admin-contract | 51 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、**调色板下发的 attrs 契约（类型/必填/翻译标签/`itemKeys`/容器标记）**、dashboard cards 数组、设置 options 往返） |
+| **editor-blocks** | **40** | **块 attrs 契约的往返（批次 16 Track B1 新增）**：契约良构（类型闭集合/标签/`itemKeys`）+ **契约 → 控件 → 写入的属性键 → 真实渲染器 markup** 的往返 + `required` 的语义（无 url 的图片渲染空）+ 嵌套寻址（子块按路径写入、父块不被穿透）+ **§8 反向对照**（按旧编辑器形状构造的图片/画廊/HTML 块必须渲染为空） |
 | **media** | **69** | **媒体访问（批次 16 Track 0 新增）**：租户闸门（跨站 key → 404）/ 会话闸门 / **owner 硬隔离（含管理员）** / legacy `uploaded_by IS NULL` 的祖父条款 / 上传写归属 + 站点必须真实存在 / 列表按 owner 收窄 + `q`/`type`/分页/`total` / dashboard 媒体卡与列表 total 一致 / PATCH alt·title（非 owner 403、无 `media.write` 403、别站 id 404）/ **DELETE 先删 R2 对象再删行** / 脏策略行 fail-closed / **站点列表 memo 的 per-request 复位**（§1：先发前台请求 → 再建站点 → 再请求它） |
 | account | 27 | 账户自助：改密/改名的当前密码闸门、稳定错误码、menu_prefs 隔离、label_key 翻译端到端 |
 | menu-custom | 40 | 站点菜单编辑器三端点契约、权限分层、10 种结构违规 400、`applyMenuCustom` 纯函数语义 |
@@ -488,7 +529,7 @@ node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 �
 **系统骨架 + 功能开关**的反向验证工具（10+ 场景，手工跑）：
 
 ```bash
-node tests/tools/_skeleton-inject.mjs        # 23 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / dashboard 卡 / 设置表单分支
+node tests/tools/_skeleton-inject.mjs        # 28 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / 块 attrs 契约 / dashboard 卡 / 设置表单分支
 node tests/tools/_locale-url-inject.mjs     # 4 场景：规则 56–59（slug COALESCE / 散落回退 / locale 正则 / feed 站点隔离）
 node tests/tools/_launcher-inject.mjs        # 16 场景：启动器两侧对齐 / BOM / stderr 提示 / EOF 退出
 node tests/tools/_media-inject.mjs           # 7 场景：规则 60（租户闸门 / 会话闸门 / owner 读闸门 / owner 列表子句 / 上传归属 / 删除顺序 / 分支位置）
@@ -842,6 +883,20 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     它暴露了问题），但 §10 三条断言**空转通过**，因为它们改的那行根本不存在；
     ② 修法是补 **non-vacuity 断言**（"策略确实落在这个站上" / "确实改动了 1 行"）。
     **写"某行被改坏后应当拒绝"的断言时，先断言那行真的存在且真的被改坏了。**
+39. **`check(name, condition, detail)` 的 `condition` 传字面量，恒为真**（批次 16，第九种假绿）。
+    `check("…", JSON.stringify(a), JSON.stringify(b))` 把**期望值与实际值当成了条件与详情**——
+    读起来像在断言"两者相等"，实际断言的是"一个非空字符串为真"。架构套件**全绿**，
+    是 `_skeleton-inject.mjs` 的场景报 `did NOT go red` 才发现的：
+    **注入工具的价值不在于它跑得多，而在于它逼你把每条守卫看一次它的红。**
+    修法两层：改掉那一条，并把元守卫从"禁集合当条件"扩到**"禁字面量当条件"**
+    （字符串 / 模板串 / 数组 / 对象 / `true`）。
+    ⚠️ 元守卫只扫 `architecture.test.mjs` 自己——**其它套件里同样的拼法只能靠注入工具抓**。
+40. **契约漏掉一半时，症状是"控件渲染成一个空字段"**（批次 16）。
+    `media-list` 的条目键原本由 `api.ts` 在出口处附加，契约本身不描述条目形状；
+    于是**只用契约**（不经过 API）渲染控件时，画廊字段渲染成**没有任何输入框**的空字段。
+    修法：把 `itemKeys` 声明在属性上（规则 61c）。
+    **判据：一个控件如果需要调用方告诉它"你由什么组成"，那部分组成就还没被声明。**
+    与 26 号坑（"声明了但没人读"）互为镜像：**这一族缺陷的两个方向都要有人看**。
 
 ## 9. 权威文档索引
 
@@ -850,7 +905,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
 | `docs/design/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
 | `docs/history/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
-| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、**媒体隔离规则 60**、明确不做的事） |
+| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、**媒体隔离规则 60**、**块 attrs 契约规则 61**、明确不做的事） |
 | `docs/HANDOVER.md` | 本文 |
 | `src/shared/features.ts` | **功能开关唯一词汇表 + 解析器**（`FEATURE_SWITCHES` / `featureEnabled()` / `featureSnapshot()`）——开关定义只此一处 |
 | `public/admin/js/screens/features.js` | 功能开关后台屏（每开关一张卡：来源标注 / var 名 / 声明默认 / 继承值 / 重置为继承） |
@@ -864,7 +919,10 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `src/platform/media-policy.ts` | **媒体访问策略的唯一定义**（规则 60）：`isolation` / `require_session`（站点设置行 `cfpress.media`）+ `mediaKeyBelongsToSite` + `mediaReadDecision`（**返回拒绝原因**）+ `mediaOwnerClause`——前台读取路径与后台 API 共用同一份 |
 | `tests/suites/media.test.mjs` | 媒体两轴（租户 / 所有者）的契约：三闸门**逐条单独打开**再断言、删除顺序、legacy NULL 祖父条款、站点列表 memo 的 per-request 复位 |
 | `tests/tools/_media-inject.mjs` | 上者的反向验证工具（7 场景，注入→具名断言变红→还原→哈希一致；手工跑，不在 gate 里） |
-| `docs/design/MEDIA-EDITOR-PLAN.md` | 批次 16 的四轨道拆分（**Track 0 已实现，Track A/B 未实现**）——含已拍板的媒体语义与编辑器缺陷清单 |
+| `src/rendering/blocks.ts` | **块属性契约的唯一定义**（规则 61）：`CORE_BLOCKS`（每块的 `attrs[]`/`children`/`media-list` 的 `itemKeys`）+ `BLOCK_ATTR_TYPES` 闭集合——渲染器与编辑器控件都从它派生 |
+| `public/admin/js/block-fields.js` | 块属性的**控件唯一映射**（`RENDERED_ATTR_TYPES` + `renderBlockAttr(s)`）+ **块树寻址与变更的纯函数**（无状态叶子，可脱离 DOM 测试） |
+| `tests/suites/editor-blocks.test.mjs` | 块 attrs 的往返契约（契约 → 控件 → 写入的键 → 真实渲染器 markup + 嵌套寻址 + §8 反向对照） |
+| `docs/design/MEDIA-EDITOR-PLAN.md` | 批次 16 的四轨道拆分（**Track 0 与 B1 已实现，Track A/B3/B4/B5 未实现**）——含已拍板的媒体语义与编辑器缺陷清单 |
 | `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
 | `tests/tools/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
 | `tests/suites/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |

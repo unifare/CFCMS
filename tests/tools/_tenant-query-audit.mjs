@@ -113,7 +113,7 @@ const REVIEWED = {
   // `theme_installs` update down; `frontend.ts` had already drifted from batch
   // 10's line numbers without anyone noticing. Re-keyed here rather than left
   // as NEW, so the next reader sees only genuinely new statements.
-  "src/api.ts:1584": "UPDATE theme_installs … WHERE name IN (SELECT value FROM settings WHERE key='theme.active') — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
+  "src/api.ts:1610": "UPDATE theme_installs … WHERE name IN (SELECT value FROM settings WHERE key='theme.active') — theme_installs is PLATFORM-GLOBAL; `active` means 'some site uses it', so the cross-site subquery is the intent",
   "src/extensions/plugin/notify.ts:108": "UPDATE notification_log … WHERE id=? — the row is this send's own claim, addressed by the PK minted a few lines above for this siteId; ok/error are not identity",
   "src/extensions/theme/runtime-worker.ts:411": "menu_items … WHERE menu_id=? — the menu row was resolved per site (`location='header' AND site_id=?`) two lines above; locale is the remaining filter",
   "src/extensions/theme/tables.ts:383": "UPDATE theme_table_defs WHERE id=? — registry row addressed by its own PK",

@@ -2079,6 +2079,21 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
       前台 `<img>` 会 404；这是运营者的选择，可逆，排障第一站就是这个开关
    ⚠️ 三条闸门都答 404 ⇒ 断言必须盯"**哪一条**闸门"（`mediaReadDecision` 返回原因），
       并在套件里逐条单独打开。只在三条全关时断言"404"的写法，删掉任何一条都不会变红
+
+【块：属性契约只有一份】（AGENTS.md 规则 61）
+61. 块的属性集合**只在 `rendering/blocks.ts` 的 `CORE_BLOCKS` 里声明一次**，
+   编辑器与渲染器都从它派生（`GET /api/v1/blocks` 下发，含翻译标签与 `itemKeys`）
+   a) 渲染器每个 `case` 里 `a.<key>` 的读取集合必须**恰好等于**该块声明的 `attrs[].key` 集合。
+      守卫**解析** switch 的 case 体，不是 grep 字符串
+   b) `block-fields.js` 的 `RENDERED_ATTR_TYPES` 必须等于 `BLOCK_ATTR_TYPES`，
+      且每种类型都有 `case` 分支（缺分支 = 静默退化成文本框）
+   c) `media-list` 属性必须声明 `itemKeys`（条目形状属于属性本身；控件造不出来）
+   ⚠️ 编辑器曾给**所有块**写 `attrs.text`，而渲染器按类型读不同属性 ⇒
+      **12 种块里 6 种插入后前台渲染为空、HTTP 200、零异常**（第八例"声明先于运行时"）。
+      修法是提契约、两侧同源派生，不是把 `attrs.text` 换成六个 `if`
+   ⚠️ 只有**行为**断言能看见它：`tests/suites/editor-blocks.test.mjs` 把
+      契约 → 控件 → 写入的属性键 → **真实渲染器 markup** 整条链跑一遍；
+      架构守卫只能证结构一致。两者互补，缺一不可
 ```
 
 ---

@@ -1383,11 +1383,37 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
           defaultLocale: await siteDefaultLocale(env, siteId),
         });
     const dict = mergePacks(await loadUiPacks(env, siteId, uiLocale));
-    const label = (b: { name: string; title: string }) => {
-      const v = dict[`core.block.${b.name.slice("core/".length)}`];
-      return typeof v === "string" && v ? v : b.title;
+    const t = (key: string, fallback: string) => {
+      const v = dict[key];
+      return typeof v === "string" && v ? v : fallback;
     };
-    return ok({ items: CORE_BLOCKS.map((b) => ({ type: b.name, label: label(b), category: b.category })), site: siteId });
+    // The palette ships the **attribute contract** too, not just the block
+    // list. The editor used to render one `<textarea>` per block and write
+    // `attrs.text` for all twelve types, so six of them produced empty output
+    // at HTTP 200 — the renderer reads `url` / `items` / `html` / `content` for
+    // those. Shipping the declared attributes means the editor cannot disagree
+    // with the renderer about what a block holds; `architecture.test.mjs`
+    // checks that these two lists are the same one.
+    const items = CORE_BLOCKS.map((b) => ({
+      type: b.name,
+      label: t(`core.block.${b.name.slice("core/".length)}`, b.title),
+      category: b.category,
+      // A nesting block holds child blocks in `block.content`, not attribute
+      // values — the editor needs to know which container to draw.
+      children: b.children === true,
+      attrs: b.attrs.map((a) => ({
+        key: a.key,
+        type: a.type,
+        label: t(a.labelKey, a.fallback),
+        required: a.required === true,
+        // Forwarded, not invented: a `media-list` attribute declares its item
+        // keys in the contract (`rendering/blocks.ts`), and the editor's
+        // repeatable row renders one input per key. Dropping it here would make
+        // the control render an empty field with no inputs at all.
+        ...(a.itemKeys ? { itemKeys: a.itemKeys } : {}),
+      })),
+    }));
+    return ok({ items, site: siteId });
   }
   if (path === "posts" && method === "GET") return listPosts(env, url, "post", siteId);
   if (path === "pages" && method === "GET") return listPosts(env, url, "page", siteId);

@@ -43,6 +43,10 @@ const suites = [
   // doors (the public `/media/<key>` read path and the admin API) so the two
   // cannot drift apart again.
   ["media access", "suites/media.test.mjs"],
+  // The block attribute contract, walked end to end: declaration → the control
+  // the editor draws → the key it writes → the markup the real renderer
+  // produces. Six of twelve block types used to render empty at HTTP 200.
+  ["editor blocks", "suites/editor-blocks.test.mjs"],
   ["plugin hooks", "suites/plugin-hooks.test.mjs"],
   // The channel runtime: webhook delivery + the claim-before-send dedup ledger.
   // It was missing from all four registries (npm test, this list, and both

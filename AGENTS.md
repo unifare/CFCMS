@@ -53,7 +53,7 @@
    本仓库已经发生过**十三种**（见下方「守卫失效记录」与「同一意图的两种写法」）；
    十三条压缩成**七层**之后的判据见 `docs/ARCHITECTURE.md` §12「共同盲区」。
    工具（都在 `tests/tools/`，全部用 Worker 线程、内容哈希、`assertPristine`）：
-   `_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 围栏块路径 / 正文命令路径 / 图标名 / 功能开关，**20 个场景**）、
+   `_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 围栏块路径 / 正文命令路径 / 图标名 / 功能开关 / 块 attrs 契约，**28 个场景**）、
    `_launcher-inject.mjs`（启动器两侧对齐 / BOM / stderr 提示 / EOF 退出 / 孤儿套件，**16 个场景**）、
    `_i18n-field-inject.mjs`（字段分类，**6 个场景**）、
    `_plugin-pages-inject.mjs`（声明式后台页面，**10 个场景**）、
@@ -355,6 +355,41 @@ node 直调）。它**不含** `tsc --noEmit`——因为 lib.dom 与 workers-ty
 但它以 `env` 为键、且**从不清理**——而 `env` 是 isolate，不是请求。于是**新建的站点在前台解析不到**
 （host 与 path 前缀都落到默认站），直到 isolate 恰好回收。修法是在入口每个请求开头
 `resetSiteListMemo(env)`。守卫：`media.test.mjs` §1 先发一次前台请求、再建站点、再请求它。
+
+## 块 attrs 契约（规则 61）
+
+块（`core/paragraph` … `core/columns`，共 12 种）的**属性集合只有一份声明**：
+`src/rendering/blocks.ts` 的 `CORE_BLOCKS`。三条硬规则：
+
+| 规则 | 说明 |
+|---|---|
+| 61a | **渲染器只能读声明过的属性**。`platform/frontend.ts` 的 `renderBlocks` 每个 `case` 里 `a.<key>` 的读取集合必须**恰好等于**该块声明的 `attrs[].key` 集合。守卫**解析** switch 的每个 case 体（不是 grep 字符串） |
+| 61b | **每种属性类型都必须有控件分支**。`public/admin/js/block-fields.js` 的 `RENDERED_ATTR_TYPES` 必须等于 `BLOCK_ATTR_TYPES`，且 switch 里每种类型都要有 `case`——一个没有分支的类型会静默退化成文本框 |
+| 61c | **`media-list` 属性必须声明 `itemKeys`**。条目形状属于属性本身；控件无法凭空造出 `url`/`alt`，缺了它只会渲染一个没有输入框的空字段 |
+
+**为什么 61 存在**：编辑器曾经**给所有块写 `attrs.text`**，而渲染器按类型读不同的属性
+（`core/image`→`url`+`alt`、`gallery`→`items`、`html`→`html`、`group`/`columns`→嵌套 `content`）。
+两边从不需要达成一致，于是**12 种块里有 6 种从后台插入后前台渲染为空**——
+**HTTP 200、零异常、零 5xx**，是「声明先于运行时」缺陷族的第八例。
+所有既有守卫都看不见它：清单校验器查的是声明，架构测试查的是结构，
+`admin-spa.test.mjs` 从不打开编辑器屏幕。
+
+**修法不是"把 `attrs.text` 换成六个 if"**，而是**把 attrs 契约提成一份声明**，
+编辑器与渲染器同时从它派生：`GET /api/v1/blocks` 下发属性清单（含翻译后的标签与 `itemKeys`），
+编辑器据此逐属性出控件。**新增块或改属性时改一处**——`CORE_BLOCKS`——
+漏改任一侧是架构红灯，而不是一个空 `<div>`。
+
+**观测面在 `tests/suites/editor-blocks.test.mjs`**（40 条）：它把整条链**跑一遍**——
+契约 → 控件 → 控件写入的属性键 → **真实渲染器**产出的 markup——并断言每个声明过的属性
+都能在输出里找到自己的标记。该套件 §8 是**刻意的反向对照**：按旧编辑器的形状
+（所有块只写 `text`）构造一个图片块，断言往返断言**确实会失败**。
+**验证块链路只做静态检查是不够的**：`editor-blocks` 与架构守卫的关系，
+正是「行为断言」与「结构断言」各自只能证自己那一层。
+
+⚠️ 本轮的教训：`check(name, condition, detail)` 的 `condition` 传**字面量**（字符串/数组/对象）
+恒为真。`architecture.test.mjs` 的元守卫现在同时禁两种拼法——
+"集合当条件"与"字面量当条件"——但**元守卫只看本文件**，
+其它套件里同样的拼法只能靠注入工具抓。
 
 ## 守卫失效记录（READ THIS）
 

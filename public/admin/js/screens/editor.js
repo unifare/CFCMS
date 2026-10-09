@@ -8,6 +8,10 @@
 import { api, contentPath, postTypeInfo, scoped, state } from "../state.js";
 import { go, pageHead, render } from "../shell.js";
 import { icon } from "../../icons.js";
+import {
+  addItemAt, duplicateBlockAt, insertBlock, moveBlockAt, removeBlockAt, removeItemAt,
+  renderBlockAttrs, setAttrAt, setItemAt,
+} from "../block-fields.js";
 import { alertDialog, attr, confirmDialog, esc, fmtDate, openDialog, toast } from "../../ui.js";
 
 export function newContent(type) {
@@ -123,10 +127,9 @@ export async function editor(c, type) {
   // The palette is the renderer's own set, delivered by `GET /api/v1/blocks`
   // (see state.loadContext) — the same `CORE_BLOCKS` array the front end
   // switches on, so the editor can never offer a block the site cannot draw.
-  // Never re-list block types here.
-  const blockButtons = (state.blockTypes ?? [])
-    .map((b) => `<button class="btn outline sm" data-block="${attr(b.type)}">${icon("plus")}${esc(b.label)}</button>`)
-    .join("");
+  // Never re-list block types here. The same helper draws the palettes inside
+  // nesting blocks, so the two cannot diverge either.
+  const blockButtons = paletteHtml(null, true);
 
   // A locale picker rather than a free-text field: content may only be authored
   // in a language the site actually serves, and typing `zh-cn` by hand used to
@@ -184,35 +187,87 @@ export async function editor(c, type) {
   }
 }
 
-function blockText(b) { return b.attrs?.text || b.attrs?.html || b.attrs?.url || ""; }
+/**
+ * The server-declared contract for a block type.
+ *
+ * `state.blockTypes` is `GET /api/v1/blocks` — the same list the palette is
+ * built from, which now carries each type's attributes (see
+ * `src/rendering/blocks.ts`). Falling back to "no attributes" rather than to a
+ * text field is deliberate: a block whose contract did not load must not look
+ * editable, or the editor will happily write a value nothing reads. That is
+ * exactly the defect this file used to have — one `<textarea>` per block,
+ * `attrs.text` for all twelve types, and six of them rendering empty at 200.
+ */
+function specOf(type) {
+  return (state.blockTypes ?? []).find((b) => b.type === type) || { type, label: type, attrs: [], children: false };
+}
+
+/**
+ * The insert palette for a container at `path` (top level when `top`).
+ *
+ * Nesting blocks are offered only at the top level: the renderer would handle
+ * deeper nesting, but an editor with unbounded nesting is a UX trap rather than
+ * a feature, and "a group inside a group" is not something the palette should
+ * invite.
+ */
+function paletteHtml(path, top) {
+  return (state.blockTypes ?? [])
+    .filter((b) => (top ? true : !b.children))
+    .map((b) => `<button class="btn outline sm" ${
+      top
+        ? `data-block="${attr(b.type)}"`
+        : `data-block-add-to="${attr(path)}" data-block-type="${attr(b.type)}"`
+    }>${icon("plus")}${esc(b.label)}</button>`)
+    .join("");
+}
+
+/** One block, its controls, and — for a container — its children. */
+function blockHtml(b, path) {
+  const spec = specOf(b.type);
+  const body = spec.children
+    ? `${(Array.isArray(b.content) ? b.content : []).map((child, i) => blockHtml(child, `${path}.${i}`)).join("")
+        || `<div class="empty">Empty container.</div>`}
+       <div class="toolbar" style="margin-top:.5rem">${paletteHtml(path, false)}</div>`
+    : renderBlockAttrs(spec, b.attrs || {}, path);
+  return `<div class="block">
+      <div class="blockhead">
+        <b>${esc(spec.label)}</b>
+        <span class="block-tools">
+          <button class="btn ghost sm" data-block-move="${attr(path)}|-1" title="Move up">${icon("arrow-up")}</button>
+          <button class="btn ghost sm" data-block-move="${attr(path)}|1" title="Move down">${icon("arrow-down")}</button>
+          <button class="btn ghost sm" data-block-dup="${attr(path)}" title="Duplicate">${icon("copy")}</button>
+          <button class="btn ghost sm" data-block-del="${attr(path)}" title="Remove">${icon("trash")}</button>
+        </span>
+      </div>
+      ${body}
+    </div>`;
+}
 
 function drawBlocks() {
   const el = document.querySelector("#blocks");
   if (!el) return;
-  el.innerHTML = state.blocks.map((b, i) => `<div class="block">
-      <div class="blockhead">
-        <b>${esc(b.type)}</b>
-        <span class="block-tools">
-          <button class="btn ghost sm" data-block-move="${i}|-1" title="Move up">${icon("arrow-up")}</button>
-          <button class="btn ghost sm" data-block-move="${i}|1" title="Move down">${icon("arrow-down")}</button>
-          <button class="btn ghost sm" data-block-dup="${i}" title="Duplicate">${icon("copy")}</button>
-          <button class="btn ghost sm" data-block-del="${i}" title="Remove">${icon("trash")}</button>
-        </span>
-      </div>
-      <textarea data-block-input="${i}" placeholder="Block content…">${esc(blockText(b))}</textarea>
-    </div>`).join("") || `<div class="empty">Add a block to start writing.</div>`;
+  el.innerHTML = state.blocks.map((b, i) => blockHtml(b, String(i))).join("")
+    || `<div class="empty">Add a block to start writing.</div>`;
 }
 
-export function addBlock(t) { state.blocks.push({ type: t, attrs: { text: "" } }); drawBlocks(); markDirty(); }
-function moveBlock(i, d) {
-  const j = i + d;
-  if (j < 0 || j >= state.blocks.length) return;
-  [state.blocks[i], state.blocks[j]] = [state.blocks[j], state.blocks[i]];
+/**
+ * `addBlock(type)` is the pre-existing `window.*` handler (inserts at the top
+ * level); `addBlock(type, path)` inserts into the container at `path`.
+ *
+ * The tree work itself lives in `block-fields.js` so it can be driven without a
+ * DOM — the addressing is where the silent wrong-content bugs live.
+ */
+export function addBlock(type, path) {
+  const spec = specOf(type);
+  insertBlock(state.blocks, path ?? null, spec.children ? { type, content: [] } : { type, attrs: {} });
   drawBlocks(); markDirty();
 }
-function duplicateBlock(i) { state.blocks.splice(i + 1, 0, JSON.parse(JSON.stringify(state.blocks[i]))); drawBlocks(); markDirty(); }
-function removeBlock(i) { state.blocks.splice(i, 1); drawBlocks(); markDirty(); }
-function updateBlock(i, v) { state.blocks[i].attrs = state.blocks[i].attrs || {}; state.blocks[i].attrs.text = v; markDirty(); }
+
+/** Run a tree mutation, re-drawing only when it changed something. Typing does
+ *  not come through here: re-rendering on every keystroke would drop focus. */
+function mutate(fn, ...args) {
+  if (fn(state.blocks, ...args)) { drawBlocks(); markDirty(); }
+}
 
 function markDirty() {
   const e = document.querySelector("#saveState");
@@ -230,12 +285,23 @@ document.addEventListener("click", (e) => {
   }
   const add = e.target.closest("[data-block]");
   if (add) { addBlock(add.dataset.block); return; }
+  // Nested insert (a palette drawn inside a group/columns container).
+  const addTo = e.target.closest("[data-block-add-to]");
+  if (addTo) { addBlock(addTo.dataset.blockType, addTo.dataset.blockAddTo); return; }
   const mv = e.target.closest("[data-block-move]");
-  if (mv) { const [i, d] = mv.dataset.blockMove.split("|").map(Number); moveBlock(i, d); return; }
+  if (mv) { const [p, d] = mv.dataset.blockMove.split("|"); mutate(moveBlockAt, p, Number(d)); return; }
   const dup = e.target.closest("[data-block-dup]");
-  if (dup) { duplicateBlock(Number(dup.dataset.blockDup)); return; }
+  if (dup) { mutate(duplicateBlockAt, dup.dataset.blockDup); return; }
   const del = e.target.closest("[data-block-del]");
-  if (del) { removeBlock(Number(del.dataset.blockDel)); return; }
+  if (del) { mutate(removeBlockAt, del.dataset.blockDel); return; }
+  const itemAdd = e.target.closest("[data-block-item-add]");
+  if (itemAdd) { const [p, k] = itemAdd.dataset.blockItemAdd.split("|"); mutate(addItemAt, p, k); return; }
+  const itemDel = e.target.closest("[data-block-item-del]");
+  if (itemDel) {
+    const [p, k, i] = itemDel.dataset.blockItemDel.split("|");
+    mutate(removeItemAt, p, k, Number(i));
+    return;
+  }
   const back = e.target.closest("[data-back]");
   if (back) { clearInterval(state.autosaveTimer); go(state.page); return; }
   const act = e.target.closest("[data-action]");
@@ -246,8 +312,21 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("input", (e) => {
-  const ta = e.target.closest("[data-block-input]");
-  if (ta) { updateBlock(Number(ta.dataset.blockInput), ta.value); return; }
+  // ⚠️ The item branch is checked **first**: a `media-list` row carries both
+  // `data-block-attr` (which attribute it belongs to) and `data-block-item`
+  // (which entry). Reading it as a scalar attribute would write the item's text
+  // over the whole list.
+  const item = e.target.closest("[data-block-item]");
+  if (item) {
+    setItemAt(state.blocks, item.dataset.blockPath, item.dataset.blockAttr, Number(item.dataset.blockItem), item.dataset.itemKey, item.value);
+    markDirty();
+    return;
+  }
+  // A scalar block attribute. Which key it writes comes from the markup, which
+  // comes from the server's declaration — the editor never decides that an
+  // image stores its URL under `url` rather than `text`.
+  const field = e.target.closest("[data-block-attr]");
+  if (field) { setAttrAt(state.blocks, field.dataset.blockPath, field.dataset.blockAttr, field.value); markDirty(); return; }
   if (e.target.closest("#title, #excerpt, #locale, #slug, #status")) markDirty();
 });
 

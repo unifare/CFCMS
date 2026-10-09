@@ -53,6 +53,13 @@ const ARCH = join(ROOT, "tests/suites/architecture.test.mjs");
 const SCOPE = join(ROOT, "tests/tools/_schema-scope.mjs");
 const MANIFEST = join(ROOT, "src/extensions/contract/manifest.ts");
 const VALIDATION = join(ROOT, "src/extensions/contract/validation.ts");
+// Batch 16: the block attribute contract and its two consumers. The contract
+// exists because the editor wrote `attrs.text` for every block while the
+// renderer read a different attribute per type, so six of twelve blocks
+// rendered empty at HTTP 200.
+const BLOCKS = join(ROOT, "src/rendering/blocks.ts");
+const FRONTEND = join(ROOT, "src/platform/frontend.ts");
+const BLOCK_FIELDS = join(ROOT, "public/admin/js/block-fields.js");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -310,6 +317,53 @@ const SCENARIOS = [
     after: ["  // Never re-list block types here.\n  const legacy = [\"core/paragraph\", \"Paragraph\"];"],
     runs: [["tests/suites/architecture.test.mjs", "the admin SPA carries no block-name literals (palette comes from CORE_BLOCKS)"]],
   },
+  {
+    // The renderer reads one attribute per block type. Reading a *different*
+    // one than the contract declares is exactly the defect class this guard
+    // exists for: the block still renders, just with nothing in it.
+    label: "the renderer reads an attribute the contract does not declare",
+    file: FRONTEND,
+    before: ['case"core/image":return a.url?'],
+    after: ['case"core/image":return a.src?'],
+    runs: [["tests/suites/architecture.test.mjs", "the renderer reads exactly the attributes each block declares"]],
+  },
+  {
+    // A block the renderer supports but the palette no longer offers is a
+    // block nobody can insert — the other direction of the same drift.
+    label: "a renderer case loses its block declaration",
+    file: BLOCKS,
+    before: ['{ key: "alt", type: "text", labelKey: "core.block.field.imageAlt", fallback: "Alt text" }'],
+    after: ['{ key: "caption", type: "text", labelKey: "core.block.field.imageAlt", fallback: "Alt text" }'],
+    runs: [["tests/suites/architecture.test.mjs", "the renderer reads exactly the attributes each block declares"]],
+  },
+  {
+    // A declared type with no control branch degrades to a text input, which is
+    // how a declared media field silently becomes a URL box.
+    label: "an attribute type loses its control branch",
+    file: BLOCK_FIELDS,
+    before: ['    case "url":\n'],
+    after: ['    case "link":\n'],
+    runs: [["tests/suites/architecture.test.mjs", "every attribute type has a control branch"]],
+  },
+  {
+    // The exported list is what a reader trusts; if it drops a type the switch
+    // still handles, the two tables disagree and nothing else notices.
+    label: "the control module's exported type list drifts from the contract",
+    file: BLOCK_FIELDS,
+    before: ['export const RENDERED_ATTR_TYPES = ["text", "textarea", "url", "media", "media-list"];'],
+    after: ['export const RENDERED_ATTR_TYPES = ["text", "textarea", "url", "media-list"];'],
+    runs: [["tests/suites/architecture.test.mjs", "the control module's type list matches the contract's closed set"]],
+  },
+  {
+    // A media-list without its item keys renders a field with no inputs at all:
+    // the control has no way to invent `url`/`alt`, so the shape belongs in the
+    // declaration.
+    label: "a media-list attribute stops declaring its item keys",
+    file: BLOCKS,
+    before: [', required: true, itemKeys: MEDIA_ITEM_KEYS }]'],
+    after: [', required: true }]'],
+    runs: [["tests/suites/architecture.test.mjs", "every media-list attribute declares its item keys"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -322,7 +376,8 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/account.js"),
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
-  join(ROOT, "public/admin/js/screens/theme-menu.js")])];
+  join(ROOT, "public/admin/js/screens/theme-menu.js"),
+  BLOCKS, FRONTEND, BLOCK_FIELDS])];
 
 function hashAll() {
   const out = {};
@@ -541,12 +596,14 @@ console.log(`\n${"=".repeat(64)}`);
 const final = await runSuite("tests/suites/architecture.test.mjs");
 const finalScope = await runSuite("tests/tools/_schema-scope.mjs");
 const finalManifest = await runSuite("tests/suites/manifest-validation.test.mjs");
+const finalBlocks = await runSuite("tests/suites/editor-blocks.test.mjs");
 console.log(`post-restore: architecture ${final.passed}p/${final.failed}f, ` +
   `schema-scope ${finalScope.passed}p/${finalScope.failed}f, ` +
-  `manifest ${finalManifest.passed}p/${finalManifest.failed}f`);
+  `manifest ${finalManifest.passed}p/${finalManifest.failed}f, ` +
+  `editor-blocks ${finalBlocks.passed}p/${finalBlocks.failed}f`);
 // A missing summary here means "I could not read the result", which is a
 // failure — not an absence of failure.
-for (const [label, res] of [["architecture", final], ["schema-scope", finalScope], ["manifest", finalManifest]]) {
+for (const [label, res] of [["architecture", final], ["schema-scope", finalScope], ["manifest", finalManifest], ["editor-blocks", finalBlocks]]) {
   if (res.aborted) problems.push(`${label} produced no readable verdict after restore (${res.err})`);
   else if (res.failed) problems.push(`${label} not green after restore (${res.failed} failed)`);
 }
