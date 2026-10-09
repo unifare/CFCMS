@@ -9,6 +9,7 @@
 import { api, scoped, state } from "../state.js";
 import { go, pageHead } from "../shell.js";
 import { icon } from "../../icons.js";
+import { t } from "../i18n.js";
 import { attr, confirmDialog, emptyRow, esc, fmtDate, statusBadge, toast } from "../../ui.js";
 import { formatValue } from "../table-form.js";
 
@@ -20,7 +21,7 @@ function menuForTable(logical) {
 }
 
 function notice(c, title, body) {
-  c.innerHTML = `${pageHead({ title, sub: "", crumbs: [{ label: "From theme" }, { label: title }] })}
+  c.innerHTML = `${pageHead({ title, sub: "", crumbs: [{ label: t("core.nav.fromTheme", "From theme") }, { label: title }] })}
   <div class="panel"><div class="empty">${esc(body)}</div></div>`;
 }
 
@@ -29,14 +30,14 @@ export async function tableListScreen(c, table) {
   // Reached without a table (the `table-list` screen key itself, or a menu with
   // no args). Say so rather than rendering an empty table that looks broken.
   if (!logical) {
-    notice(c, "Table", "This screen needs a table name. Declare it as args.table on the menu.");
+    notice(c, t("core.table.notice", "Table"), t("core.table.needsName", "This screen needs a table name. Declare it as args.table on the menu."));
     return;
   }
 
   const d = await api(scoped(`theme-tables/${encodeURIComponent(logical)}?limit=100`));
   const def = d.def;
   if (!def) {
-    notice(c, logical, `No table named "${logical}" is declared for this site.`);
+    notice(c, logical, t("core.table.notDeclared", "No table named “{name}” is declared for this site.", { name: logical }));
     return;
   }
 
@@ -45,7 +46,7 @@ export async function tableListScreen(c, table) {
   const fields = Array.isArray(def.fields) ? def.fields : [];
   const rows = Array.isArray(d.items) ? d.items : [];
 
-  const head = ["Slug", ...fields.map((f) => String(f.label || f.key)), "Status", "Updated", ""]
+  const head = [t("core.content.slug", "Slug"), ...fields.map((f) => String(f.label || f.key)), t("core.content.status", "Status"), t("core.content.updated", "Updated"), ""]
     .map((h) => `<th>${esc(h)}</th>`)
     .join("");
 
@@ -61,8 +62,8 @@ export async function tableListScreen(c, table) {
       <td>${statusBadge(row.status)}</td>
       <td class="muted text-sm">${esc(fmtDate(row.updated_at))}</td>
       <td class="actions">
-        <button class="btn outline sm" data-table-edit="${attr(logical)}|${attr(slug)}">${icon("pencil")}Edit</button>
-        <button class="btn outline sm danger" data-table-del="${attr(logical)}|${attr(slug)}">${icon("trash")}Delete</button>
+        <button class="btn outline sm" data-table-edit="${attr(logical)}|${attr(slug)}">${icon("pencil")}${esc(t("core.editor.edit", "Edit"))}</button>
+        <button class="btn outline sm danger" data-table-del="${attr(logical)}|${attr(slug)}">${icon("trash")}${esc(t("core.action.delete", "Delete"))}</button>
       </td>
     </tr>`;
     })
@@ -70,13 +71,13 @@ export async function tableListScreen(c, table) {
 
   c.innerHTML = `${pageHead({
     title,
-    sub: `${rows.length} row${rows.length === 1 ? "" : "s"} · table ${def.table_name}`,
-    actions: `<button class="btn primary" data-table-new="${attr(logical)}">${icon("plus")}Add</button>`,
-    crumbs: [{ label: "From theme" }, { label: title }],
+    sub: `${rows.length === 1 ? t("core.table.rowsOne", "1 row") : t("core.table.rowsMany", "{n} rows", { n: rows.length })} · ${t("core.table.tableName", "table {name}", { name: def.table_name })}`,
+    actions: `<button class="btn primary" data-table-new="${attr(logical)}">${icon("plus")}${esc(t("core.table.add", "Add"))}</button>`,
+    crumbs: [{ label: t("core.nav.fromTheme", "From theme") }, { label: title }],
   })}
   <div class="table-wrap"><table class="table">
     <thead><tr>${head}</tr></thead>
-    <tbody>${body || emptyRow(fields.length + 4, "No rows yet.")}</tbody>
+    <tbody>${body || emptyRow(fields.length + 4, t("core.table.noRows", "No rows yet."))}</tbody>
   </table></div>`;
 }
 
@@ -106,18 +107,18 @@ document.addEventListener("click", async (e) => {
   if (del) {
     const [table, slug] = String(del.dataset.tableDel).split("|");
     const yes = await confirmDialog({
-      title: "Delete row",
-      description: `Delete "${slug}" from ${table}? This cannot be undone.`,
+      title: t("core.table.deleteTitle", "Delete row"),
+      description: t("core.table.deleteDesc", "Delete “{slug}” from {table}? This cannot be undone.", { slug, table }),
     });
     if (!yes) return;
     try {
       await api(scoped(`theme-tables/${encodeURIComponent(table)}/${encodeURIComponent(slug)}`), {
         method: "DELETE",
       });
-      toast("Row deleted");
+      toast(t("core.table.rowDeleted", "Row deleted"));
       await go(`table:${table}`);
     } catch (err) {
-      toast(err.message || "Delete failed", "error");
+      toast(err.message || t("core.table.deleteFailed", "Delete failed"), "error");
     }
   }
 });

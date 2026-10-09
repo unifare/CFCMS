@@ -9,6 +9,7 @@
 import { api, scoped, state } from "../state.js";
 import { go, pageHead } from "../shell.js";
 import { icon } from "../../icons.js";
+import { t } from "../i18n.js";
 import { attr, esc, toast } from "../../ui.js";
 import { collectForm, fieldControl, slugControl, statusControl } from "../table-form.js";
 
@@ -29,14 +30,14 @@ function menuForTable(logical) {
 }
 
 function notice(c, title, body) {
-  c.innerHTML = `${pageHead({ title, sub: "", crumbs: [{ label: "From theme" }, { label: title }] })}
+  c.innerHTML = `${pageHead({ title, sub: "", crumbs: [{ label: t("core.nav.fromTheme", "From theme") }, { label: title }] })}
   <div class="panel"><div class="empty">${esc(body)}</div></div>`;
 }
 
 export async function tableEditScreen(c, table, slug) {
   const logical = String(table ?? "").trim();
   if (!logical) {
-    notice(c, "Table", "This screen needs a table name. Declare it as args.table on the menu.");
+    notice(c, t("core.table.notice", "Table"), t("core.table.needsName", "This screen needs a table name. Declare it as args.table on the menu."));
     return;
   }
 
@@ -55,11 +56,11 @@ export async function tableEditScreen(c, table, slug) {
   }
 
   if (!def) {
-    notice(c, logical, `No table named "${logical}" is declared for this site.`);
+    notice(c, logical, t("core.table.notDeclared", "No table named “{name}” is declared for this site.", { name: logical }));
     return;
   }
   if (wanted && !row) {
-    notice(c, logical, `No row with slug "${wanted}" in ${def.table_name}.`);
+    notice(c, logical, t("core.table.noRow", "No row with slug “{slug}” in {table}.", { slug: wanted, table: def.table_name }));
     return;
   }
 
@@ -68,14 +69,14 @@ export async function tableEditScreen(c, table, slug) {
 
   const menu = menuForTable(logical);
   const singular = menu?.label || def.label || logical;
-  const title = wanted ? `Edit ${singular}` : `New ${singular}`;
+  const title = wanted ? t("core.table.editTitle", "Edit {name}", { name: singular }) : t("core.table.newTitle", "New {name}", { name: singular });
 
   const controls = [
     // The slug is the row's identity (`tableSave` upserts on it), so it is
     // fixed once the row exists — otherwise a typo would create a second row
     // instead of renaming this one, and nothing would report a problem.
     wanted
-      ? `<div class="field"><label>Slug</label><input type="text" value="${attr(wanted)}" disabled></div>`
+      ? `<div class="field"><label>${esc(t("core.content.slug", "Slug"))}</label><input type="text" value="${attr(wanted)}" disabled></div>`
       : slugControl(""),
     ...fields.map((f) => fieldControl(f, row ? row[f.key] : undefined)),
     statusControl(row ? row.status : "draft"),
@@ -83,12 +84,12 @@ export async function tableEditScreen(c, table, slug) {
 
   c.innerHTML = `${pageHead({
     title,
-    sub: `table ${def.table_name}`,
-    actions: `<button class="btn primary" data-table-save="${attr(logical)}" data-table-slug="${attr(wanted)}">${icon("save")}Save</button>`,
+    sub: t("core.table.tableName", "table {name}", { name: def.table_name }),
+    actions: `<button class="btn primary" data-table-save="${attr(logical)}" data-table-slug="${attr(wanted)}">${icon("save")}${esc(t("core.action.save", "Save"))}</button>`,
     crumbs: [
-      { label: "From theme" },
+      { label: t("core.nav.fromTheme", "From theme") },
       { label: singular },
-      { label: wanted || "New" },
+      { label: wanted || t("core.table.new", "New") },
     ],
   })}
   <div class="panel"><div class="form-grid">${controls}</div></div>`;
@@ -112,7 +113,7 @@ document.addEventListener("click", async (e) => {
   if (statusEl) payload.status = statusEl.value;
 
   if (!payload.slug) {
-    toast("Slug is required", "error");
+    toast(t("core.table.slugRequired", "Slug is required"), "error");
     return;
   }
 
@@ -122,9 +123,9 @@ document.addEventListener("click", async (e) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    toast("Saved");
+    toast(t("core.msg.saved", "Saved."));
     await go(`table:${table}`);
   } catch (err) {
-    toast(err.message || "Save failed", "error");
+    toast(err.message || t("core.table.saveFailed", "Save failed"), "error");
   }
 });

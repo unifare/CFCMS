@@ -9,6 +9,7 @@
  */
 import { api } from "../state.js";
 import { pageHead } from "../shell.js";
+import { t } from "../i18n.js";
 import { emptyRow, esc } from "../../ui.js";
 
 export default async function resources(c, path, title) {
@@ -17,11 +18,11 @@ export default async function resources(c, path, title) {
   const keys = rows[0] ? Object.keys(rows[0]).slice(0, 7) : [];
   c.innerHTML = `${pageHead({
     title,
-    sub: `${rows.length} record${rows.length === 1 ? "" : "s"}`,
-    crumbs: [{ label: "General" }, { label: title }],
+    sub: rows.length === 1 ? t("core.res.recordsOne", "1 record") : t("core.res.recordsMany", "{n} records", { n: rows.length }),
+    crumbs: [{ label: t("core.nav.general", "General") }, { label: title }],
   })}
   <div class="table-wrap"><table class="table">
-    <thead><tr>${keys.map((k) => `<th>${esc(k.replace(/_/g, " "))}</th>`).join("") || "<th>Data</th>"}</tr></thead>
-    <tbody>${rows.map((r) => `<tr>${keys.map((k) => `<td>${esc(r[k] ?? "—")}</td>`).join("")}</tr>`).join("") || emptyRow(keys.length || 1, "No records.")}</tbody>
+    <thead><tr>${keys.map((k) => `<th>${esc(k.replace(/_/g, " "))}</th>`).join("") || `<th>${esc(t("core.res.colData", "Data"))}</th>`}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${keys.map((k) => `<td>${esc(r[k] ?? "—")}</td>`).join("")}</tr>`).join("") || emptyRow(keys.length || 1, t("core.res.noRecords", "No records."))}</tbody>
   </table></div>`;
 }
