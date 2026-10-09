@@ -426,6 +426,16 @@ const SCENARIOS = [
     after: ['"Duplicate"'],
     runs: [["tests/suites/architecture.test.mjs", "every editor dictionary key has a call site"]],
   },
+  {
+    // The autosave interval used to be cleared in two of the editor's exit
+    // paths, which is how navigation came to be the missing one: a hand-rolled
+    // `clearInterval` is the second cleanup path reappearing.
+    label: "a screen clears the autosave timer by hand again",
+    file: EDITOR_SCREEN,
+    before: ['  stopAutosave();\n  await api(scoped(contentPath(state.type) + "/" + state.editing.id), { method: "DELETE" });'],
+    after: ['  clearInterval(state.autosaveTimer);\n  await api(scoped(contentPath(state.type) + "/" + state.editing.id), { method: "DELETE" });'],
+    runs: [["tests/suites/architecture.test.mjs", "only the shared helper clears the autosave timer"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */

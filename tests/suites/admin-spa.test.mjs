@@ -354,6 +354,7 @@ let winStub = null;
 let tmpDir = null;
 let modules = null;
 let contentEl = null;
+let routeTable = null;
 try {
   tmpDir = mkdtempSync(join(tmpdir(), "cfpress-admin-"));
   cpSync(ADMIN, tmpDir, { recursive: true });
@@ -362,6 +363,11 @@ try {
   const appEl = makeEl("div");
   // Persistent, so a test can read back what a screen wrote into it.
   contentEl = makeEl("div");
+  // Per-path payloads for the sections below that need real data (the editor
+  // reads a single item). Anything not listed falls through to the empty-state
+  // shape every screen already handles. Declared outside the `try` so the
+  // render sections below can add routes.
+  routeTable = new Map();
   const store = new Map();
   winStub = { matchMedia: () => ({ matches: false, addEventListener() {} }), addEventListener() {}, removeEventListener() {}, scrollY: 0 };
 
@@ -381,7 +387,12 @@ try {
     setItem: (k, v) => store.set(k, String(v)),
     removeItem: (k) => store.delete(k),
   };
-  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ user: null }) });
+  globalThis.fetch = async (url, init) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+    if (routeTable.has(path)) return { ok: true, status: 200, json: async () => routeTable.get(path) };
+    if (init && String(init.method || "GET").toUpperCase() !== "GET") return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    return { ok: true, status: 200, json: async () => ({ user: null }) };
+  };
   globalThis.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = init?.detail; } };
   globalThis.location = { origin: "http://localhost" };
   globalThis.CSS = { escape: (s) => String(s) };
@@ -395,6 +406,10 @@ try {
     state: await import(pathToFileURL(join(tmpDir, "js/state.js")).href),
     shell: await import(pathToFileURL(join(tmpDir, "js/shell.js")).href),
     screens: await import(pathToFileURL(join(tmpDir, "js/screens/index.js")).href),
+    // The editor is not in `SCREENS` (the content list delegates to it), so it
+    // has to be reached directly to be rendered at all — see the last section.
+    editor: await import(pathToFileURL(join(tmpDir, "js/screens/editor.js")).href),
+    tableForm: await import(pathToFileURL(join(tmpDir, "js/table-form.js")).href),
   };
 } catch (e) {
   bootError = e;
@@ -487,6 +502,88 @@ if (modules && !bootError) {
     shellHtml.includes('class="sidebar"') && shellHtml.includes('id="app-header"') && shellHtml.includes('id="content"'),
     "the rendered shell markup is missing one of sidebar / header / content"
   );
+
+  // -------------------------------------------------------------------------
+  section("The content editor renders, for a new item and an existing one");
+  // -------------------------------------------------------------------------
+  //
+  // The editor is the one screen the loop above never touches: it is not in
+  // `SCREENS` (the content list delegates to it when `state.editing` is set),
+  // so everything about it was verified only in a browser — which is how three
+  // silent defects lived there: the schedule was dropped on save, the autosave
+  // interval survived navigation, and the locale control let you rewrite a
+  // row's language.
+
+  state.user = { username: "admin", role: "admin" };
+  state.sites = [{ id: "default", name: "Default Site", is_default: 1 }];
+  state.site = "default";
+  state.locales = ["en", "zh-CN"];
+  state.defaultLocale = "en";
+
+  // A row with a schedule and a language, so the round trip has something to
+  // round-trip.
+  routeTable.set("/api/v1/posts/p1", {
+    items: [{
+      id: "p1", slug: "scheduled-post", slug_own: "scheduled-post", title: "Scheduled",
+      excerpt: "x", locale: "zh-CN", status: "scheduled", content: "[]", meta: {},
+      publish_at: 1790000000,
+    }],
+  });
+
+  // `newContent` / `editContent` call `render()` without awaiting it (they are
+  // called from click handlers, where nobody is waiting), so a test has to let
+  // the render chain settle before reading the markup back. Same flush the boot
+  // above uses.
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  state.page = "posts";
+  state.editing = null;
+  contentEl.innerHTML = "";
+  await modules.editor.newContent("posts");
+  await settle();
+  const newHtml = contentEl.innerHTML;
+  check("a new item renders the editor",
+    newHtml.includes('id="title"') && newHtml.includes('id="blocks"'), newHtml.slice(0, 160));
+  check("and its locale picker is editable, because the choice is real",
+    /<select id="locale"(?![^>]*disabled)/.test(newHtml),
+    newHtml.match(/<select id="locale"[^>]*>/)?.[0] || "no locale select");
+  check("a new item shows no schedule", /<input id="publishAt"[^>]*value=""/.test(newHtml),
+    newHtml.match(/<input id="publishAt"[^>]*>/)?.[0] || "no publishAt input");
+  modules.state.stopAutosave();
+
+  contentEl.innerHTML = "";
+  // Surfaced rather than swallowed: an exception here means the screen never
+  // rendered, and every assertion below would then be reading the *list* markup
+  // and reporting "no such control" — which points at the markup instead of at
+  // the throw.
+  let editError = null;
+  try { await modules.editor.editContent("posts", "p1"); } catch (e) { editError = e; }
+  await settle();
+  check("loading an existing item does not throw", editError === null, editError ? editError.message : "");
+  const editHtml = contentEl.innerHTML;
+  check("the editor rendered, not the content list", editHtml.includes('id="blocks"'), editHtml.slice(0, 220));
+
+  // The schedule survives the round trip. It used to render empty, so saving an
+  // already-scheduled post sent `publish_at: null` and silently cancelled it.
+  const publishAt = editHtml.match(/<input id="publishAt"[^>]*value="([^"]*)"/)?.[1];
+  check("an existing item shows its schedule", publishAt === modules.tableForm.toLocalInput(1790000000),
+    `rendered value=${JSON.stringify(publishAt)}`);
+  check("and it is a real value, not an empty string", Boolean(publishAt));
+
+  // The locale of an existing row is a fact, not a field: an editable select
+  // would ask the API to move this version into another language, which is not
+  // what "switch language" means — the version bar creates a sibling instead.
+  check("an existing item's locale is not editable",
+    /<select id="locale"[^>]*disabled/.test(editHtml),
+    editHtml.match(/<select id="locale"[^>]*>/)?.[0] || "no locale select");
+
+  // The autosave interval starts for an existing item and navigation stops it.
+  // It used to be cleared in only two of the editor's exit paths, so leaving
+  // through the sidebar left it POSTing while the user was on another screen.
+  check("editing an existing item starts the autosave interval",
+    state.autosaveTimer !== null && state.autosaveTimer !== undefined);
+  await modules.shell.go("dashboard");
+  check("and navigating away stops it", state.autosaveTimer === null);
 }
 
 if (tmpDir) {

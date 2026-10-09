@@ -2114,6 +2114,16 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    ⚠️ 状态值落库仍是英文小写，**只翻译显示层**
    ⚠️ **`<option>` 不写显式 `value` 时浏览器拿文本当值** ⇒ 翻译标签会把 `草稿` 写进数据库
    ⚠️ 守卫只能证"键存在"，证不了"屏幕真的读了它" ⇒ 需要真浏览器验收（`_i18n-browser.cjs` §7）
+
+【编辑器的定时器与身份】（AGENTS.md 规则 64）
+64. 自动保存定时器是**平台级唯一**的一个，由编辑器启动、由导航停止
+   a) 清理路径只有一处（`state.js` 的 `stopAutosave()`）；不得手写 `clearInterval(state.autosaveTimer)`
+   b) `go()` / `switchSite()` 必须调用它——原本只在 `Back` 与保存成功两条路径里清，
+      从侧栏离开会把定时器留在后台继续 POST（零失败、写入不可见）
+   c) 已存在条目的 `#locale` **只读**：切语言 = 切版本（版本条），不是改写这一行的语言
+   d) 保存/自动保存从 `state.editing.locale` 读语言，不从 DOM 读
+   ⚠️ `publish_at` 必须往返（`table-form.js` 的 `toLocalInput`/`fromLocalInput`）；
+      丢掉它 = "打开已排期文章再保存"会**静默取消排期**
 ```
 
 ---

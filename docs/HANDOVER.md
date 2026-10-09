@@ -73,6 +73,7 @@ a81e5e0  Re-key tenant audit verdicts after the mobai batch
 (batch 16 Track B1: the block attribute contract, and the editor's per-type controls — 见 §5)
 (batch 16 Track A3: one media control for blocks, custom fields and settings — 见 §5)
 (batch 16 Track B3: the content editor in every interface language — 见 §5)
+(batch 16 Track B4 part 1: the editor's timer, its schedule round trip and its locale identity — 见 §5)
 ```
 
 **批次 16 Track 0（媒体隔离地基）**：`media_files` 自 0009 起就有 `site_id`，但
@@ -270,6 +271,37 @@ Node 侧断言"标记里含有 `<img>`"永远是对的——因为它检查的�
 **新基线**：**25 套件 + `_schema-scope`，26 项 / 1341 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `npm run gate` 四项全绿；`_skeleton-inject` 34/34 场景有效；
 三个浏览器验收脚本全绿（i18n 29 / 菜单 31 / 媒体控件 25）。
+
+### 批次 16 Track B4（多语言编辑体验）第 1 部分 —— ✅ 本轮完成
+
+**起点**：方案文档里 B4 列了三条，其中两条是**静默缺陷**，一条是**语义陷阱**。
+本轮把三条都修了，并补上了让它们**不需要浏览器就能验证**的覆盖。
+
+| 项 | 状态 |
+|---|---|
+| **自动保存定时器泄漏**：原来只在 `Back` 与保存成功两条路径里 `clearInterval`，**从侧栏离开编辑器**（走 `shell.go()`）会把定时器留在后台，每 10 秒照旧 POST 一次自动保存——用户在看别的屏幕。零失败、写入不可见 | ✅ |
+| **`publish_at` 被丢掉**：`editContent` 不读 `publish_at`，`#publishAt` 恒渲染为空 → "打开一篇已排期的文章再保存" = **静默取消排期**。改用 `table-form.js` 的 `toLocalInput`/`fromLocalInput`（一处定义） | ✅ |
+| **`#locale` 身份陷阱**：已存在条目的语言是**事实**，不是可编辑字段——改它等于要求 API 把这一行搬去另一种语言。现在已存在条目渲染为 `disabled`，提示指向语言版本条；**新建**条目仍可自由选语言（那是真选择） | ✅ |
+| `stopAutosave()` 成为**唯一定义**（`state.js`），`go()` / `switchSite()` 都调用；编辑器不再自己 `clearInterval` | ✅ |
+| 保存/自动保存改从 `state.editing.locale` 读语言（不从 DOM 读身份）；`<select>` 走 `change` 委托回写 | ✅ |
+| **`admin-spa.test.mjs` 首次渲染编辑器屏幕**（19 → **29 条**）：新增"新条目 / 已存在条目"两节，逐条断言**排期往返**、**`#locale` 不可编辑**、**编辑会起定时器而导航会停它**。编辑器此前**不被任何套件渲染**（它不在 `SCREENS` 里，是内容列表委托过去的）——三条缺陷正是因此才活了这么久 | ✅ |
+| 架构守卫 +3（规则 64）：只有 `state.js` 清定时器 / 它确实导出了 `stopAutosave` / 导航确实调了它 | ✅ |
+| `_skeleton-inject.mjs` +1 场景（屏幕重新手写 `clearInterval`）→ **35 场景 0 问题** | ✅ |
+| 规则 64 写进 `AGENTS.md` + `ARCHITECTURE.md` §10 | ✅ |
+
+**一个当场发生的自我验证**：写规则 64 的第一条守卫时，我又把**数组**当成了 `check()` 的条件
+（就是这个文件里已经犯过三次的那个错），而上一轮刚加的**布尔类型守卫直接抛了 `TypeError`**——
+错误当场暴露，而不是留成一条恒真的绿。守卫抓到了写守卫的人。
+
+**本轮踩到的测试时序陷阱**：`newContent` / `editContent` 调用 `render()` 时**没有 await**
+（它们由点击处理器调用，那里没人在等），所以测试读 DOM 必须让渲染链结算一次，
+否则读到的是**空容器**——而症状看起来像"这个控件不存在"。已在测试里加 `settle()` 并注明原因。
+
+**新基线**：**25 套件 + `_schema-scope`，26 项 / 1354 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
+`npm run gate` 四项全绿；`_skeleton-inject` 35/35 场景有效。
+
+**B4 剩余**：多语言编辑体验里"自定义字段跨语言共享"的**标注**（需要 B5 的 `post_meta.locale` 列
+先落地，否则标了也不准）。
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
 
@@ -548,7 +580,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：25 套件 / 1320 条 / 0 失败，另有 `_schema-scope` 21 条 —— 合计 26 项 / 1341 条）
+## 6. 测试与验证（当前全绿：25 套件 / 1333 条 / 0 失败，另有 `_schema-scope` 21 条 —— 合计 26 项 / 1354 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -557,11 +589,11 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 95 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
+| architecture | 98 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
 | _schema-scope | 21 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
-| admin-spa | 19 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次 |
+| admin-spa | 29 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次、**内容编辑器真渲染（新条目 / 已存在条目）：排期往返 + `#locale` 只读 + 自动保存定时器起停** |
 | template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
 | scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
 | theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
@@ -610,7 +642,7 @@ node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 �
 **系统骨架 + 功能开关**的反向验证工具（10+ 场景，手工跑）：
 
 ```bash
-node tests/tools/_skeleton-inject.mjs        # 34 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / 块 attrs 契约 / 媒体控件 / 词典 / dashboard 卡 / 设置表单分支
+node tests/tools/_skeleton-inject.mjs        # 35 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / 块 attrs 契约 / 媒体控件 / 词典 / dashboard 卡 / 设置表单分支
 node tests/tools/_locale-url-inject.mjs     # 4 场景：规则 56–59（slug COALESCE / 散落回退 / locale 正则 / feed 站点隔离）
 node tests/tools/_launcher-inject.mjs        # 16 场景：启动器两侧对齐 / BOM / stderr 提示 / EOF 退出
 node tests/tools/_media-inject.mjs           # 7 场景：规则 60（租户闸门 / 会话闸门 / owner 读闸门 / owner 列表子句 / 上传归属 / 删除顺序 / 分支位置）
@@ -1037,6 +1069,16 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     `Target page, context or browser has been closed`，指向新章节里的辅助函数——
     读起来像"新代码有问题"，其实是"上面有个提前关闭"。
     **收尾动作放脚本末尾**，这样加章节永远不会踩到它。
+48. **入口函数调用 `render()` 时没有 await，于是测试读到的是空容器**（批次 16 B4）。
+    `newContent` / `editContent` 由点击处理器调用，那里没人在等渲染，所以它们 fire-and-forget。
+    测试紧接着读 DOM 时拿到空字符串，而**症状看起来像"这个控件不存在"**——
+    断言全在抱怨标记，没有一个在抱怨时序。修法：测试里让渲染链结算一次（`settle()`），
+    并在注释里写明原因。**"元素不存在"和"还没渲染"是两种完全不同的诊断。**
+49. **同一个文件里第 4 次写出恒真断言，被 `check()` 的布尔守卫当场抛错拦住**（批次 16 B4）。
+    写规则 64 的第一条守卫时又把**数组**当成了条件。上一轮加的
+    `if (typeof condition !== "boolean") throw` 立刻抛了 `TypeError`——
+    **守卫抓到了写守卫的人**。这是把词法模式换成运行时类型检查的回报：
+    模式只能禁"想到的拼法"，类型检查覆盖整类。
 
 ## 9. 权威文档索引
 
@@ -1045,7 +1087,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
 | `docs/design/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
 | `docs/history/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
-| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、**媒体隔离规则 60**、**块 attrs 契约规则 61**、**媒体控件规则 62**、**后台文案与词典规则 63**、明确不做的事） |
+| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、**媒体隔离规则 60**、**块 attrs 契约规则 61**、**媒体控件规则 62**、**后台文案与词典规则 63**、**编辑器定时器与身份规则 64**、明确不做的事） |
 | `docs/HANDOVER.md` | 本文 |
 | `src/shared/features.ts` | **功能开关唯一词汇表 + 解析器**（`FEATURE_SWITCHES` / `featureEnabled()` / `featureSnapshot()`）——开关定义只此一处 |
 | `public/admin/js/screens/features.js` | 功能开关后台屏（每开关一张卡：来源标注 / var 名 / 声明默认 / 继承值 / 重置为继承） |

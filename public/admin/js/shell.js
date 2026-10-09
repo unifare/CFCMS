@@ -9,7 +9,7 @@
  *
  * The login screen is injected the same way, by `auth.js`, for the same reason.
  */
-import { app, loadContext, state } from "./state.js";
+import { app, loadContext, state, stopAutosave } from "./state.js";
 import { header, rememberGroups, sidebar } from "./nav.js";
 import { closeMenus, esc, setTheme, toast } from "../ui.js";
 import { t, setUiLocale } from "./i18n.js";
@@ -56,6 +56,10 @@ export function toggleSidebar() {
 export async function go(p) {
   state.page = p;
   state.editing = null;
+  // Leaving the editor through the sidebar is still leaving the editor. Without
+  // this the autosave interval survived navigation and kept POSTing while the
+  // user was on another screen.
+  stopAutosave();
   closeDrawer();
   closeMenus();
   await render();
@@ -64,6 +68,7 @@ export async function go(p) {
 export async function switchSite(id) {
   state.site = id;
   state.editing = null;
+  stopAutosave();
   closeMenus();
   await loadContext();
   await render();

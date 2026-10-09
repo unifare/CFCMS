@@ -1681,6 +1681,44 @@ section("Every dictionary key the admin asks for exists in every core pack (rule
 }
 
 // ---------------------------------------------------------------------------
+section("The autosave timer has one cleanup path (rule 64)");
+// ---------------------------------------------------------------------------
+
+/**
+ * The editor starts a ten-second autosave interval for an existing item. It used
+ * to clear it in **two** of its exit paths — `Back` and a successful save — so
+ * leaving through the sidebar (which goes through `shell.go()`) left the
+ * interval running: it kept POSTing an autosave while the user was on another
+ * screen. Nothing failed. The writes were just invisible.
+ *
+ * The fix is that there is one definition, `stopAutosave()` in the shared leaf,
+ * and `go()` / `switchSite()` call it. This check is the structural half of that
+ * promise: **no module may clear the timer by hand**, because a hand-rolled
+ * `clearInterval` is how the second cleanup path appears.
+ *
+ * The behavioural half lives in `admin-spa.test.mjs` ("editing an existing item
+ * starts the autosave interval" / "and navigating away stops it") — a structure
+ * check can only see that the call sites exist, not that navigation runs one.
+ */
+{
+  const spaFiles = walk(join(ROOT, "public", "admin"), [".js"]);
+  const handRolled = spaFiles
+    .filter((f) => /clearInterval\s*\(\s*state\.autosaveTimer\s*\)/.test(blankComments(read(f))))
+    .map((f) => rel(f));
+  // (Written with `checkEmpty` on purpose: the first draft passed the array
+  // itself as the condition, and `check()`'s boolean guard threw a TypeError —
+  // which is the guard doing its job on the very check that documents it.)
+  checkEmpty("only the shared helper clears the autosave timer",
+    handRolled.filter((p) => p !== "public/admin/js/state.js"));
+  check("and it really does (non-vacuity)",
+    handRolled.includes("public/admin/js/state.js") && /export function stopAutosave/.test(read(join(ROOT, "public/admin/js/state.js"))));
+
+  // Navigation is the path that was missing, so it is the one worth pinning.
+  const shellSrc = blankComments(read(join(ROOT, "public/admin/js/shell.js")));
+  check("navigation stops it", /stopAutosave\(\)/.test(shellSrc));
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

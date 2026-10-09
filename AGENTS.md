@@ -53,7 +53,7 @@
    本仓库已经发生过**十三种**（见下方「守卫失效记录」与「同一意图的两种写法」）；
    十三条压缩成**七层**之后的判据见 `docs/ARCHITECTURE.md` §12「共同盲区」。
    工具（都在 `tests/tools/`，全部用 Worker 线程、内容哈希、`assertPristine`）：
-   `_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 围栏块路径 / 正文命令路径 / 图标名 / 功能开关 / 块 attrs 契约 / 媒体控件 / 词典，**34 个场景**）、
+   `_skeleton-inject.mjs`（schema / 事件契约 / 断言拼法 / 围栏块路径 / 正文命令路径 / 图标名 / 功能开关 / 块 attrs 契约 / 媒体控件 / 词典，**35 个场景**）、
    `_launcher-inject.mjs`（启动器两侧对齐 / BOM / stderr 提示 / EOF 退出 / 孤儿套件，**16 个场景**）、
    `_i18n-field-inject.mjs`（字段分类，**6 个场景**）、
    `_plugin-pages-inject.mjs`（声明式后台页面，**10 个场景**）、
@@ -447,6 +447,28 @@ Playwright 的请求上下文在 http 上不发它，每个调用都会 401（�
 真浏览器验收在 `tests/tools/_i18n-browser.cjs` §7：切到 zh-CN 打开编辑器，断言**标签是中文**、
 **没有英文残留**、**option 值仍是标识符**，再切回英文。
 **Node 守卫只能证"键存在"，证不了"某个屏幕真的读了它"**——两者缺一不可。
+
+## 编辑器的定时器与身份（规则 64）
+
+编辑器为**已存在的条目**起一个 10 秒自动保存定时器。它原本只在两条退出路径里被清掉
+（`Back` 与保存成功），于是**从侧栏离开编辑器**（走 `shell.go()`）会把定时器留在后台——
+用户在看别的屏幕时，它每 10 秒照旧 POST 一次自动保存。**没有任何东西失败，写入只是看不见。**
+
+| 规则 | 说明 |
+|---|---|
+| 64a | 清理路径**只有一处**：`state.js` 的 `stopAutosave()`；任何模块**不得**自己 `clearInterval(state.autosaveTimer)` |
+| 64b | 导航（`go()` / `switchSite()`）必须调用它 |
+| 64c | 编辑一个**已存在**的条目时，`#locale` 是**只读**的（`disabled`）。切语言 = 切版本（用上方的语言版本条），不是改写这一行的语言 |
+| 64d | 保存与自动保存**从 `state.editing.locale` 读语言**，不从 DOM 读——身份是事实，不是标记 |
+
+⚠️ **`publish_at` 必须往返**：编辑器曾把已排期的 `publish_at` 丢掉（渲染成空），
+于是"打开一篇已排期的文章再保存"= **静默取消排期**。用 `table-form.js` 的
+`toLocalInput` / `fromLocalInput`（一处定义），不要就地写 `new Date(...)`。
+
+守卫：`architecture.test.mjs`（结构：只有 `state.js` 清定时器 + 导航确实调了它）
+**与** `admin-spa.test.mjs`（行为：编辑已存在条目会起定时器、导航离开会停它、
+排期往返、`#locale` 不可编辑）。**结构守卫只能证调用点存在，证不了导航真的跑到了它**——
+两者缺一不可。
 
 ## 守卫失效记录（READ THIS）
 

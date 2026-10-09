@@ -74,6 +74,22 @@ export function scoped(path) {
   return path + sep + "site=" + encodeURIComponent(state.site);
 }
 
+/**
+ * Stop the editor's autosave interval.
+ *
+ * One definition, in the shared leaf, because the timer is a **single
+ * platform-wide** one: the editor starts it and navigation has to stop it.
+ * It used to be cleared in only two of the editor's exit paths (`Back` and a
+ * successful save), so leaving the editor through the sidebar — which goes
+ * through `shell.go()` — left the interval running: it kept POSTing an
+ * autosave every ten seconds while the user was looking at a different screen.
+ * Nothing failed; the writes were just invisible.
+ */
+export function stopAutosave() {
+  clearInterval(state.autosaveTimer);
+  state.autosaveTimer = null;
+}
+
 /** Path for a content list, which may be a theme-declared custom post type. */
 export function contentPath(type) {
   return ["posts", "pages"].includes(type) ? type : "content/" + type;

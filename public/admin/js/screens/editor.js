@@ -5,7 +5,7 @@
  * Everything interactive is wired through document-level delegation so a
  * re-render (which replaces the whole subtree) never drops a handler.
  */
-import { api, contentPath, postTypeInfo, scoped, state } from "../state.js";
+import { api, contentPath, postTypeInfo, scoped, state, stopAutosave } from "../state.js";
 import { go, pageHead, render } from "../shell.js";
 import { icon } from "../../icons.js";
 import {
@@ -13,11 +13,15 @@ import {
   removeBlockAt, removeItemAt, renderBlockAttrs, setAttrAt, setItemAt,
 } from "../block-fields.js";
 import { mediaFieldHtml, openMediaPicker } from "../media-picker.js";
+import { fromLocalInput, toLocalInput } from "../table-form.js";
 import { t } from "../i18n.js";
 import { alertDialog, attr, confirmDialog, esc, fmtDate, openDialog, toast } from "../../ui.js";
 
 export function newContent(type) {
-  state.editing = { id: null, slug: "", title: "", excerpt: "", locale: state.defaultLocale, status: "draft", content: "[]", meta: {} };
+  state.editing = {
+    id: null, slug: "", title: "", excerpt: "", locale: state.defaultLocale,
+    status: "draft", content: "[]", meta: {}, publish_at: null,
+  };
   state.type = type;
   render();
 }
@@ -29,7 +33,13 @@ export async function editContent(type, id) {
     // `slug_own` is this language's own URL segment (NULL = follows the
     // main-table slug); `slug` is always the row's main-table value.
     id, slug: x.slug_own || x.slug || "", title: x.title || "", excerpt: x.excerpt || "",
-    locale: x.locale || state.defaultLocale, status: x.status || "draft", content: x.content || "[]", meta: x.meta || {},
+    locale: x.locale || state.defaultLocale, status: x.status || "draft",
+    content: x.content || "[]", meta: x.meta || {},
+    // Carried so the editor can show the existing schedule. It used to be
+    // dropped on the floor: opening a scheduled post and saving it silently
+    // cancelled the schedule, because `#publishAt` rendered empty and the save
+    // sent `publish_at: null`.
+    publish_at: x.publish_at ?? null,
   };
   state.type = type;
   render();
@@ -152,12 +162,22 @@ export async function editor(c, type) {
   // A locale picker rather than a free-text field: content may only be authored
   // in a language the site actually serves, and typing `zh-cn` by hand used to
   // create a translation nothing would ever look up.
+  // The locale of an existing row is a **fact**, not a field. Changing it would
+  // ask the API to move this version into another language — which is not what
+  // "switch language" means. Switching is the version bar's job, and it creates
+  // a proper sibling version instead of rewriting this row's identity. So for an
+  // existing item the control is read-only and the hint says where to go; for a
+  // new item the choice is real, so it stays editable.
   const localeChoices = (state.locales && state.locales.length ? state.locales : [x.locale || state.defaultLocale]);
+  const localeOptions = localeChoices
+    .map((code) => `<option value="${attr(code)}"${code === x.locale ? " selected" : ""}>${esc(code)}${code === state.defaultLocale ? ` (${esc(t("core.editor.localeDefault", "default"))})` : ""}</option>`)
+    .join("");
+  const localeHint = x.id
+    ? t("core.editor.localeLocked", "This version's language is fixed. Use the language versions above to switch.")
+    : t("core.editor.localeHint", "Each language is its own version");
   const localeField = localeChoices.length > 1
-    ? `<div class="field"><label for="locale">${esc(t("core.editor.locale", "Locale"))}</label><select id="locale">${localeChoices
-        .map((code) => `<option value="${attr(code)}"${code === x.locale ? " selected" : ""}>${esc(code)}${code === state.defaultLocale ? ` (${esc(t("core.editor.localeDefault", "default"))})` : ""}</option>`)
-        .join("")}</select><span class="hint">${esc(t("core.editor.localeHint", "Each language is its own version"))}</span></div>`
-    : `<div class="field"><label for="locale">${esc(t("core.editor.locale", "Locale"))}</label><input id="locale" value="${attr(x.locale)}"></div>`;
+    ? `<div class="field"><label for="locale">${esc(t("core.editor.locale", "Locale"))}</label><select id="locale"${x.id ? " disabled" : ""}>${localeOptions}</select><span class="hint">${esc(localeHint)}</span></div>`
+    : `<div class="field"><label for="locale">${esc(t("core.editor.locale", "Locale"))}</label><input id="locale" value="${attr(x.locale)}" readonly><span class="hint">${esc(localeHint)}</span></div>`;
 
   // ⚠️ The status options carry an explicit `value`. Without it the browser uses
   // the option's *text* as the value, so translating the label would write
@@ -199,7 +219,7 @@ export async function editor(c, type) {
         ${localeField}
         <div class="field"><label for="slug">${esc(t("core.content.slug", "Slug"))}</label><input id="slug" value="${attr(x.slug)}" placeholder="${attr(t("core.editor.slugAuto", "auto from title"))}"><span class="hint">${esc(t("core.editor.slugHint", "URL segment for this language — must be unique within the language"))}</span></div>
         <div class="field"><label for="status">${esc(t("core.editor.status", "Status"))}</label><select id="status">${statusOptions}</select></div>
-        <div class="field"><label for="publishAt">${esc(t("core.editor.publishAt", "Publish at"))}</label><input id="publishAt" type="datetime-local"><span class="hint">${esc(t("core.editor.publishAtHint", "Used when status is scheduled"))}</span></div>
+        <div class="field"><label for="publishAt">${esc(t("core.editor.publishAt", "Publish at"))}</label><input id="publishAt" type="datetime-local" value="${attr(toLocalInput(x.publish_at))}"><span class="hint">${esc(t("core.editor.publishAtHint", "Used when status is scheduled"))}</span></div>
         <button class="btn primary" style="width:100%" data-action="save-content">${icon("save")}${esc(t("core.action.save", "Save"))}</button>
         ${x.id ? `<div class="toolbar" style="margin-top:.5rem">
           <button class="btn outline sm" data-action="revisions">${icon("history")}${esc(t("core.editor.revisions", "Revisions"))}</button>
@@ -212,7 +232,7 @@ export async function editor(c, type) {
 
   drawBlocks();
   if (x.id) {
-    clearInterval(state.autosaveTimer);
+    stopAutosave();
     state.autosaveTimer = setInterval(doAutosave, 10000);
   }
 }
@@ -356,12 +376,27 @@ document.addEventListener("click", async (e) => {
     return;
   }
   const back = e.target.closest("[data-back]");
-  if (back) { clearInterval(state.autosaveTimer); go(state.page); return; }
+  // No explicit stop here: `go()` stops the autosave, so Back and the sidebar
+  // take the same path. Two cleanup paths is how one of them gets forgotten.
+  if (back) { go(state.page); return; }
   const act = e.target.closest("[data-action]");
   if (!act) return;
   if (act.dataset.action === "save-content") saveContent();
   if (act.dataset.action === "revisions") showRevisions();
   if (act.dataset.action === "delete-content") deleteContent();
+});
+
+/**
+ * The locale picker only exists for a **new** item, where choosing the language
+ * you are about to author is a real choice. Mirroring it into the editing state
+ * is what lets the save read the locale from one place — `state.editing.locale`
+ * — instead of from whichever control happens to be on screen. (A `<select>`
+ * reports through `change`; relying on `input` alone works in most browsers and
+ * silently fails in the rest.)
+ */
+document.addEventListener("change", (e) => {
+  const loc = e.target.closest("#locale");
+  if (loc && state.editing) { state.editing.locale = loc.value; markDirty(); }
 });
 
 document.addEventListener("input", (e) => {
@@ -386,7 +421,10 @@ document.addEventListener("input", (e) => {
 async function doAutosave() {
   if (!state.editing?.id) return;
   const body = {
-    locale: document.querySelector("#locale")?.value || "en",
+    // The locale is read from the editing state, not from the DOM: it is a fact
+    // about the row being edited, and the control that shows it may be
+    // read-only (see `editor()`).
+    locale: state.editing.locale,
     title: document.querySelector("#title")?.value || "",
     excerpt: document.querySelector("#excerpt")?.value || "",
     content: state.blocks,
@@ -408,7 +446,7 @@ function collectMeta() {
 }
 
 export async function saveContent() {
-  clearInterval(state.autosaveTimer);
+  stopAutosave();
   const titleEl = document.querySelector("#title");
   if (!titleEl.value.trim()) {
     await alertDialog({
@@ -418,14 +456,18 @@ export async function saveContent() {
     titleEl.focus();
     return;
   }
-  const publishAt = document.querySelector("#publishAt")?.value;
   const body = {
     title: titleEl.value,
     excerpt: document.querySelector("#excerpt").value,
-    locale: document.querySelector("#locale").value,
+    // From the editing state, not the DOM — see `doAutosave`. A read-only
+    // control still has a `value`, but reading identity out of markup is how
+    // the "change the language" footgun got in.
+    locale: state.editing.locale,
     slug: document.querySelector("#slug").value,
     status: document.querySelector("#status").value,
-    publish_at: publishAt ? Math.floor(new Date(publishAt).getTime() / 1000) : null,
+    // `datetime-local` in, epoch seconds out — the same round trip the generated
+    // table forms use (`table-form.js`), so there is one definition of it.
+    publish_at: fromLocalInput(document.querySelector("#publishAt")?.value),
     content: state.blocks,
     meta: collectMeta(),
   };
@@ -541,7 +583,7 @@ export async function deleteContent() {
     confirmLabel: t("core.action.delete", "Delete"),
   });
   if (!ok) return;
-  clearInterval(state.autosaveTimer);
+  stopAutosave();
   await api(scoped(contentPath(state.type) + "/" + state.editing.id), { method: "DELETE" });
   toast(t("core.msg.deleted", "Deleted."));
   state.editing = null;
