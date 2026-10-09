@@ -245,6 +245,34 @@ export async function clearOwnerMenus(
 }
 
 /**
+ * Delete one owner's menus on *every* site.
+ *
+ * `clearOwnerMenus` above is the deactivation path and is per site on purpose:
+ * a theme switched away on site A must keep its menus on site B. Uninstalling
+ * is the opposite case — the extension is leaving the install, so rows on sites
+ * the caller never enumerated are leftovers it still has to remove.
+ *
+ * Those rows are reachable, not hypothetical: an activation interrupted before
+ * it wrote `theme.active` leaves menus behind with no site selecting the theme,
+ * and they point at tables an uninstall is about to drop.
+ *
+ * The predicate still lives here rather than in the caller, so
+ * `admin_menu_registry`'s schema stays owned by this file.
+ */
+export async function clearOwnerMenusAllSites(
+  env: Env,
+  ownerType: MenuOwnerType,
+  ownerName: string
+): Promise<void> {
+  await env.DB.prepare(
+    "DELETE FROM admin_menu_registry WHERE owner_type=? AND owner_name=?"
+  )
+    .bind(ownerType, ownerName)
+    .run()
+    .catch(() => {});
+}
+
+/**
  * Rows for one owner, in declaration order.
  *
  * `siteId` may be a real site or `ALL_SITES`. Reads always include the

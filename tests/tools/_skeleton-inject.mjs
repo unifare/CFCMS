@@ -447,6 +447,41 @@ const SCENARIOS = [
     after: [''],
     runs: [["tests/suites/theme-integration.test.mjs", "uninstalling the active theme is refused"]],
   },
+  // The other half of uninstalling: what it removes *besides* the obvious three.
+  // Each of these four was a real gap — the uninstall deleted the registry row,
+  // the generated tables and the R2 files, and left admin menus pointing at the
+  // dropped tables plus a phantom theme in the settings. §9 used to upload the
+  // throwaway theme and uninstall it without ever activating it, so it owned
+  // nothing and every "is X gone?" assertion passed on a build that removed
+  // none of it. One scenario per line, because one line is one leak.
+  {
+    label: "theme uninstall leaves the theme's admin menus behind",
+    file: API,
+    before: ['  await clearOwnerMenusAllSites(env,"theme",name);'],
+    after: [''],
+    runs: [["tests/suites/theme-integration.test.mjs", "its admin menus are gone"]],
+  },
+  {
+    label: "theme uninstall leaves the theme's setting definitions behind",
+    file: API,
+    before: ['  await env.DB.prepare("DELETE FROM theme_setting_defs WHERE theme_name=?").bind(name).run().catch(()=>{});'],
+    after: [''],
+    runs: [["tests/suites/theme-integration.test.mjs", "its setting definitions are gone"]],
+  },
+  {
+    label: "theme uninstall leaves the theme's saved setting values behind",
+    file: API,
+    before: ['  await env.DB.prepare("DELETE FROM theme_settings WHERE theme_name=?").bind(name).run().catch(()=>{});'],
+    after: [''],
+    runs: [["tests/suites/theme-integration.test.mjs", "its saved setting values are gone"]],
+  },
+  {
+    label: "theme uninstall leaves the theme's capability grants behind",
+    file: API,
+    before: [`  await env.DB.prepare("DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name=?").bind(name).run().catch(()=>{});`],
+    after: [''],
+    runs: [["tests/suites/theme-integration.test.mjs", "its capability grants are gone"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */

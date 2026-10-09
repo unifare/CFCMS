@@ -12,7 +12,7 @@ import { createRevision, autosave } from "./platform/revisions";
 import { requirePermission, can } from "./platform/permissions";
 import { bumpContentCache } from "./shared/cache";
 import { featureSnapshot, inheritedValue, truthy, FEATURE_SETTINGS_KEY, FEATURE_SWITCHES, type FeatureSwitch } from "./shared/features";
-import { listAdminMenuGroups } from "./platform/admin-menus";
+import { clearOwnerMenusAllSites, listAdminMenuGroups } from "./platform/admin-menus";
 import { clearPluginMenus } from "./extensions/plugin/menus";
 import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./platform/sites";
 // Media access policy — the same module the front-end `/media/<key>` read path
@@ -770,7 +770,15 @@ async function mediaRowForWrite(
  *  replacing a file's contents would silently break every page already
  *  referencing the old object, so that is a delete + upload, not a PATCH. */
 /**
- * Uninstall a theme: its R2 files, its registry row, and every generated table.
+ * Uninstall a theme: everything keyed by it, plus its R2 files.
+ *
+ * "Everything" is the whole set, not just the obvious three: the registry row,
+ * the generated-table mapping and the tables themselves, the capability rows
+ * applied on any site, the theme's rows in the shared admin-menu registry, and
+ * its setting definitions and saved values. A theme is the one case where
+ * "deactivation keeps your data so switching back restores the site" does not
+ * apply — there is no switching back — so anything left behind is orphaned
+ * rather than dormant.
  *
  * Refuses while any site still selects it — uninstalling the theme that renders
  * a live site takes the site down with it, and the 409 names the sites so the
@@ -807,6 +815,27 @@ async function uninstallTheme(env: Env, userId: string, name: string) {
   for(const table of ["post_types","taxonomies","field_defs","theme_routes","theme_blocks"]){
     await env.DB.prepare(`DELETE FROM ${table} WHERE declared_by_theme=?`).bind(name).run().catch(()=>{});
   }
+
+  // Admin menus are the same leftovers, but they live in the shared registry
+  // and are therefore cleared through its API rather than a raw DELETE here —
+  // the ownership predicate stays in one place, exactly as it does on the
+  // deactivation path. Deactivation only clears the site it ran on, so a theme
+  // whose activation was interrupted keeps menus pointing at the tables just
+  // dropped above: the admin still sees the nav entry and the click 404s.
+  await clearOwnerMenusAllSites(env,"theme",name);
+
+  // Setting definitions and the values saved against them are keyed by theme
+  // name. Deactivation deliberately keeps both (switching away and back must
+  // not lose the site's configuration), so uninstalling is the only place they
+  // can be removed — and once the theme is gone nothing reads them, so they
+  // would sit in the admin forever as a theme that no longer exists.
+  await env.DB.prepare("DELETE FROM theme_setting_defs WHERE theme_name=?").bind(name).run().catch(()=>{});
+  await env.DB.prepare("DELETE FROM theme_settings WHERE theme_name=?").bind(name).run().catch(()=>{});
+
+  // Capability grants are keyed by extension name and are what the runtime
+  // consults before letting an extension act. The package is leaving the
+  // install, so its grants must not outlive it.
+  await env.DB.prepare("DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name=?").bind(name).run().catch(()=>{});
 
   // R2 files: every version, not only the installed one — re-uploading a theme
   // leaves the previous version's prefix behind, and an uninstall that keeps

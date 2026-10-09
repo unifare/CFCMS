@@ -32,7 +32,7 @@ export default async function themes(c) {
         ? `<div class="muted text-sm">${esc(t("core.themes.activeHere", "Active on this site"))}</div>`
         : `<div class="muted text-sm">${others.length ? esc(t("core.themes.alsoUsed", "Also used by: {sites}", { sites: others.join(", ") })) : esc(t("core.themes.notInUse", "Not in use"))}</div>
            <button class="btn primary sm" style="margin-top:.75rem" data-theme-activate="${attr(x.name)}">${icon("check")}${esc(t("core.themes.activateHere", "Activate here"))}</button>
-           <button class="btn outline danger sm" style="margin-top:.5rem" data-theme-del="${attr(x.name)}">${icon("trash")}${esc(t("core.themes.uninstall", "Uninstall"))}</button>`}
+           <button class="btn outline danger sm" style="margin-top:.5rem" data-theme-del="${attr(x.name)}" data-theme-del-sites="${attr(others.join(","))}">${icon("trash")}${esc(t("core.themes.uninstall", "Uninstall"))}</button>`}
     </div>`;
   }).join("");
 
@@ -90,6 +90,19 @@ document.addEventListener("click", async (e) => {
   const del = e.target.closest("[data-theme-del]");
   if (del) {
     const name = del.dataset.themeDel;
+    // A theme another site is rendering cannot be uninstalled — the endpoint
+    // answers 409. The card already knows which sites those are, so say it
+    // before sending a request whose only possible answer is the refusal.
+    // (The 409 stays as the authority; this only spares the round trip, and a
+    // site that activates the theme in between is still caught by it.)
+    const used = (del.dataset.themeDelSites || "").split(",").filter(Boolean);
+    if (used.length) {
+      await alertDialog({
+        title: t("core.themes.uninstallTitle", "Uninstall this theme?"),
+        description: t("core.themes.stillActive", "Still active on: {sites}. Deactivate it there first.", { sites: used.join(", ") }),
+      });
+      return;
+    }
     const sure = await confirmDialog({
       title: t("core.themes.uninstallTitle", "Uninstall this theme?"),
       description: t("core.themes.uninstallDesc", "Removes its files, registry row and generated tables. A theme that is still active on a site cannot be uninstalled."),

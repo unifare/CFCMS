@@ -219,6 +219,13 @@ function buildThemeZip(name) {
       { key: "currency", label: "Currency", type: "text", default: "¥" },
     ],
     capabilities: ["content.read", "content.write", "routes.register"],
+    // `capabilities` above is the theme-API surface a theme exposes to its own
+    // templates (`themeCapabilities()`). `permissions` is the separate
+    // install-time grant list the installer writes into
+    // `extension_capabilities` — and it is what makes an uninstall's cleanup
+    // observable: without it the throwaway theme has no grants to leak, and the
+    // assertion below would pass on a build that never deletes them.
+    permissions: ["content.read", "content.write", "routes.register"],
     runtime: "declarative",
   };
 
@@ -323,6 +330,7 @@ async function main() {
     "DELETE FROM posts WHERE id='prop_1'",
     "DELETE FROM theme_installs WHERE name='realestate'",
     "DELETE FROM extension_versions WHERE extension_name='realestate'",
+    "DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name='realestate'",
     "DELETE FROM post_types WHERE declared_by_theme='realestate'",
     "DELETE FROM taxonomies WHERE declared_by_theme='realestate'",
     "DELETE FROM field_defs WHERE declared_by_theme='realestate'",
@@ -330,12 +338,31 @@ async function main() {
     "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='realestate'",
     "DELETE FROM theme_blocks WHERE declared_by_theme='realestate'",
     "DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='realestate'",
+    "DELETE FROM theme_setting_defs WHERE theme_name='realestate'",
+    "DELETE FROM theme_settings WHERE theme_name='realestate'",
     // `theme_table_defs` deliberately survives theme deactivation (§3.4 — the
     // rows must stay reachable after a switch), so nothing removes this fixture
     // for us. Leaving it behind pollutes the shared local D1 that the other
     // suites read: a site-level "which tables exist" listing picks it up.
     "DROP TABLE IF EXISTS theme_realestate_listing_i18n",
     "DROP TABLE IF EXISTS theme_realestate_listing",
+    // §9's throwaway theme. The uninstall removes it for real, but an aborted
+    // run must not hand the next suite a theme that is half-there — that is the
+    // exact "uninstall leaked" state the section is about.
+    "DELETE FROM theme_installs WHERE name='uninstallme'",
+    "DELETE FROM extension_versions WHERE extension_name='uninstallme'",
+    "DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name='uninstallme'",
+    "DELETE FROM post_types WHERE declared_by_theme='uninstallme'",
+    "DELETE FROM taxonomies WHERE declared_by_theme='uninstallme'",
+    "DELETE FROM field_defs WHERE declared_by_theme='uninstallme'",
+    "DELETE FROM theme_routes WHERE declared_by_theme='uninstallme'",
+    "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='uninstallme'",
+    "DELETE FROM theme_blocks WHERE declared_by_theme='uninstallme'",
+    "DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='uninstallme'",
+    "DELETE FROM theme_setting_defs WHERE theme_name='uninstallme'",
+    "DELETE FROM theme_settings WHERE theme_name='uninstallme'",
+    "DROP TABLE IF EXISTS theme_uninstallme_listing_i18n",
+    "DROP TABLE IF EXISTS theme_uninstallme_listing",
   ]) {
     try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
   }
@@ -628,8 +655,15 @@ async function main() {
   // -- 9. Uninstall --------------------------------------------------------
   console.log("\n9. Theme uninstall");
   // Uninstalling is the only way a theme leaves the registry, so the assertions
-  // below are the contract: files, registry row and generated tables all go,
-  // and a theme a site is still rendering cannot go at all.
+  // below are the contract: *everything* keyed by the theme goes — files,
+  // registry row, generated tables and their mapping, capability grants, admin
+  // menus, setting definitions and saved values — and a theme a site is still
+  // rendering cannot go at all.
+  //
+  // The throwaway theme is **activated** first, on purpose. A theme that was
+  // only uploaded owns nothing, so an "is X gone?" assertion about it passes
+  // whatever the uninstall does — which is how three missing cleanup steps
+  // stayed invisible here.
   const up2 = await req(worker, env, "/api/v1/extensions/themes/upload", {
     method: "POST", headers: authHeaders,
     body: (() => {
@@ -642,6 +676,48 @@ async function main() {
   const ownKeys = env.MEDIA._dump().filter((k) => k.includes("extensions/themes/uninstallme/"));
   checkTruthy("its files are in R2", ownKeys.length >= 5, ownKeys.length);
 
+  const countFor = (sql) => sqlite.prepare(sql).get().n;
+
+  const act2 = await req(worker, env, "/api/v1/extensions/themes/uninstallme/activate", { method: "POST", headers: authHeaders });
+  const act2Body = await act2.json();
+  check("throwaway theme activated", act2Body.ok, true);
+  check("activation registered its admin menus", act2Body.applied.adminMenus, 3);
+  check("activation registered its setting definitions", act2Body.applied.settings, 2);
+
+  // Confirm each face is non-empty *before* asserting it is empty afterwards.
+  // An unguarded "0 == 0" would pass on a build that never wrote the row.
+  const menuSql = "SELECT COUNT(*) AS n FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='uninstallme'";
+  const defSql = "SELECT COUNT(*) AS n FROM theme_setting_defs WHERE theme_name='uninstallme'";
+  const valSql = "SELECT COUNT(*) AS n FROM theme_settings WHERE theme_name='uninstallme'";
+  const capSql = "SELECT COUNT(*) AS n FROM extension_capabilities WHERE extension_type='theme' AND extension_name='uninstallme'";
+  const mapSql = "SELECT COUNT(*) AS n FROM theme_table_defs WHERE owner_type='theme' AND owner_name='uninstallme'";
+  const tblSql = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='theme_uninstallme_listing'";
+  checkTruthy("activation left admin menus to clean", countFor(menuSql) > 0, countFor(menuSql));
+  checkTruthy("activation left setting definitions to clean", countFor(defSql) > 0, countFor(defSql));
+  checkTruthy("install left capability grants to clean", countFor(capSql) > 0, countFor(capSql));
+  checkTruthy("activation left a table mapping to clean", countFor(mapSql) > 0, countFor(mapSql));
+  checkTruthy("activation created its generated table", countFor(tblSql) > 0, countFor(tblSql));
+  // A saved value is the half of the settings pair a definition alone would not
+  // catch. The theme-settings endpoint is the only writer, so drive it.
+  const saveSet = await req(worker, env, "/api/v1/theme/uninstallme/settings", {
+    method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "accent", value: "#123456" }),
+  });
+  check("a theme setting value saved", saveSet.status, 200);
+  checkTruthy("there is a saved value to clean", countFor(valSql) > 0, countFor(valSql));
+
+  // A theme a site is rendering still cannot go, and the 409 names the site.
+  check("uninstalling a theme in use is refused",
+    (await req(worker, env, "/api/v1/extensions/themes/uninstallme", { method: "DELETE", headers: authHeaders })).status, 409);
+
+  // Make it unused *without* going through deactivation. Deactivation clears the
+  // owner's admin menus itself, so switching the site away first would erase the
+  // very rows this section exists to prove the uninstall removes. A missing
+  // `theme.active` row is a real state — an activation interrupted before it
+  // wrote the setting leaves exactly this — and the menus are still there.
+  sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key='theme.active'");
+  checkTruthy("the leftover menus survived the theme becoming inactive", countFor(menuSql) > 0, countFor(menuSql));
+
   const delRes = await req(worker, env, "/api/v1/extensions/themes/uninstallme", { method: "DELETE", headers: authHeaders });
   const delBody = await delRes.json();
   check("uninstall accepted", delRes.status, 200);
@@ -650,11 +726,19 @@ async function main() {
   check("registry row gone", (afterList.items || []).some((x) => x.name === "uninstallme"), false);
   check("its R2 files are gone",
     env.MEDIA._dump().filter((k) => k.includes("extensions/themes/uninstallme/")).length, 0);
+  check("its generated table is gone", countFor(tblSql), 0);
+  check("its table mapping is gone", countFor(mapSql), 0);
+  check("its admin menus are gone", countFor(menuSql), 0);
+  check("its setting definitions are gone", countFor(defSql), 0);
+  check("its saved setting values are gone", countFor(valSql), 0);
+  check("its capability grants are gone", countFor(capSql), 0);
   check("uninstalling it again is a 404",
     (await req(worker, env, "/api/v1/extensions/themes/uninstallme", { method: "DELETE", headers: authHeaders })).status, 404);
 
   // The theme this site is rendering cannot be uninstalled, and the 409 names
-  // the site so the operator knows what to switch first.
+  // the site so the operator knows what to switch first. `uninstallme` was
+  // activated over realestate above, so put realestate back first.
+  await req(worker, env, "/api/v1/extensions/themes/realestate/activate", { method: "POST", headers: authHeaders });
   const activeRes = await req(worker, env, "/api/v1/extensions/themes/realestate", { method: "DELETE", headers: authHeaders });
   const activeBody = await activeRes.json();
   check("uninstalling the active theme is refused", activeRes.status, 409);
