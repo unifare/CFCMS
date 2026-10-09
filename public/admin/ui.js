@@ -7,6 +7,11 @@
  * render helpers. Everything here is framework-free.
  */
 import { icon } from "./icons.js";
+// The dictionary is a leaf (it imports nothing), so the UI kit can depend on it
+// without creating a cycle — which is what lets the shared pieces below (status
+// badges, dialog buttons, the empty-row default) be translated **once** for
+// every screen instead of in each of the ten that use them.
+import { t } from "./js/i18n.js";
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -100,7 +105,7 @@ function closeDialog() {
  * where `type` is text | password | number | textarea | select | checkbox.
  * Returns a Promise resolving to a values object, or null if cancelled.
  */
-export function openDialog({ title, description = "", fields = [], confirmLabel = "Save", danger = false, bodyHtml = "" }) {
+export function openDialog({ title, description = "", fields = [], confirmLabel = t("core.action.save", "Save"), danger = false, bodyHtml = "" }) {
   const host = ensureDialogHost();
   const fieldHtml = fields.map((f) => {
     const id = `dlg-${f.name}`;
@@ -133,7 +138,7 @@ export function openDialog({ title, description = "", fields = [], confirmLabel 
       ${bodyHtml}
       <form id="dlg-form" novalidate>${fieldHtml}</form>
       <div class="dialog-actions">
-        <button class="btn outline" id="dlg-cancel" type="button">Cancel</button>
+        <button class="btn outline" id="dlg-cancel" type="button">${escapeHtml(t("core.action.cancel", "Cancel"))}</button>
         <button class="btn ${danger ? "danger" : "primary"}" id="dlg-ok" type="button">${escapeHtml(confirmLabel)}</button>
       </div>
     </div></div>`;
@@ -180,14 +185,14 @@ export function openDialog({ title, description = "", fields = [], confirmLabel 
 }
 
 /** Yes/no confirmation — replaces `confirm()`. */
-export async function confirmDialog({ title, description = "", confirmLabel = "Delete", danger = true }) {
+export async function confirmDialog({ title, description = "", confirmLabel = t("core.action.delete", "Delete"), danger = true }) {
   const host = ensureDialogHost();
   host.innerHTML = `<div class="overlay">
     <div class="dialog" role="dialog" aria-modal="true" aria-label="${attr(title)}">
       <h2>${escapeHtml(title)}</h2>
       ${description ? `<p class="dialog-desc">${escapeHtml(description)}</p>` : ""}
       <div class="dialog-actions">
-        <button class="btn outline" id="dlg-cancel" type="button">Cancel</button>
+        <button class="btn outline" id="dlg-cancel" type="button">${escapeHtml(t("core.action.cancel", "Cancel"))}</button>
         <button class="btn ${danger ? "danger" : "primary"}" id="dlg-ok" type="button">${escapeHtml(confirmLabel)}</button>
       </div>
     </div></div>`;
@@ -205,7 +210,7 @@ export async function confirmDialog({ title, description = "", confirmLabel = "D
 }
 
 /** Informational dialog — replaces `alert()`. */
-export async function alertDialog({ title, description = "", confirmLabel = "OK" }) {
+export async function alertDialog({ title, description = "", confirmLabel = t("core.action.ok", "OK") }) {
   const host = ensureDialogHost();
   host.innerHTML = `<div class="overlay">
     <div class="dialog" role="dialog" aria-modal="true" aria-label="${attr(title)}">
@@ -295,9 +300,12 @@ export function fmtRelative(ts) {
 export function statusBadge(status) {
   const s = String(status || "").toLowerCase();
   const kind = s === "published" ? "success" : s === "draft" ? "secondary" : s === "scheduled" ? "warn" : s === "private" ? "outline" : "secondary";
-  return `<span class="badge ${kind}">${escapeHtml(s || "unknown")}</span>`;
+  // The stored value is the lowercase identifier and stays that way — only the
+  // label is translated, so no query ever depends on the interface language.
+  const label = s ? t(`core.status.${s}`, s) : t("core.status.unknown", "Unknown");
+  return `<span class="badge ${kind}">${escapeHtml(label)}</span>`;
 }
 
-export function emptyRow(colspan, msg = "Nothing here yet.") {
+export function emptyRow(colspan, msg = t("core.msg.nothingHere", "Nothing here yet.")) {
   return `<tr><td colspan="${colspan}" class="empty">${escapeHtml(msg)}</td></tr>`;
 }

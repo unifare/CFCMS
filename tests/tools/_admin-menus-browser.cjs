@@ -66,6 +66,12 @@ function themeZipBase64() {
           { key: "name", type: "text", label: "Name" },
           { key: "price", type: "number", label: "Price" },
         ],
+        // Rule 41: a field holding prose a human reads must declare its
+        // multi-language capability, and the validator **rejects** the install
+        // when it does not. This fixture predates that rule, so the upload was
+        // refused and every assertion after it failed on a missing menu — a
+        // broken acceptance script that looked like a broken feature.
+        translatable: ["name"],
       },
     ],
     adminMenus: [

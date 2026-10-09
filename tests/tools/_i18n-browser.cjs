@@ -62,6 +62,22 @@ function check(name, cond, detail = "") {
   await page.waitForSelector("#app-header", { timeout: 15000 });
   check("logged in and shell rendered", true);
 
+  // `ui_lang` is persisted per user in D1, so it survives a fresh browser: a run
+  // that left the interface in another language would make every English
+  // assertion below read the wrong text — the feature is fine, the state was not
+  // reset. Normalise before asserting anything.
+  const setUiLocale = (locale) =>
+    page.evaluate(async (l) => {
+      await fetch("/api/v1/i18n/ui-locale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locale: l }),
+      });
+    }, locale);
+  await setUiLocale("en");
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector("#app-header", { timeout: 15000 });
+
   console.log("\n2. Languages screen");
   await page.click('[data-nav="languages"]');
   await page.waitForTimeout(800);
@@ -183,7 +199,43 @@ function check(name, cond, detail = "") {
     check("disable control present", false, "no disable button");
   }
 
-  await browser.close();
+  console.log("\n7. The content editor follows the interface language (batch 16 B3)");
+  // The editor was the last big screen with no dictionary at all, which is what
+  // "the multilingual experience is bad" looked like from the inside. Asserting
+  // it in a real browser is the only way to know the labels actually swap — the
+  // Node guard proves the keys *exist*, not that a screen reads them.
+  const openEditor = async () => {
+    await page.evaluate(() => window.go("posts"));
+    await page.waitForTimeout(500);
+    await page.evaluate(() => window.newContent("posts"));
+    await page.waitForSelector("#blocks", { timeout: 15000 });
+    return page.locator("#content").innerText();
+  };
+
+  await setUiLocale("zh-CN");
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector("#app-header", { timeout: 15000 });
+  const zh = await openEditor();
+  check("the editor's field labels are translated", /正文/.test(zh) && /标题/.test(zh), zh.slice(0, 220));
+  check("the save button is translated", /保存/.test(zh));
+  check("the sidebar is translated too", /内容|仪表盘/.test(await page.locator(".sidebar").innerText()));
+  check("no English field label is left behind",
+    !/\bTitle\b|\bExcerpt\b|\bSlug\b|\bStatus\b|\bPublish at\b/.test(zh), zh.slice(0, 320));
+
+  // ⚠️ The trap this batch fixed: an `<option>` without an explicit `value`
+  // takes its *text* as the value, so translating the label would write 草稿
+  // into `posts.status`. The identifiers stay lowercase English.
+  const statusValues = await page.evaluate(() => [...document.querySelectorAll("#status option")].map((o) => o.value));
+  check("status option values stay the stored identifiers",
+    statusValues.join(",") === "draft,published,private,scheduled", statusValues.join(","));
+  const statusLabels = await page.evaluate(() => [...document.querySelectorAll("#status option")].map((o) => o.textContent.trim()));
+  check("while their labels are translated", statusLabels.includes("草稿"), statusLabels.join(","));
+
+  await setUiLocale("en");
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector("#app-header", { timeout: 15000 });
+  const en = await openEditor();
+  check("and it reads English again after switching back", /\bTitle\b/.test(en) && !/标题/.test(en), en.slice(0, 220));
 
   console.log("\n6. Console / network health");
   const real = problems.filter((p) => !/401/.test(p));
@@ -191,6 +243,12 @@ function check(name, cond, detail = "") {
   if (problems.length && real.length === 0) {
     console.log(`  (ignored ${problems.length} expected pre-auth 401s)`);
   }
+
+  // Close once, at the very end. It used to sit between section 5 and 6, which
+  // meant any section added after it ran against a closed browser — the symptom
+  // is a confusing "Target page, context or browser has been closed" from deep
+  // inside a helper, pointing at the helper rather than at the stray close.
+  await browser.close();
 
   console.log(`\n${checks - failed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

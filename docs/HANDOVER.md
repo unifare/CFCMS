@@ -1,13 +1,13 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 16 Track 0 + B1 + A3 —— 媒体隔离 / 块 attrs 契约 / 统一媒体控件**
+> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 16 Track 0 + B1 + A3 + B3 —— 媒体隔离 / 块 attrs 契约 / 统一媒体控件 / 编辑器界面翻译**
 > （批次 15 数据驱动后台；批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；
 > 批次 13 mobai 主题 + RSS；批次 12 写入路径修复 + journal 主题；批次 11 平台功能开关。
 > 批次 10 及更早见下方各节与 `docs/history/`。）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
 >
-> ⚠️ 批次 16 已完成 **Track 0**（媒体隔离地基）、**Track B1**（块 attrs 契约）、**Track A3**（统一媒体控件）。
-> 其余部分（A4 媒体屏升级、B3 编辑器界面翻译、B4 多语言编辑体验、B5 `post_meta` 语言维度）
+> ⚠️ 批次 16 已完成 **Track 0**（媒体隔离）、**B1**（块 attrs 契约）、**A3**（统一媒体控件）、**B3**（编辑器界面翻译）。
+> 其余（A4 媒体屏升级、B4 多语言编辑体验、B5 `post_meta` 语言维度）
 > 在 `docs/design/MEDIA-EDITOR-PLAN.md`（**已定稿、未实现**，含四条轨道的完整拆分与已拍板语义）。
 > ⚠️ 本轮的批次过程文档在 `docs/history/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
 > 每日工作日志在 `.workbuddy-ai/memory/YYYY-MM-DD.md`（gitignore，本机才有）。
@@ -72,6 +72,7 @@ a81e5e0  Re-key tenant audit verdicts after the mobai batch
 (batch 16 Track 0: media ownership + isolation, and the site-list memo fix — 见 §5)
 (batch 16 Track B1: the block attribute contract, and the editor's per-type controls — 见 §5)
 (batch 16 Track A3: one media control for blocks, custom fields and settings — 见 §5)
+(batch 16 Track B3: the content editor in every interface language — 见 §5)
 ```
 
 **批次 16 Track 0（媒体隔离地基）**：`media_files` 自 0009 起就有 `site_id`，但
@@ -232,6 +233,43 @@ Node 侧断言"标记里含有 `<img>`"永远是对的——因为它检查的�
 
 **新基线**：**25 套件 + `_schema-scope`，26 项 / 1335 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `npm run gate` 四项全绿；`_skeleton-inject` 31/31 场景有效。
+
+### 批次 16 Track B3（编辑器界面翻译）—— ✅ 本轮完成
+
+**起点是"多语言用户体验就差的很"最直白的那一层**：编辑器（`screens/editor.js`）是最后一个
+**完全没有词典**的大屏——把界面语言切成简体中文，从页头到保存按钮到对话框，**每一个字都还是英文**。
+
+| 项 | 状态 |
+|---|---|
+| `core-pack.ts` 新增 **~90 个键 ×2 语言**（`core.editor.*` / `core.status.*` / `core.content.*` 补充），**两个语言包同步扩** | ✅ |
+| **SPA 的 `t()` 支持 `{name}` 插值**（与服务端 `interpolate()` 同一套语法）——"Last saved content for {site}" 这类句子因此是**一条词条**，而不是在调用点拼字符串（拼出来的语序不可翻译） | ✅ |
+| `screens/editor.js` **全量接 `t()`**：页头/面包屑、语言版本条、自定义字段、Locale/Status/Publish at、块工具提示、空态、修订历史、**四个对话框**、toast、自动保存状态 | ✅ |
+| `screens/content-list.js` 一并翻译（编辑器是从它进去的；只翻一半会更割裂） | ✅ |
+| **`ui.js` 的共享字符串**：`statusBadge` / `emptyRow` 默认文案 / 三个对话框的 `confirmLabel` / Cancel 按钮——**一处改，十个屏幕受益** | ✅ |
+| `state.js` 的 `postTypeInfo` 翻译内建的 Post/Page 标签（主题声明的 CPT 标签是主题作者的话，不翻译） | ✅ |
+| 架构守卫（+6 条，规则 63）：SPA 的每个 `t("…")` 字面量键都在**每个**语言包里 / 两个语言包键集相同 / `core.editor.*` 每个键都有调用点 / 三条非空断言 | ✅ |
+| `_skeleton-inject.mjs` +3 场景（键名写错 / 只加到一个语言包 / 编辑器键失去调用点）→ **34 场景 0 问题** | ✅ |
+| **真浏览器验收**：`_i18n-browser.cjs` §7（切 zh-CN 打开编辑器：标签是中文、**无英文残留**、**option 值仍是标识符**、切回英文恢复）→ **29 条全绿** | ✅ |
+| 规则 63 写进 `AGENTS.md` + `ARCHITECTURE.md` §10 | ✅ |
+
+**本轮抓到的四件事**：
+
+1. **`<option>` 不写显式 `value` 时，浏览器拿文本当值** —— 编辑器原本的状态下拉就是这样。
+   把标签翻译成中文会**把 `草稿` 写进 `posts.status`**：一个翻译动作变成一次数据损坏。
+   修法是显式 `value="${s}"`，并在真浏览器里断言"值仍是标识符、标签已是中文"。
+   **这是"翻译"这类改动特有的危险面：它同时碰显示与数据。**
+2. **`core.nav.features` 被侧栏引用了 11 个批次，却从未声明** —— Features 菜单项在每种语言下
+   都回退成英文。新守卫第一次运行就抓到了。
+3. **`_admin-menus-browser.cjs` 一直是坏的**（与 B3 无关）：它的夹具主题声明了散文字段
+   `name` 却没写 `translatable`，规则 41 落地后上传被校验器拒绝，于是**第 5 节之后全线失败**，
+   而症状看起来像"生成式表格屏幕坏了"。修好夹具后 31 条全绿。
+   **一条跑不起来的验收脚本，比没有验收脚本更误导。**
+4. **`_i18n-browser.cjs` 的 `browser.close()` 原本卡在第 5、6 节之间** —— 任何新加在其后的章节
+   都会对着已关闭的浏览器跑，报错却指向新章节里的辅助函数。已挪到脚本末尾。
+
+**新基线**：**25 套件 + `_schema-scope`，26 项 / 1341 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
+`npm run gate` 四项全绿；`_skeleton-inject` 34/34 场景有效；
+三个浏览器验收脚本全绿（i18n 29 / 菜单 31 / 媒体控件 25）。
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
 
@@ -510,7 +548,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：25 套件 / 1314 条 / 0 失败，另有 `_schema-scope` 21 条 —— 合计 26 项 / 1335 条）
+## 6. 测试与验证（当前全绿：25 套件 / 1320 条 / 0 失败，另有 `_schema-scope` 21 条 —— 合计 26 项 / 1341 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -519,7 +557,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 89 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
+| architecture | 95 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
 | _schema-scope | 21 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
@@ -572,7 +610,7 @@ node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 �
 **系统骨架 + 功能开关**的反向验证工具（10+ 场景，手工跑）：
 
 ```bash
-node tests/tools/_skeleton-inject.mjs        # 31 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / 块 attrs 契约 / 媒体控件 / dashboard 卡 / 设置表单分支
+node tests/tools/_skeleton-inject.mjs        # 34 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / 块 attrs 契约 / 媒体控件 / 词典 / dashboard 卡 / 设置表单分支
 node tests/tools/_locale-url-inject.mjs     # 4 场景：规则 56–59（slug COALESCE / 散落回退 / locale 正则 / feed 站点隔离）
 node tests/tools/_launcher-inject.mjs        # 16 场景：启动器两侧对齐 / BOM / stderr 提示 / EOF 退出
 node tests/tools/_media-inject.mjs           # 7 场景：规则 60（租户闸门 / 会话闸门 / owner 读闸门 / owner 列表子句 / 上传归属 / 删除顺序 / 分支位置）
@@ -601,7 +639,7 @@ node tests/tools/_i18n-data-inventory.mjs    # 清点所有承载数据的声明
 
 ```bash
 npx wrangler dev --port 47913 --ip 127.0.0.1     # 另开一个 shell
-node tests/tools/_i18n-browser.cjs                     # 多语言：22 条断言
+node tests/tools/_i18n-browser.cjs                     # 多语言：29 条断言（含 §7 编辑器界面语言）
 node tests/tools/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言
 node tests/tools/_media-picker-browser.cjs             # 媒体控件：25 条断言（批次 16 A3）
 node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 新功能：47 条断言
@@ -982,6 +1020,23 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     Node 断言"模板里有 `<img>`"永远是对的（它检查模板，不检查交互），**只有真浏览器能发现**。
     修法是控件里留一个可被就地刷新的槽（`[data-media-preview]`）。
     **推论：凡是"用户做了一个动作、界面应当立刻变化"的地方，都必须有真浏览器验收。**
+45. **`<option>` 不写显式 `value` 时，浏览器拿 option 的文本当值**（批次 16）。
+    编辑器的状态下拉原本就是这样，于是"把标签翻译成中文"会**把 `草稿` 写进 `posts.status`**——
+    一个**翻译**动作变成一次**数据损坏**。修法是显式 `value="${s}"`，并在真浏览器里同时断言
+    "值仍是标识符"与"标签已是中文"。
+    **一般规律：凡是同时碰"显示"与"数据"的改动（翻译、格式化、本地化），
+    都要专门看一眼数据的出口是不是被顺手改了。**
+46. **一条跑不起来的验收脚本，比没有验收脚本更误导**（批次 16 抓到 `_admin-menus-browser.cjs`）。
+    它的夹具主题声明了散文字段 `name` 却**没写 `translatable`**；规则 41 落地后上传被校验器拒绝，
+    于是第 5 节之后**全线失败**——而失败长得像"生成式表格屏幕坏了"，不像"夹具过期了"。
+    这类脚本不在 `npm test` 里，没人跑就没人知道它坏了。
+    **推论：改了扩展的声明能力（规则 41 这类）之后，要主动跑一遍手工验收脚本**；
+    修好夹具后 31 条全绿。
+47. **`browser.close()` 写在脚本中段**（批次 16 修 `_i18n-browser.cjs`）：
+    任何**新加在其后**的章节都会对着已关闭的浏览器跑，报错却是
+    `Target page, context or browser has been closed`，指向新章节里的辅助函数——
+    读起来像"新代码有问题"，其实是"上面有个提前关闭"。
+    **收尾动作放脚本末尾**，这样加章节永远不会踩到它。
 
 ## 9. 权威文档索引
 
@@ -990,7 +1045,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
 | `docs/design/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
 | `docs/history/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
-| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、**媒体隔离规则 60**、**块 attrs 契约规则 61**、**媒体控件规则 62**、明确不做的事） |
+| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、**媒体隔离规则 60**、**块 attrs 契约规则 61**、**媒体控件规则 62**、**后台文案与词典规则 63**、明确不做的事） |
 | `docs/HANDOVER.md` | 本文 |
 | `src/shared/features.ts` | **功能开关唯一词汇表 + 解析器**（`FEATURE_SWITCHES` / `featureEnabled()` / `featureSnapshot()`）——开关定义只此一处 |
 | `public/admin/js/screens/features.js` | 功能开关后台屏（每开关一张卡：来源标注 / var 名 / 声明默认 / 继承值 / 重置为继承） |
@@ -1011,7 +1066,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `tests/suites/media-picker.test.mjs` | 上者的契约：URL 形状与读取路径一致 + 归一化 + 控件形态 + **"选择器给的 URL，真实渲染器画得出来"的闭环** + 三个消费点都走共享控件 |
 | `tests/tools/_media-picker-browser.cjs` | 上者的**真浏览器**验收（25 条，自清理可重复）：登录 → 加图片块 → 对话框内上传 → 选中 → 落值 → **保存后确认写在 `url` 而非 `text`** → 会话/匿名两种读取 → 取消路径 |
 | `docs/design/MEDIA-EDITOR-PLAN.md` | 批次 16 的四轨道拆分（**Track 0 / B1 / A3 已实现，A4 / B3 / B4 / B5 未实现**）——含已拍板的媒体语义与编辑器缺陷清单 |
-| `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
+| `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（**29 条**，自清理，可重复跑）：语言开关 / 编辑器语言版本条 / **§7 编辑器界面语言**（切 zh-CN 断言中文标签、无英文残留、**option 值仍是标识符**） |
 | `tests/tools/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
 | `tests/suites/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |
 | `tests/suites/account.test.mjs` | 账户自助与菜单偏好契约（当前密码闸门 / 稳定错误码 / prefs 隔离 / label_key 翻译端到端） |

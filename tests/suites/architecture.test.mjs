@@ -1611,6 +1611,76 @@ section("The media control is defined once and the media URL is built once (rule
 }
 
 // ---------------------------------------------------------------------------
+section("Every dictionary key the admin asks for exists in every core pack (rule 63)");
+// ---------------------------------------------------------------------------
+
+/**
+ * `t(key, fallback)` falls back to the English source string, so **a missing key
+ * is silent**: the screen renders correct-looking English while the rest of the
+ * interface is in the user's language. That is the same "declared but never
+ * consumed" family this repo keeps meeting, wearing the opposite hat — the code
+ * asks for a key nobody declared, and the only symptom is one label that did not
+ * translate.
+ *
+ * Batch 16 translated the content editor, which added ~90 keys across two
+ * packs. Typing one of them differently in the code than in the dictionary is
+ * exactly the mistake this section exists to catch, in both directions:
+ *
+ *   1. every key referenced from the SPA exists in **every** core pack
+ *      (a key present in `en` but not `zh-CN` is just as broken);
+ *   2. the two packs declare the **same** keys — a language that silently lacks
+ *      a string is a language nobody can trust;
+ *   3. the editor's own namespace is actually used. `core.editor.*` exists for
+ *      one screen, so a key there with no call site is a string that was written
+ *      and then forgotten.
+ */
+{
+  const packSrc = read(join(ROOT, "src", "platform", "i18n", "core-pack.ts"));
+  const packBody = (name) => {
+    const m = packSrc.match(new RegExp(`const ${name}: Pack = \\{([\\s\\S]*?)\\n\\};`));
+    return m ? [...m[1].matchAll(/"([^"]+)"\s*:/g)].map((x) => x[1]) : [];
+  };
+  const en = packBody("EN");
+  const zh = packBody("ZH_CN");
+  check("both core packs were parsed (non-vacuity)", en.length > 100 && zh.length > 100,
+    `en=${en.length} keys, zh-CN=${zh.length} keys`);
+
+  const enSet = new Set(en);
+  const zhSet = new Set(zh);
+  checkEmpty("no key is declared in one core pack but not the other",
+    [...en.filter((k) => !zhSet.has(k)).map((k) => `${k} (missing from zh-CN)`),
+     ...zh.filter((k) => !enSet.has(k)).map((k) => `${k} (missing from en)`)]);
+
+  // Every `t("literal", …)` call site in the SPA. A dynamically built key
+  // (`t(\`core.status.${s}\`)`) is invisible to this scan, which is why the
+  // non-vacuity counter below matters: the scan has to be looking at a lot.
+  const spaFiles = walk(join(ROOT, "public", "admin"), [".js"]);
+  const referenced = new Map(); // key -> [files]
+  for (const f of spaFiles) {
+    const src = blankComments(read(f));
+    for (const m of src.matchAll(/\bt\(\s*"([^"]+)"/g)) {
+      if (!referenced.has(m[1])) referenced.set(m[1], []);
+      referenced.get(m[1]).push(rel(f));
+    }
+  }
+  check("the SPA's t() call sites were found (non-vacuity)", referenced.size >= 40,
+    `found ${referenced.size} distinct literal keys across ${spaFiles.length} files`);
+
+  const unknown = [...referenced.entries()]
+    .filter(([key]) => !enSet.has(key) || !zhSet.has(key))
+    .map(([key, files]) => `${key} (${[...new Set(files)].join(", ")})`);
+  checkEmpty("every key the admin asks for is declared in both core packs", unknown);
+
+  // The reverse direction, scoped to the namespace that exists for one screen:
+  // a `core.editor.*` entry with no call site is a string nobody shows.
+  const editorKeys = en.filter((k) => k.startsWith("core.editor."));
+  checkEmpty("every editor dictionary key has a call site",
+    editorKeys.filter((k) => !referenced.has(k)));
+  check("the editor namespace was parsed (non-vacuity)", editorKeys.length >= 30,
+    `${editorKeys.length} core.editor.* keys`);
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

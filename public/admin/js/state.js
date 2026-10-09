@@ -1,9 +1,11 @@
 /**
  * Admin SPA — shared state and API helpers.
  *
- * Leaf module: it imports nothing from the rest of the app, so every other
- * module may depend on it without creating an import cycle. Keep it that way.
+ * Leaf module: the only thing it imports is the dictionary (`i18n.js`), which
+ * is itself a leaf — so nothing here can take part in an import cycle. Keep it
+ * that way.
  */
+import { t } from "./i18n.js";
 
 /** Mount point for the whole SPA. */
 export const app = document.querySelector("#app");
@@ -77,10 +79,16 @@ export function contentPath(type) {
   return ["posts", "pages"].includes(type) ? type : "content/" + type;
 }
 
-/** Look up a post type's human labels. */
+/**
+ * Look up a post type's human labels.
+ *
+ * The two built-in types are named by the dictionary; a theme-declared type
+ * keeps the labels its manifest shipped, because those are the theme author's
+ * words and not the platform's to translate.
+ */
 export function postTypeInfo(type) {
-  if (type === "posts") return { singular: "Post", plural: "Posts" };
-  if (type === "pages") return { singular: "Page", plural: "Pages" };
+  if (type === "posts") return { singular: t("core.content.post", "Post"), plural: t("core.content.posts", "Posts") };
+  if (type === "pages") return { singular: t("core.content.page", "Page"), plural: t("core.content.pages", "Pages") };
   const pt = state.postTypes.find((p) => p.name === type);
   const singular = String(pt?.singular_label || pt?.label || type);
   const plural = String(pt?.plural_label || pt?.label || type);

@@ -56,12 +56,24 @@ export function setUiLanguages(list) {
   UI_LANGUAGES = next;
 }
 
-/** Look up a dictionary key. `fallback` is the English source string; when
- *  both are missing the key itself is shown (never an empty node). */
-export function t(key, fallback) {
+/**
+ * Look up a dictionary key. `fallback` is the English source string; when
+ * both are missing the key itself is shown (never an empty node).
+ *
+ * `params` fills `{name}` placeholders, the same syntax the server's
+ * `interpolate()` uses — so a string that has to name something ("Last saved
+ * content for {site}") can be one dictionary entry instead of a sentence glued
+ * together at the call site, which is what makes word order translatable.
+ * An unknown placeholder is left verbatim rather than blanked: a visible
+ * `{site}` is a bug report, an empty string is a mystery.
+ */
+export function t(key, fallback, params) {
   const v = messages[key];
-  if (typeof v === "string" && v) return v;
-  return fallback !== undefined ? fallback : key;
+  const raw = typeof v === "string" && v ? v : fallback !== undefined ? fallback : key;
+  if (!params) return raw;
+  return String(raw).replace(/\{(\w+)\}/g, (whole, name) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : whole
+  );
 }
 
 /** The locale the current dictionary came in for, or null before loading. */

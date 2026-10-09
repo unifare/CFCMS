@@ -75,8 +75,10 @@ function versionBar(group, current) {
       const isCurrent = v.locale === current;
       const label = `${esc(v.locale)} ${v.exists ? icon("circle-check") : icon("plus")}`;
       const title = v.exists
-        ? (isCurrent ? `${v.locale} — editing now` : `${v.locale} — switch to this version`)
-        : `${v.locale} — not created yet`;
+        ? (isCurrent
+          ? t("core.editor.versionEditing", "{locale} — editing now", { locale: v.locale })
+          : t("core.editor.versionSwitch", "{locale} — switch to this version", { locale: v.locale }))
+        : t("core.editor.versionMissing", "{locale} — not created yet", { locale: v.locale });
       return `<button class="btn ${isCurrent ? "primary" : "outline"} sm"
         data-lang-version="${attr(v.locale)}"
         data-version-exists="${v.exists ? "1" : "0"}"
@@ -86,11 +88,11 @@ function versionBar(group, current) {
     .join("");
   const missing = group.versions.filter((v) => !v.exists).length;
   return `<div class="panel" style="margin-bottom:1rem">
-    <div class="card-title">Language versions</div>
+    <div class="card-title">${esc(t("core.content.translations", "Language versions"))}</div>
     <div class="card-desc" style="margin-bottom:.75rem">
       ${missing
-        ? `${missing} language${missing > 1 ? "s" : ""} still missing. Click one to create it.`
-        : "Every language this site serves has a version."}
+        ? esc(t("core.editor.versionsMissing", "{n} still missing — click one to create it.", { n: missing }))
+        : esc(t("core.editor.versionsComplete", "Every language this site serves has a version."))}
     </div>
     <div class="toolbar">${chips}</div>
   </div>`;
@@ -106,7 +108,7 @@ function fieldInputs(type) {
     const label = esc(f.label || f.meta_key);
     const key = attr(f.meta_key);
     if (f.field_type === "number") return `<div class="field"><label>${label}</label><input data-meta="${key}" type="number" value="${val}"></div>`;
-    if (f.field_type === "boolean") return `<div class="field"><label>${label}</label><select data-meta="${key}"><option value="">—</option><option value="1"${x[f.meta_key] === "1" ? " selected" : ""}>Yes</option><option value="0"${x[f.meta_key] === "0" ? " selected" : ""}>No</option></select></div>`;
+    if (f.field_type === "boolean") return `<div class="field"><label>${label}</label><select data-meta="${key}"><option value="">—</option><option value="1"${x[f.meta_key] === "1" ? " selected" : ""}>${esc(t("core.editor.yes", "Yes"))}</option><option value="0"${x[f.meta_key] === "0" ? " selected" : ""}>${esc(t("core.editor.no", "No"))}</option></select></div>`;
     if (["textarea", "html", "richtext"].includes(f.field_type)) return `<div class="field"><label>${label}</label><textarea data-meta="${key}">${val}</textarea></div>`;
     if (f.field_type === "date") return `<div class="field"><label>${label}</label><input data-meta="${key}" type="date" value="${val}"></div>`;
     // `media` / `media-multiple` are declared in `ALLOWED_FIELD_TYPES` and had
@@ -126,8 +128,8 @@ function fieldInputs(type) {
     return `<div class="field"><label>${label}</label><input data-meta="${key}" value="${val}"></div>`;
   }).join("");
   return `<div class="panel" style="margin-top:1rem">
-    <div class="card-title">Custom fields</div>
-    <div class="card-desc" style="margin-bottom:1rem">Declared by the active theme for this content type</div>
+    <div class="card-title">${esc(t("core.editor.customFields", "Custom fields"))}</div>
+    <div class="card-desc" style="margin-bottom:1rem">${esc(t("core.editor.customFieldsHint", "Declared by the active theme for this content type"))}</div>
     ${inputs}</div>`;
 }
 
@@ -152,44 +154,56 @@ export async function editor(c, type) {
   // create a translation nothing would ever look up.
   const localeChoices = (state.locales && state.locales.length ? state.locales : [x.locale || state.defaultLocale]);
   const localeField = localeChoices.length > 1
-    ? `<div class="field"><label for="locale">Locale</label><select id="locale">${localeChoices
-        .map((code) => `<option value="${attr(code)}"${code === x.locale ? " selected" : ""}>${esc(code)}${code === state.defaultLocale ? " (default)" : ""}</option>`)
-        .join("")}</select><span class="hint">Each language is its own version</span></div>`
-    : `<div class="field"><label for="locale">Locale</label><input id="locale" value="${attr(x.locale)}"></div>`;
+    ? `<div class="field"><label for="locale">${esc(t("core.editor.locale", "Locale"))}</label><select id="locale">${localeChoices
+        .map((code) => `<option value="${attr(code)}"${code === x.locale ? " selected" : ""}>${esc(code)}${code === state.defaultLocale ? ` (${esc(t("core.editor.localeDefault", "default"))})` : ""}</option>`)
+        .join("")}</select><span class="hint">${esc(t("core.editor.localeHint", "Each language is its own version"))}</span></div>`
+    : `<div class="field"><label for="locale">${esc(t("core.editor.locale", "Locale"))}</label><input id="locale" value="${attr(x.locale)}"></div>`;
+
+  // ⚠️ The status options carry an explicit `value`. Without it the browser uses
+  // the option's *text* as the value, so translating the label would write
+  // "草稿" into `posts.status` — a translated label turning into a translated
+  // database value. The stored identifier stays lowercase English.
+  const statusOptions = ["draft", "published", "private", "scheduled"]
+    .map((s) => `<option value="${s}"${x.status === s ? " selected" : ""}>${esc(t(`core.status.${s}`, s))}</option>`)
+    .join("");
 
   c.innerHTML = `${pageHead({
-    title: `${x.id ? "Edit" : "Add"} ${pt.singular}`,
-    sub: x.id ? `Last saved content for ${state.site}` : "New content, saved as draft",
-    actions: `<span class="badge secondary" id="saveState">Ready</span>
-              <button class="btn outline" data-back="1">${icon("chevron-left")}Back</button>`,
-    crumbs: [{ label: "Content" }, { label: pt.plural }, { label: x.id ? "Edit" : "Add" }],
+    title: `${x.id ? t("core.editor.edit", "Edit") : t("core.editor.add", "Add")} ${pt.singular}`,
+    sub: x.id
+      ? t("core.editor.subExisting", "Last saved content for {site}", { site: state.site })
+      : t("core.editor.subNew", "New content, saved as draft"),
+    actions: `<span class="badge secondary" id="saveState">${esc(t("core.editor.ready", "Ready"))}</span>
+              <button class="btn outline" data-back="1">${icon("chevron-left")}${esc(t("core.editor.back", "Back"))}</button>`,
+    crumbs: [
+      { label: t("core.nav.content", "Content") },
+      { label: pt.plural },
+      { label: x.id ? t("core.editor.edit", "Edit") : t("core.editor.add", "Add") },
+    ],
   })}
   ${versionBar(group, x.locale)}
   <div class="grid2">
     <div>
       <div class="panel">
-        <div class="field"><label class="req" for="title">Title</label><input id="title" value="${attr(x.title)}" placeholder="Post title"></div>
+        <div class="field"><label class="req" for="title">${esc(t("core.content.title", "Title"))}</label><input id="title" value="${attr(x.title)}" placeholder="${attr(pt.singular)}"></div>
         <div class="field">
-          <label>Content</label>
+          <label>${esc(t("core.editor.content", "Content"))}</label>
           <div id="blocks" class="blocks"></div>
           <div class="toolbar" style="margin-top:.75rem">${blockButtons}</div>
         </div>
-        <div class="field" style="margin-bottom:0"><label for="excerpt">Excerpt</label><textarea id="excerpt" placeholder="Short summary shown in listings">${esc(x.excerpt)}</textarea></div>
+        <div class="field" style="margin-bottom:0"><label for="excerpt">${esc(t("core.editor.excerpt", "Excerpt"))}</label><textarea id="excerpt" placeholder="${attr(t("core.editor.excerptHint", "Short summary shown in listings"))}">${esc(x.excerpt)}</textarea></div>
       </div>
       ${fieldInputs(type)}
     </div>
     <div>
       <div class="panel">
         ${localeField}
-        <div class="field"><label for="slug">Slug</label><input id="slug" value="${attr(x.slug)}" placeholder="auto from title"><span class="hint">URL segment for this language — must be unique within the language</span></div>
-        <div class="field"><label for="status">Status</label><select id="status">
-          ${["draft", "published", "private", "scheduled"].map((s) => `<option${x.status === s ? " selected" : ""}>${s}</option>`).join("")}
-        </select></div>
-        <div class="field"><label for="publishAt">Publish at</label><input id="publishAt" type="datetime-local"><span class="hint">Used when status is scheduled</span></div>
-        <button class="btn primary" style="width:100%" data-action="save-content">${icon("save")}Save</button>
+        <div class="field"><label for="slug">${esc(t("core.content.slug", "Slug"))}</label><input id="slug" value="${attr(x.slug)}" placeholder="${attr(t("core.editor.slugAuto", "auto from title"))}"><span class="hint">${esc(t("core.editor.slugHint", "URL segment for this language — must be unique within the language"))}</span></div>
+        <div class="field"><label for="status">${esc(t("core.editor.status", "Status"))}</label><select id="status">${statusOptions}</select></div>
+        <div class="field"><label for="publishAt">${esc(t("core.editor.publishAt", "Publish at"))}</label><input id="publishAt" type="datetime-local"><span class="hint">${esc(t("core.editor.publishAtHint", "Used when status is scheduled"))}</span></div>
+        <button class="btn primary" style="width:100%" data-action="save-content">${icon("save")}${esc(t("core.action.save", "Save"))}</button>
         ${x.id ? `<div class="toolbar" style="margin-top:.5rem">
-          <button class="btn outline sm" data-action="revisions">${icon("history")}Revisions</button>
-          <button class="btn outline danger sm" data-action="delete-content">${icon("trash")}Delete</button>
+          <button class="btn outline sm" data-action="revisions">${icon("history")}${esc(t("core.editor.revisions", "Revisions"))}</button>
+          <button class="btn outline danger sm" data-action="delete-content">${icon("trash")}${esc(t("core.action.delete", "Delete"))}</button>
         </div>` : ""}
       </div>
       ${x.id ? `<div class="panel" id="revisions" style="margin-top:1rem;display:none"></div>` : ""}
@@ -242,17 +256,28 @@ function blockHtml(b, path) {
   const spec = specOf(b.type);
   const body = spec.children
     ? `${(Array.isArray(b.content) ? b.content : []).map((child, i) => blockHtml(child, `${path}.${i}`)).join("")
-        || `<div class="empty">Empty container.</div>`}
+        || `<div class="empty">${esc(t("core.editor.emptyContainer", "Empty container."))}</div>`}
        <div class="toolbar" style="margin-top:.5rem">${paletteHtml(path, false)}</div>`
     : renderBlockAttrs(spec, b.attrs || {}, path);
+  /** A block tool button.
+   *
+   *  The icon, the label and the data attribute are all passed in, and the
+   *  labels are `t(...)` calls **at the call sites** rather than keys routed
+   *  through this helper. Two reasons: deriving the second move button's icon
+   *  from the first one by string substitution is how "move down" ends up
+   *  wearing the "move up" glyph, and the dictionary guard (rule 63) reads
+   *  literal keys — a key that only exists as a variable is a key nothing can
+   *  check. */
+  const tool = (iconName, label, dataName, dataValue) =>
+    `<button class="btn ghost sm" data-block-${dataName}="${dataValue}" title="${attr(label)}">${icon(iconName)}</button>`;
   return `<div class="block">
       <div class="blockhead">
         <b>${esc(spec.label)}</b>
         <span class="block-tools">
-          <button class="btn ghost sm" data-block-move="${attr(path)}|-1" title="Move up">${icon("arrow-up")}</button>
-          <button class="btn ghost sm" data-block-move="${attr(path)}|1" title="Move down">${icon("arrow-down")}</button>
-          <button class="btn ghost sm" data-block-dup="${attr(path)}" title="Duplicate">${icon("copy")}</button>
-          <button class="btn ghost sm" data-block-del="${attr(path)}" title="Remove">${icon("trash")}</button>
+          ${tool("arrow-up", t("core.editor.moveUp", "Move up"), "move", `${attr(path)}|-1`)}
+          ${tool("arrow-down", t("core.editor.moveDown", "Move down"), "move", `${attr(path)}|1`)}
+          ${tool("copy", t("core.editor.duplicate", "Duplicate"), "dup", attr(path))}
+          ${tool("trash", t("core.editor.remove", "Remove"), "del", attr(path))}
         </span>
       </div>
       ${body}
@@ -263,7 +288,7 @@ function drawBlocks() {
   const el = document.querySelector("#blocks");
   if (!el) return;
   el.innerHTML = state.blocks.map((b, i) => blockHtml(b, String(i))).join("")
-    || `<div class="empty">Add a block to start writing.</div>`;
+    || `<div class="empty">${esc(t("core.editor.addBlock", "Add a block to start writing."))}</div>`;
 }
 
 /**
@@ -287,7 +312,7 @@ function mutate(fn, ...args) {
 
 function markDirty() {
   const e = document.querySelector("#saveState");
-  if (e) { e.textContent = "Unsaved changes"; e.className = "badge warn"; }
+  if (e) { e.textContent = t("core.editor.unsaved", "Unsaved changes"); e.className = "badge warn"; }
 }
 
 document.addEventListener("click", async (e) => {
@@ -371,7 +396,7 @@ async function doAutosave() {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const e = document.querySelector("#saveState");
-    if (e) { e.textContent = "Autosaved"; e.className = "badge success"; }
+    if (e) { e.textContent = t("core.editor.autosaved", "Autosaved"); e.className = "badge success"; }
   } catch { /* autosave is best-effort */ }
 }
 
@@ -386,7 +411,10 @@ export async function saveContent() {
   clearInterval(state.autosaveTimer);
   const titleEl = document.querySelector("#title");
   if (!titleEl.value.trim()) {
-    await alertDialog({ title: "Title required", description: "Give this content a title before saving." });
+    await alertDialog({
+      title: t("core.editor.titleRequired", "Title required"),
+      description: t("core.editor.titleRequiredDesc", "Give this content a title before saving."),
+    });
     titleEl.focus();
     return;
   }
@@ -407,7 +435,7 @@ export async function saveContent() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    toast("Saved");
+    toast(t("core.msg.saved", "Saved."));
     state.editing = null;
     setTimeout(render, 300);
   } catch (e) {
@@ -418,15 +446,15 @@ export async function saveContent() {
 export async function showRevisions() {
   const box = document.querySelector("#revisions");
   box.style.display = "block";
-  box.innerHTML = `<div class="card-title">Revision history</div><div class="muted text-sm">Loading…</div>`;
+  box.innerHTML = `<div class="card-title">${esc(t("core.editor.revisionHistory", "Revision history"))}</div><div class="muted text-sm">${esc(t("core.msg.loading", "Loading…"))}</div>`;
   try {
     const d = await api(scoped(`${state.type}/${state.editing.id}/revisions`));
     const items = d.items || [];
-    box.innerHTML = `<div class="card-title" style="margin-bottom:.75rem">Revision history</div>
+    box.innerHTML = `<div class="card-title" style="margin-bottom:.75rem">${esc(t("core.editor.revisionHistory", "Revision history"))}</div>
       ${items.map((r) => `<div class="list-row">
         <div><div class="title">v${esc(r.version)}</div><div class="meta">${esc(r.locale)} · ${esc(fmtDate(r.created_at))}</div></div>
-        <button class="btn outline sm" data-restore="${attr(r.id)}">Restore</button>
-      </div>`).join("") || `<div class="empty">No revisions yet.</div>`}`;
+        <button class="btn outline sm" data-restore="${attr(r.id)}">${esc(t("core.editor.restore", "Restore"))}</button>
+      </div>`).join("") || `<div class="empty">${esc(t("core.editor.noRevisions", "No revisions yet."))}</div>`}`;
   } catch (e) {
     box.innerHTML = `<div class="muted text-sm">${esc(e.message)}</div>`;
   }
@@ -441,13 +469,13 @@ document.addEventListener("click", async (e) => {
   const r = e.target.closest("[data-restore]");
   if (!r) return;
   const ok = await confirmDialog({
-    title: "Restore this revision?",
-    description: "The current content will be replaced by the selected revision.",
-    confirmLabel: "Restore", danger: false,
+    title: t("core.editor.restoreTitle", "Restore this revision?"),
+    description: t("core.editor.restoreDesc", "The current content will be replaced by the selected revision."),
+    confirmLabel: t("core.editor.restore", "Restore"), danger: false,
   });
   if (!ok) return;
   await api(scoped(`${state.type}/${state.editing.id}/revisions/${r.dataset.restore}/restore`), { method: "POST" });
-  toast("Revision restored");
+  toast(t("core.editor.revisionRestored", "Revision restored"));
   editContent(state.type, state.editing.id);
 });
 
@@ -474,17 +502,17 @@ async function switchVersion(locale, exists, postId) {
     return;
   }
   const choice = await openDialog({
-    title: `Create a ${locale} version`,
-    description: "This adds a new draft in the same translation group. The version you are editing is left untouched.",
-    confirmLabel: "Create translation",
+    title: t("core.editor.createVersion", "Create a {locale} version", { locale }),
+    description: t("core.editor.createVersionDesc", "This adds a new draft in the same translation group. The version you are editing is left untouched."),
+    confirmLabel: t("core.content.createTranslation", "Create translation"),
     fields: [
       {
         name: "mode",
-        label: "How should it start?",
+        label: t("core.editor.createVersionHow", "How should it start?"),
         type: "select",
         options: [
-          { value: "copy", label: "Copy this version as a first draft" },
-          { value: "blank", label: "Start empty" },
+          { value: "copy", label: t("core.editor.copyVersion", "Copy this version as a first draft") },
+          { value: "blank", label: t("core.editor.startBlank", "Start empty") },
         ],
       },
     ],
@@ -496,23 +524,26 @@ async function switchVersion(locale, exists, postId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: current.id, locale, mode: choice.mode || "copy", site: state.site }),
     });
-    toast(`${locale} version created`);
+    toast(t("core.editor.versionCreated", "{locale} version created", { locale }));
     await editContent(state.type, made.id);
   } catch (err) {
-    await alertDialog({ title: `Could not create the ${locale} version`, description: err.message });
+    await alertDialog({
+      title: t("core.editor.versionCreateFailed", "Could not create the {locale} version", { locale }),
+      description: err.message,
+    });
   }
 }
 
 export async function deleteContent() {
   const ok = await confirmDialog({
-    title: "Delete this content?",
-    description: "This permanently removes the item and its translations. Revisions go with it.",
-    confirmLabel: "Delete",
+    title: t("core.editor.deleteTitle", "Delete this content?"),
+    description: t("core.editor.deleteDesc", "This permanently removes the item and its translations. Revisions go with it."),
+    confirmLabel: t("core.action.delete", "Delete"),
   });
   if (!ok) return;
   clearInterval(state.autosaveTimer);
   await api(scoped(contentPath(state.type) + "/" + state.editing.id), { method: "DELETE" });
-  toast("Deleted");
+  toast(t("core.msg.deleted", "Deleted."));
   state.editing = null;
   go(state.page);
 }

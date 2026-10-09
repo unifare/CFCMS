@@ -62,6 +62,8 @@ const FRONTEND = join(ROOT, "src/platform/frontend.ts");
 const BLOCK_FIELDS = join(ROOT, "public/admin/js/block-fields.js");
 const MEDIA_PICKER = join(ROOT, "public/admin/js/media-picker.js");
 const MEDIA_SCREEN = join(ROOT, "public/admin/js/screens/media.js");
+const CORE_PACK = join(ROOT, "src/platform/i18n/core-pack.ts");
+const EDITOR_SCREEN = join(ROOT, "public/admin/js/screens/editor.js");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -396,6 +398,34 @@ const SCENARIOS = [
     after: ['  return key ? `/media/${key}` : "";'],
     runs: [["tests/suites/media-picker.test.mjs", "a key becomes one encoded path segment"]],
   },
+  {
+    // `t()` falls back to the English literal, so a key that does not exist is
+    // silent: the screen renders correct-looking English while everything around
+    // it is in the user's language.
+    label: "a screen asks for a dictionary key nobody declared",
+    file: EDITOR_SCREEN,
+    before: ['t("core.editor.back", "Back")'],
+    after: ['t("core.editor.backTypo", "Back")'],
+    runs: [["tests/suites/architecture.test.mjs", "every key the admin asks for is declared in both core packs"]],
+  },
+  {
+    // A key added to one pack only is the same defect from the other side: the
+    // language that lacks it silently shows English.
+    label: "a dictionary key is added to one core pack only",
+    file: CORE_PACK,
+    before: ['  "core.editor.edit": "Edit",\n'],
+    after: ['  "core.editor.edit": "Edit",\n  "core.editor.englishOnly": "EN only",\n'],
+    runs: [["tests/suites/architecture.test.mjs", "no key is declared in one core pack but not the other"]],
+  },
+  {
+    // The reverse direction, scoped to the editor's namespace: a string that was
+    // written into the dictionary and then never shown.
+    label: "an editor dictionary key loses its call site",
+    file: EDITOR_SCREEN,
+    before: ['t("core.editor.duplicate", "Duplicate")'],
+    after: ['"Duplicate"'],
+    runs: [["tests/suites/architecture.test.mjs", "every editor dictionary key has a call site"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -409,7 +439,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
-  BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN])];
+  BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK])];
 
 function hashAll() {
   const out = {};
