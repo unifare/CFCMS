@@ -146,7 +146,15 @@ export async function resolveSite(
 
 /**
  * Lightweight per-request memo so a single request never issues the same
- * `sites` query twice, without leaking a stale list across requests.
+ * `sites` query twice.
+ *
+ * ⚠️ It has to be *dropped* per request — see `resetSiteListMemo`. Keying on
+ * `env` alone is not a per-request scope, because `env` outlives a request:
+ * it is the isolate. Without the reset the list was frozen for the isolate's
+ * lifetime, so a site created in the admin did not resolve on the front end
+ * (its host and its path prefix both fell through to the default site) until
+ * the isolate happened to recycle. That is the multi-tenant shape of a stale
+ * cache, and it is invisible in a single-site install.
  */
 const memo = new WeakMap<Env, Promise<SiteRecord[]>>();
 
@@ -157,6 +165,14 @@ export function siteListMemo(env: Env): Promise<SiteRecord[]> {
     memo.set(env, p);
   }
   return p;
+}
+
+/**
+ * Drop the memoised site list. Called once per request from the entry point,
+ * which is the scope this memo always claimed to have.
+ */
+export function resetSiteListMemo(env: Env): void {
+  memo.delete(env);
 }
 
 // ---------------------------------------------------------------------------

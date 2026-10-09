@@ -1,4 +1,7 @@
-import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,contentAlternates,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap,feed}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setPluginTableSync}from "./extensions/plugin/menus";import{syncOwnerTables}from "./extensions/theme/tables";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo,listSites}from "./platform/sites";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
+import{Env}from "./shared/types";import{handleApi}from "./api";import{findContent,contentAlternates,siteInfo,locales,defaultLocale}from "./platform/frontend";import{robots,sitemap,feed}from "./platform/seo";import{seedBundledExtensions,bootPluginRuntime,doAction,applyFilters,renderShortcodes}from "./extensions/plugin/runtime";import{setPluginTableSync}from "./extensions/plugin/menus";import{syncOwnerTables}from "./extensions/theme/tables";import{setHostHooks}from "./extensions/contract/hooks";import{renderThemePage,runThemeQuery,activeTheme,type ThemeRenderOptions}from "./extensions/theme/runtime-declarative";import{tryRenderWithThemeWorker,handleThemeApi}from "./extensions/theme/runtime-worker";import{processScheduled}from "./shared/scheduler";import{resolveSite,siteListMemo,listSites,resetSiteListMemo}from "./platform/sites";
+// The media read path's three gates (tenant / session / owner) live in one
+// module so this route and the admin media API cannot answer differently.
+import{currentUser}from "./platform/auth";import{readMediaPolicy,mediaReadDecision}from "./platform/media-policy";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
 import{resolveLocale,langFromUrl,langFromCookie,langCookie}from "./platform/i18n/resolve";import{setPackProviders}from "./platform/i18n/packs";import{themePackProvider}from "./extensions/theme/packs";import{pluginPackProvider}from "./extensions/plugin/packs";
 // A theme-owned table is read through the same facade the admin screens use.
 // `resolveTableForSite` lives there precisely so that this route and the
@@ -39,11 +42,45 @@ async function renderPage(env:Env,o:ThemeRenderOptions,request:Request){
   return{html:r.html,template:r.template,tried:r.tried,status:200,error:r.error};
 }
 
-async function media(env:Env,u:URL){
-  const key=decodeURIComponent(u.pathname.slice(7)),o=await env.MEDIA.get(key);
-  if(!o)return new Response("Not found",{status:404});
-  const h=new Headers();o.writeHttpMetadata(h);h.set("ETag",o.httpEtag);
-  return new Response(o.body,{headers:h});
+/**
+ * Serve a media object.
+ *
+ * Deliberately routed **after** site resolution (it used to be matched near the
+ * top of the router, before the site was known and before any authentication):
+ * the object key carries its tenant in the `uploads/{siteId}/` segment, and
+ * nothing about a request may be trusted over that segment. Serving straight
+ * out of R2 made a key minted for one site readable on another site's host and
+ * readable by an anonymous visitor — the tenant axis of `media_files` had no
+ * enforcement on its only public door.
+ *
+ * Three gates, all answered by `platform/media-policy.ts` so this route and the
+ * admin API cannot disagree: the key must belong to the resolved site, the
+ * policy may require a session, and under owner isolation the requester must be
+ * the uploader (legacy `uploaded_by IS NULL` rows are grandfathered site-wide).
+ *
+ * Every refusal is a plain 404, never 403: a 403 would confirm that a key
+ * exists and belongs to somebody else.
+ *
+ * `key` comes from the *stripped* path, so a site mounted on a path prefix
+ * (`/shop/media/…`) resolves the same key as one on its own host.
+ */
+async function media(env:Env,request:Request,path:string,siteId:string){
+ const raw=path.slice("/media/".length);
+ let key:string;
+ try{ key=decodeURIComponent(raw); }catch{ return new Response("Not found",{status:404}); }
+ if(!key)return new Response("Not found",{status:404});
+ // Read the policy first: under `isolation:"site"` with no session requirement
+ // there is no user to look up, and this route is on the critical path of every
+ // image the site serves.
+ const policy=await readMediaPolicy(env,siteId);
+ const needUser=policy.requireSession||policy.isolation==="owner";
+ const user=needUser?await currentUser(env,request).catch(()=>null):null;
+ const decision=await mediaReadDecision(env,siteId,key,user?.id??null,policy);
+ if(!decision.allow)return new Response("Not found",{status:404});
+ const o=await env.MEDIA.get(key);
+ if(!o)return new Response("Not found",{status:404});
+ const h=new Headers();o.writeHttpMetadata(h);h.set("ETag",o.httpEtag);
+ return new Response(o.body,{headers:h});
 }
 
 function htmlResponse(html:string,template:string,status:number,siteId:string,setCookie?:string|null){
@@ -85,6 +122,11 @@ function matchRoute(routePath:string,path:string):{params:Record<string,string>}
  * the WordPress-style hierarchy in `template-resolver.ts`.
  */
 export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
+ // The site list is memoised so one request resolves it at most once. The memo
+ // is keyed by `env`, which outlives a request, so it has to be dropped here —
+ // otherwise a site created in the admin never resolves on the front end until
+ // the isolate recycles (see `resetSiteListMemo`).
+ resetSiteListMemo(env);
  if(!booted){booted=true;ctx.waitUntil(seedBundledExtensions(env))}
  // Join the two halves of the extension layer.
  //
@@ -122,7 +164,6 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  if(u.pathname.startsWith("/api/"))return handleApi(env,request);
  // Sandboxed theme Workers read data exclusively through this endpoint.
  if(u.pathname.startsWith("/__cfpress/theme-api/"))return handleThemeApi(env,request);
- if(u.pathname.startsWith("/media/"))return media(env,u);
  // The admin SPA and any other static asset belong to the asset layer. This is
  // stated explicitly rather than left to the locale parser, which previously
  // doubled as the asset bail-out — so that removing the locale prefix from the
@@ -147,6 +188,9 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  // The bare feed serves the site's default language; `/{locale}/feed.xml`
  // (routed after locale resolution, below) serves that language's feed.
  if(path==="/feed.xml"||path==="/rss.xml"||path==="/atom.xml")return feed(env,request,siteId);
+ // Media is per-site too, and for the same reason: the key embeds its tenant,
+ // so the site has to be resolved before the key can be judged. See `media()`.
+ if(path.startsWith("/media/"))return media(env,request,path,siteId);
 
  // Front-end paths may or may not carry a locale prefix. `/{locale}/...` is
  // explicit; anything else is resolved against the site's *default* locale.

@@ -85,7 +85,7 @@ export const PLATFORM_SCHEMA = [
   { table: "theme_blocks", tenant: "site", locale: null, note: "declared blocks are per site" },
   { table: "theme_routes", tenant: "site", locale: null, note: "front-end routes are per site; the 404-on-theme-switch defect lived here" },
   { table: "theme_table_defs", tenant: "site", locale: null, note: "logical→physical table map is per site" },
-  { table: "media_files", tenant: "site", locale: null, note: "site_id added in migration 0009; alt_text/title are language-neutral by design" },
+  { table: "media_files", tenant: "site", locale: null, note: "site_id added in migration 0009; uploaded_by added in 0018 (NULL = uploaded before ownership existed, grandfathered visible site-wide); alt_text/title are language-neutral by design — one alt for every language, stated in the editor UI rather than silently assumed" },
 
   // -- tenant-scoped via a parent (no local site_id, by design) --------------
   { table: "post_meta", tenant: "platform", derivedTenant: "post_id → posts.site_id", locale: null, note: "custom post fields; scoped by the post they hang off" },

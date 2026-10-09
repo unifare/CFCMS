@@ -39,6 +39,10 @@ const suites = [
   // and the i18n suite asserts on a site it configures itself.
   ["multi-language (L0-L3)", "suites/i18n.test.mjs"],
   ["admin contract", "suites/admin-contract.test.mjs"],
+  // Media access: the tenant and owner axes of `media_files`, checked on both
+  // doors (the public `/media/<key>` read path and the admin API) so the two
+  // cannot drift apart again.
+  ["media access", "suites/media.test.mjs"],
   ["plugin hooks", "suites/plugin-hooks.test.mjs"],
   // The channel runtime: webhook delivery + the claim-before-send dedup ledger.
   // It was missing from all four registries (npm test, this list, and both

@@ -1391,6 +1391,56 @@ section("The declarative settings form covers every declared field type");
 }
 
 // ---------------------------------------------------------------------------
+section("The media read path resolves the site before it reads the object (rule 60)");
+// ---------------------------------------------------------------------------
+
+/**
+ * `/media/<key>` used to be matched near the top of the router — above site
+ * resolution and above authentication — and served straight out of R2. The
+ * object key embeds its tenant (`uploads/{siteId}/…`), so that made a key
+ * minted for one site readable on another site's host, and readable by an
+ * anonymous visitor. `media_files` was already per-site; only this door was
+ * site-blind, and because the admin list was already scoped the hole survived
+ * every existing assertion.
+ *
+ * Two things are checked, and they fail independently:
+ *
+ *   1. **Order.** The branch has to sit after the `resolveSite` call, because
+ *      only then is there a site to judge the key against. Moving it back up
+ *      is a one-line edit that keeps every behaviour test green for as long as
+ *      every site happens to be the default one.
+ *   2. **It goes through the policy module.** A read path that reaches R2
+ *      directly is the original defect wearing a different line number.
+ */
+{
+  const index = blankComments(read(join(ROOT, "src", "index.ts")));
+  // Anchored on `startsWith("/media/")`, not on the bare path literal: the
+  // `media()` helper itself mentions `"/media/"` when slicing the prefix off,
+  // and that mention sits *above* the router — so the looser anchor reported
+  // the function definition as "the branch" and the guard was red on a correct
+  // tree. It also has to match the shape a moved-back branch takes
+  // (`u.pathname.startsWith(...)`), or moving it would go unnoticed.
+  const mediaAt = index.indexOf('startsWith("/media/")');
+  const resolveAt = index.indexOf("await resolveSite(");
+  // Non-vacuity first: `-1 > -1` is false, so a renamed anchor would turn the
+  // order assertion red for the wrong reason; state both anchors' presence.
+  check(
+    "the media branch and the site-resolution call are both present (non-vacuity)",
+    mediaAt > -1 && resolveAt > -1,
+    `"/media/" at ${mediaAt}, "await resolveSite(" at ${resolveAt}`
+  );
+  check(
+    "the /media/ branch is matched after the site is resolved",
+    mediaAt > resolveAt,
+    `"/media/" at ${mediaAt} must come after "await resolveSite(" at ${resolveAt}`
+  );
+  checkEmpty(
+    "the /media/ read path decides through platform/media-policy, not straight out of R2",
+    index.includes("mediaReadDecision") ? [] : ["src/index.ts never calls mediaReadDecision"]
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

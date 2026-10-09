@@ -1,10 +1,13 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 15 —— 数据驱动后台（块面板 / Dashboard 卡片 / 声明式设置表单）**
-> （批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；批次 13 mobai 主题 + RSS；
-> 批次 12 写入路径修复 + journal 主题；批次 11 平台功能开关。批次 10 及更早见下方各节与 `docs/history/`。）
+> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 16 Track 0 —— 媒体隔离地基**
+> （批次 15 数据驱动后台；批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；
+> 批次 13 mobai 主题 + RSS；批次 12 写入路径修复 + journal 主题；批次 11 平台功能开关。
+> 批次 10 及更早见下方各节与 `docs/history/`。）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
 >
+> ⚠️ 批次 16 只做完了 Track 0（隔离地基）。媒体子系统与内容编辑器的其余部分在
+> `docs/design/MEDIA-EDITOR-PLAN.md`（**已定稿、未实现**，含四条轨道的完整拆分与已拍板语义）。
 > ⚠️ 本轮的批次过程文档在 `docs/history/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
 > 每日工作日志在 `.workbuddy-ai/memory/YYYY-MM-DD.md`（gitignore，本机才有）。
 
@@ -64,8 +67,16 @@ f312143  journal theme (modern blog) + listing dates + CJK reading time
 a81e5e0  Re-key tenant audit verdicts after the mobai batch
 7581387  Per-language slugs + hreflang + per-locale feeds + rules 56-59  ← 批次 14
 60f9a24  Dropdown check mark: show only on the active row
-176331b  Data-driven admin: block palette, dashboard cards, typed settings forms  ← 当前基线
+176331b  Data-driven admin: block palette, dashboard cards, typed settings forms  ← 批次 15 基线
+(batch 16 Track 0: media ownership + isolation, and the site-list memo fix — 见 §5)
 ```
+
+**批次 16 Track 0（媒体隔离地基）**：`media_files` 自 0009 起就有 `site_id`，但
+**它的唯一公开门没有执行它**——`/media/<key>` 在 `src/index.ts` 里于**站点解析之前**、
+**鉴权之前**匹配并直接从 R2 取对象，于是 A 站铸的 key 在 B 站域名下 200、未登录访客也 200。
+后台列表早已按站点收窄，**恰恰因为另一扇门是对的，这个洞活过了所有既有断言**。
+本批次补齐两轴（租户 + 所有者）并让两扇门走同一份策略；顺带修掉一个"新建站点在前台解析不到"
+的 memo 缺陷。详见 §5 与 `AGENTS.md` 规则 60。
 
 **批次 11（`0aa6ed6`，平台功能开关）**：`src/shared/features.ts` 单一定义
 （`FEATURE_SWITCHES`：key/varName/defaultOn/label），优先级 站点 settings 行 →
@@ -105,6 +116,40 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 `ALLOWED_FIELD_TYPES` 出类型感知控件，`options` 终于被持久化（迁移 0017——校验器一直接受
 却从不存储）。三道新守卫（SPA 禁块名字面量 / dashboard 禁 stat 硬编码 / 13 类型逐个有 case）
 + `_skeleton-inject` 3 个新场景（23 场景 0 问题）。
+
+**批次 16 Track 0（媒体隔离地基）—— ✅ 本轮完成**
+
+起点是用户提的四条诉求（编辑器跟进 / 多语言体验 / 统一媒体控件 / 站点与用户隔离）。
+勘察后先出方案（`docs/design/MEDIA-EDITOR-PLAN.md`，四条轨道），本轮只做 **Track 0**，
+因为其余三条都依赖它。
+
+| 项 | 状态 |
+|---|---|
+| 迁移 `0018_media_ownership.sql`：`media_files.uploaded_by` + `(site_id, uploaded_by, created_at)` 索引；`contract/schema.ts` 的 note 同步 | ✅ |
+| `src/platform/media-policy.ts`：媒体访问策略的**唯一定义**（`isolation` / `require_session`，站点设置行 `cfpress.media`，解析不了=安全侧）+ `mediaKeyBelongsToSite` + `mediaReadDecision`（**返回拒绝原因**）+ `mediaOwnerClause` | ✅ |
+| `/media/` 读取分支**移到站点解析之后**（与 sitemap/robots 同层），三闸门：key 属本站 / 策略要求时会话 / owner 隔离下必须是上传者；拒绝**一律 404** | ✅ |
+| `api.ts`：上传写 `uploaded_by` + 校验站点真实存在；列表支持 `q`/`type`/`page`/`limit`/`total` 并按策略收窄；新增 `PATCH`（alt/title）与 `DELETE`（**先删 R2 对象再删行**）；dashboard 的媒体计数走同一条 owner 子句 | ✅ |
+| **顺带修掉的第四个真缺陷**：`platform/sites.ts` 的站点列表 memo 注释写着"per-request"，实际以 `env`（isolate）为键且从不清理 → **新建站点在前台解析不到**（host 与 path 前缀都落到默认站）。修法：入口每请求 `resetSiteListMemo(env)` | ✅ |
+| 新套件 `tests/suites/media.test.mjs`（69 条）+ 登记进四处注册表（`package.json` / `run-all.mjs` / `cfpress.sh` / `cfpress.ps1`） | ✅ |
+| 新守卫（`architecture.test.mjs`，3 条）：`/media/` 分支必须在 `await resolveSite(` **之后**（**结构**判据，行为测试看不见它）+ 读取路径必须走 `mediaReadDecision` | ✅ |
+| 新注入工具 `tests/tools/_media-inject.mjs`（**7 场景**，全部"注入→具名断言变红→还原→哈希一致"） | ✅ |
+| `_tenant-query-audit.mjs` 重新键位（`api.ts:1357→1584`、`frontend.ts:145→186`，后者是批次 10 起就漂了的陈旧键） | ✅ |
+| 规则 60 写进 `AGENTS.md` + `ARCHITECTURE.md` §10 | ✅ |
+
+**本轮的三条关键判断**（都写进了 `AGENTS.md` 规则 60）：
+
+1. **三条闸门都答 404 ⇒ 断言必须盯"哪一条"**。`mediaReadDecision` 因此返回
+   `site`/`session`/`owner`/`missing` 而不是布尔；套件把三条闸门**逐条单独打开**再断言。
+   只在三条全关时断言"404"的写法，删掉任何一条都不会变红——这正是本仓库反复踩的
+   "观测面"层假绿（§12）。
+2. **守卫必须是结构的**。把 `/media/` 分支挪回站点解析之前，只要所有站点恰好都是默认站，
+   行为测试全绿。所以守卫解析 `index.ts` 里两个锚点的**先后顺序**，注入场景 7 验证它。
+3. **默认值本身是产品决定**。`require_session` 默认**开**（用户选定"站点校验 + 要求会话"）：
+   未登录访客取不到媒体 ⇒ 前台 `<img>` 会 404。它被实现为站点设置而不是常量，
+   就是为了让这个选择**可逆**，并且排障第一站就是它。`AGENTS.md` 规则 60e 明写了这一点。
+
+**新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
+`_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
 
@@ -383,7 +428,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：22 套件 / 1147 条 / 0 失败，另有 `_schema-scope` 21 条）
+## 6. 测试与验证（当前全绿：23 套件 / 1219 条 / 0 失败，另有 `_schema-scope` 21 条 —— 合计 24 项 / 1240 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -392,7 +437,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 69 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支** |
+| architecture | 72 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支** |
 | _schema-scope | 21 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
@@ -407,6 +452,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | multisite | 91 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |
 | i18n | 66 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
 | admin-contract | 44 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、dashboard cards 数组、设置 options 往返） |
+| **media** | **69** | **媒体访问（批次 16 Track 0 新增）**：租户闸门（跨站 key → 404）/ 会话闸门 / **owner 硬隔离（含管理员）** / legacy `uploaded_by IS NULL` 的祖父条款 / 上传写归属 + 站点必须真实存在 / 列表按 owner 收窄 + `q`/`type`/分页/`total` / dashboard 媒体卡与列表 total 一致 / PATCH alt·title（非 owner 403、无 `media.write` 403、别站 id 404）/ **DELETE 先删 R2 对象再删行** / 脏策略行 fail-closed / **站点列表 memo 的 per-request 复位**（§1：先发前台请求 → 再建站点 → 再请求它） |
 | account | 27 | 账户自助：改密/改名的当前密码闸门、稳定错误码、menu_prefs 隔离、label_key 翻译端到端 |
 | menu-custom | 40 | 站点菜单编辑器三端点契约、权限分层、10 种结构违规 400、`applyMenuCustom` 纯函数语义 |
 | plugin-hooks | 32 | 插件 hook 生命周期 |
@@ -445,6 +491,7 @@ node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 �
 node tests/tools/_skeleton-inject.mjs        # 23 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / dashboard 卡 / 设置表单分支
 node tests/tools/_locale-url-inject.mjs     # 4 场景：规则 56–59（slug COALESCE / 散落回退 / locale 正则 / feed 站点隔离）
 node tests/tools/_launcher-inject.mjs        # 16 场景：启动器两侧对齐 / BOM / stderr 提示 / EOF 退出
+node tests/tools/_media-inject.mjs           # 7 场景：规则 60（租户闸门 / 会话闸门 / owner 读闸门 / owner 列表子句 / 上传归属 / 删除顺序 / 分支位置）
 ```
 
 ⚠️ 这三个工具（`_skeleton` / `_launcher` / `_plugin-pages`）都用 **Worker 线程在进程内**跑套件——
@@ -779,6 +826,22 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     也别不加验证就当成"环境问题"放过。
 35. **`{{#each x}}` 不写 `as` 时绑定的是 `this`**——循环体内直接写 `{{字段}}` 得到空，
     200、零异常。必须 `{{#each x as item}}`。三处新主题模板同时踩过，探针/DOM 检查才现形。
+36. **三条闸门都答 404 时，断言"404"等于没断言**（观测面层的又一例，批次 16）。
+    `/media/<key>` 有租户 / 会话 / owner 三条独立闸门，全部返回 404。套件若只在三条全关时
+    断言"取不到"，**删掉任何一条都不会变红**——另外两条还站着。修法两条：
+    ① 决策函数返回**原因**（`site`/`session`/`owner`/`missing`）而不是布尔；
+    ② 套件把闸门**逐条单独打开**（把其余策略放宽到只剩它），再断言那一刻的 404。
+    `_media-inject.mjs` 7 个场景就是按这个形状逐条注入的。
+37. **以 `env` 为键的"per-request" memo，实际生命周期是 isolate**（批次 16 抓到的真缺陷）。
+    `platform/sites.ts` 的站点列表 memo 注释写着 per-request，但 `env` 在 Workers 里跨请求复用
+    → 站点列表被冻结到 isolate 回收为止 → **新建站点在前台解析不到**（host 与 path 前缀都落到
+    默认站），单站点安装完全看不出来。修法：入口每请求 `resetSiteListMemo(env)`。
+    一般规律：**注释声称的作用域要和键的作用域一致**，否则缓存会替你记住不该记的东西。
+38. **写测试时的两种假绿，本轮在自己的套件里各踩一次**（批次 16）。
+    ① `setPolicy` 忘了带 `?site=` → 策略写到 `default` 站 → §4 那条断言红了（这次是好事，
+    它暴露了问题），但 §10 三条断言**空转通过**，因为它们改的那行根本不存在；
+    ② 修法是补 **non-vacuity 断言**（"策略确实落在这个站上" / "确实改动了 1 行"）。
+    **写"某行被改坏后应当拒绝"的断言时，先断言那行真的存在且真的被改坏了。**
 
 ## 9. 权威文档索引
 
@@ -787,7 +850,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
 | `docs/design/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
 | `docs/history/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
-| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、明确不做的事） |
+| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、**媒体隔离规则 60**、明确不做的事） |
 | `docs/HANDOVER.md` | 本文 |
 | `src/shared/features.ts` | **功能开关唯一词汇表 + 解析器**（`FEATURE_SWITCHES` / `featureEnabled()` / `featureSnapshot()`）——开关定义只此一处 |
 | `public/admin/js/screens/features.js` | 功能开关后台屏（每开关一张卡：来源标注 / var 名 / 声明默认 / 继承值 / 重置为继承） |
@@ -798,6 +861,10 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `tests/suites/admin-menus.test.mjs` | 菜单注册表契约（归属隔离 / 安装级可见 / 停用只删自己 / 切主题切回） |
 | `tests/suites/i18n.test.mjs` | 多语言四层契约（§5.4① 八条 + 翻译组 + 主题自有表 + 9b 段 `lang_group` 回归） |
 | `tests/suites/locale-url.test.mjs` | 按语言 slug 的行为契约（两种存储形态的路由/404/唯一性/hreflang/按语言 feed/sitemap；规则 58 的行为面） |
+| `src/platform/media-policy.ts` | **媒体访问策略的唯一定义**（规则 60）：`isolation` / `require_session`（站点设置行 `cfpress.media`）+ `mediaKeyBelongsToSite` + `mediaReadDecision`（**返回拒绝原因**）+ `mediaOwnerClause`——前台读取路径与后台 API 共用同一份 |
+| `tests/suites/media.test.mjs` | 媒体两轴（租户 / 所有者）的契约：三闸门**逐条单独打开**再断言、删除顺序、legacy NULL 祖父条款、站点列表 memo 的 per-request 复位 |
+| `tests/tools/_media-inject.mjs` | 上者的反向验证工具（7 场景，注入→具名断言变红→还原→哈希一致；手工跑，不在 gate 里） |
+| `docs/design/MEDIA-EDITOR-PLAN.md` | 批次 16 的四轨道拆分（**Track 0 已实现，Track A/B 未实现**）——含已拍板的媒体语义与编辑器缺陷清单 |
 | `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
 | `tests/tools/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
 | `tests/suites/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |

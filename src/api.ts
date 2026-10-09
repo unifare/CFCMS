@@ -15,6 +15,9 @@ import { featureSnapshot, inheritedValue, truthy, FEATURE_SETTINGS_KEY, FEATURE_
 import { listAdminMenuGroups } from "./platform/admin-menus";
 import { clearPluginMenus } from "./extensions/plugin/menus";
 import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./platform/sites";
+// Media access policy — the same module the front-end `/media/<key>` read path
+// uses, so the library a user can list is the library they can fetch.
+import { readMediaPolicy, mediaOwnerClause } from "./platform/media-policy";
 import { invalidateThemeWorker } from "./extensions/theme/runtime-worker";
 import {applyThemeCapabilities, clearThemeCapabilities, listPostTypes, listTaxonomies, listRoutes, listThemeAdminMenus, listThemeBlocks, listFieldDefs, themeSettings, parseSettingOptions} from "./extensions/theme/capabilities";
 import {
@@ -666,12 +669,54 @@ async function saveSetting(env: Env, userId: string, body: any, siteId: string) 
   return ok({ ok: true });
 }
 
-async function mediaList(env: Env, siteId: string) {
-  const rows = await env.DB.prepare("SELECT * FROM media_files WHERE site_id=? ORDER BY created_at DESC LIMIT 200").bind(siteId).all();
-  return ok({ items: rows.results, site: siteId });
+/**
+ * The media library for one site, as this user may see it.
+ *
+ * Scoping is two-dimensional and both halves are decided in
+ * `platform/media-policy.ts`, not here: `site_id` (the tenant) and, when the
+ * site's policy asks for it, `uploaded_by` (the owner). The same module answers
+ * the `/media/<key>` read path, so a file the list shows is a file the reader
+ * can actually fetch.
+ */
+async function mediaList(env: Env, url: URL, siteId: string, userId: string) {
+  const page = Math.max(1, Number(url.searchParams.get("page") ?? "1"));
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? "50")));
+  const offset = (page - 1) * limit;
+  const q = String(url.searchParams.get("q") ?? "").trim();
+  const type = String(url.searchParams.get("type") ?? "").trim();
+  const policy = await readMediaPolicy(env, siteId);
+  const owner = mediaOwnerClause(policy, userId);
+
+  // `WHERE site_id = ?` is written into each statement rather than assembled
+  // into a shared fragment: `tests/tools/_tenant-query-audit.mjs` reads
+  // statements line by line, and a tenant predicate it cannot see is a tenant
+  // predicate nobody re-reads. The optional filters and the owner clause are
+  // appended after it.
+  const extra: string[] = [];
+  const extraBinds: unknown[] = [];
+  if (q) { extra.push("(filename LIKE ? OR alt_text LIKE ? OR title LIKE ?)"); extraBinds.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  // `type` is a MIME prefix ("image/", "application/pdf"), matched with LIKE so
+  // a caller does not have to enumerate the exact media types it will accept.
+  if (type) { extra.push("mime_type LIKE ?"); extraBinds.push(`${type}%`); }
+  const tail = `${extra.length ? " AND " + extra.join(" AND ") : ""}${owner.sql}`;
+  const binds = [siteId, ...extraBinds, ...owner.binds];
+
+  const rows = await env.DB.prepare(
+    `SELECT * FROM media_files WHERE site_id = ?${tail} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+  ).bind(...binds, limit, offset).all();
+  const total = await env.DB.prepare(`SELECT COUNT(*) AS count FROM media_files WHERE site_id = ?${tail}`)
+    .bind(...binds).first<any>();
+  return ok({ items: rows.results, page, limit, total: total?.count ?? 0, isolation: policy.isolation, site: siteId });
 }
 
 async function mediaUpload(env: Env, userId: string, request: Request, siteId: string) {
+  // The tenant a file is filed under comes from `?site=`, which the client
+  // controls and `requestSiteId()` only shape-checks. A write is the one place
+  // that mints a tenant, so it is the one place that must confirm the site
+  // exists — otherwise a typo files the upload under a site nobody can list.
+  const known = await listSites(env);
+  if (!known.some((s) => s.id === siteId)) return ok({ error: "unknown site" }, 400);
+
   const form = await request.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return ok({ error: "file required" }, 400);
@@ -682,11 +727,87 @@ async function mediaUpload(env: Env, userId: string, request: Request, siteId: s
   await env.MEDIA.put(key, file.stream(), {
     httpMetadata: { contentType: file.type || "application/octet-stream", cacheControl: "public, max-age=31536000, immutable" }
   });
+  // `uploaded_by` is what the owner axis reads. Leaving it NULL here would make
+  // every new upload fall into the grandfathered "visible site-wide" bucket,
+  // which is the opposite of what recording an owner is for.
   await env.DB.prepare(
-    "INSERT INTO media_files (id, site_id, object_key, filename, mime_type, size, alt_text, title, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, siteId, key, file.name, file.type || "application/octet-stream", file.size, String(form.get("alt") ?? ""), String(form.get("title") ?? file.name), now()).run();
+    "INSERT INTO media_files (id, site_id, object_key, filename, mime_type, size, alt_text, title, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, siteId, key, file.name, file.type || "application/octet-stream", file.size, String(form.get("alt") ?? ""), String(form.get("title") ?? file.name), userId, now()).run();
   await activity(env, userId, "upload", "media", id, { filename: file.name, size: file.size, siteId });
   return ok({ id, url: `/media/${encodeURIComponent(key)}`, site: siteId }, 201);
+}
+
+/**
+ * Load a media row **and** establish that this user may act on it.
+ *
+ * Two separate questions, and the second one is the one that keeps getting
+ * skipped: `site_id` decides whether the row is in this tenant at all, while
+ * the owner axis decides whether this particular user may edit or delete it.
+ * Both are checked before anything is written or removed — the pattern
+ * `savePost`/`deletePost` had to learn twice (see `docs/HANDOVER.md` §8.33).
+ *
+ * Returns a stable error string rather than a Response so the caller decides
+ * the status code; `not_found` covers "no such row" and "another site's row"
+ * on purpose, so the API does not confirm the existence of other tenants' ids.
+ */
+async function mediaRowForWrite(
+  env: Env,
+  id: string,
+  siteId: string,
+  userId: string
+): Promise<{ row: any } | { error: "not_found" | "not_owner" }> {
+  const row = await env.DB.prepare("SELECT * FROM media_files WHERE id=? AND site_id=? LIMIT 1")
+    .bind(id, siteId).first<any>();
+  if (!row) return { error: "not_found" };
+  const policy = await readMediaPolicy(env, siteId);
+  if (policy.isolation === "owner" && row.uploaded_by != null && row.uploaded_by !== userId) {
+    return { error: "not_owner" };
+  }
+  return { row };
+}
+
+/** Update the language-neutral descriptive fields. The bytes never change here:
+ *  replacing a file's contents would silently break every page already
+ *  referencing the old object, so that is a delete + upload, not a PATCH. */
+async function mediaUpdate(env: Env, userId: string, id: string, body: any, siteId: string) {
+  const found = await mediaRowForWrite(env, id, siteId, userId);
+  if ("error" in found) return ok({ error: found.error }, found.error === "not_found" ? 404 : 403);
+  const fields: string[] = [];
+  const binds: unknown[] = [];
+  if (body.alt_text !== undefined) { fields.push("alt_text=?"); binds.push(String(body.alt_text ?? "")); }
+  if (body.title !== undefined) { fields.push("title=?"); binds.push(String(body.title ?? "")); }
+  if (!fields.length) return ok({ error: "nothing to update" }, 400);
+  await env.DB.prepare(`UPDATE media_files SET ${fields.join(", ")} WHERE id=? AND site_id=?`)
+    .bind(...binds, id, siteId).run();
+  await activity(env, userId, "update", "media", id, { fields: fields.length, siteId });
+  return ok({ ok: true, id, site: siteId });
+}
+
+/**
+ * Delete a media file: the object first, then the row.
+ *
+ * Order is not cosmetic. The row is the only thing that knows the object's key,
+ * so deleting the row first would strand the bytes in R2 with nothing left to
+ * name them — an orphan no listing can show and no operator can find. Deleting
+ * the object first can at worst leave a row whose object is gone, which the
+ * read path already answers with 404 and a re-upload repairs.
+ *
+ * A failed R2 delete is reported, not swallowed: silently removing the row
+ * would tell the operator the file is gone while it is still being served.
+ */
+async function mediaDelete(env: Env, userId: string, id: string, siteId: string) {
+  const found = await mediaRowForWrite(env, id, siteId, userId);
+  if ("error" in found) return ok({ error: found.error }, found.error === "not_found" ? 404 : 403);
+  const key = String(found.row.object_key ?? "");
+  try {
+    if (key) await env.MEDIA.delete(key);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return ok({ error: "object delete failed", detail: message }, 502);
+  }
+  await env.DB.prepare("DELETE FROM media_files WHERE id=? AND site_id=?").bind(id, siteId).run();
+  await activity(env, userId, "delete", "media", id, { key, siteId });
+  return ok({ ok: true, id, key, site: siteId });
 }
 
 export async function handleApi(env: Env, request: Request): Promise<Response> {
@@ -1195,10 +1316,15 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     // "declared but never provided" shape as the plugin manifest fields.
     // `media_files` gained a `site_id` column in a later migration, so its
     // count is scoped like the rest instead of counting every site's uploads.
+    // It also honours the owner axis, through the same clause the media list
+    // uses: a card that counts files the library will not show is a number
+    // nobody can reconcile.
+    const mediaPolicy = await readMediaPolicy(env, siteId);
+    const mediaOwner = mediaOwnerClause(mediaPolicy, user.id);
     const [posts, pages, media, drafts, published, recent] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND type='post'").bind(siteId).first<any>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND type='page'").bind(siteId).first<any>(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM media_files WHERE site_id=?").bind(siteId).first<any>(),
+      env.DB.prepare(`SELECT COUNT(*) AS count FROM media_files WHERE site_id=?${mediaOwner.sql}`).bind(siteId, ...mediaOwner.binds).first<any>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND status='draft'").bind(siteId).first<any>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM posts WHERE site_id=? AND status='published'").bind(siteId).first<any>(),
       env.DB.prepare(
@@ -1335,8 +1461,13 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     return ok({items:r.results});
   }
 
-  if (path === "media" && method === "GET") return mediaList(env, siteId);
-  if (path === "media" && method === "POST") return mediaUpload(env, user.id, request, siteId);
+  if (path === "media" && method === "GET") return mediaList(env, url, siteId, user.id);
+  if (path === "media" && method === "POST") { if(!(await requirePermission(env,user,"media.write"))) return ok({error:"Forbidden"},403); return mediaUpload(env, user.id, request, siteId); }
+  // One row addressed by id. Mutations need `media.write`; reads of a single
+  // row go through the list, so there is nothing to add here.
+  const mediaItem = path.match(/^media\/([^/]+)$/);
+  if (mediaItem && method === "PATCH") { if(!(await requirePermission(env,user,"media.write"))) return ok({error:"Forbidden"},403); return mediaUpdate(env, user.id, decodeURIComponent(mediaItem[1]), await jsonBody(request), siteId); }
+  if (mediaItem && method === "DELETE") { if(!(await requirePermission(env,user,"media.write"))) return ok({error:"Forbidden"},403); return mediaDelete(env, user.id, decodeURIComponent(mediaItem[1]), siteId); }
   if (path === "settings" && method === "GET") return settings(env, siteId);
   if (path === "settings" && method === "POST") { if(!(await requirePermission(env,user,"settings.manage"))) return ok({error:"Forbidden"},403); return saveSetting(env, user.id, await jsonBody(request), siteId); }
 

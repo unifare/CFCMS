@@ -316,6 +316,46 @@ feed/hreflang 把别的站点的语言列出去是同样的病。守卫在
 node 直调）。它**不含** `tsc --noEmit`——因为 lib.dom 与 workers-types 的既有上游冲突会淹没退出码——
 所以推送前的完整纪律是 **`tsc --noEmit`（src/ 0 错误）+ `npm run gate`**；红灯的提交不许推。
 
+## 媒体隔离（规则 60）
+
+`media_files` 有两个维度：**租户**（`site_id`，迁移 0009）与**所有者**（`uploaded_by`，迁移 0018）。
+一个媒体文件有两扇门，**两扇都必须各自把关**——它们曾经各管一半，而只有一半被测过：
+
+| 规则 | 说明 |
+|---|---|
+| 60a | `/media/<key>` 的读取分支**必须**在站点解析**之后**匹配。对象键里的 `uploads/{siteId}/` 段就是租户，站点没解析出来就没有东西可以拿它去比对 |
+| 60b | 读取路径的裁决**只许**来自 `platform/media-policy.ts`（`mediaReadDecision`）。`index.ts` 与 `api.ts` 两扇门必须走同一份策略，否则"列表里看得见的"和"真能取到的"会分叉 |
+| 60c | 拒绝**一律 404**，绝不 403——403 等于确认"这个 key 存在，只是不属于你" |
+| 60d | 删除**先删 R2 对象、再删行**。行是唯一知道对象键的东西，先删行会把字节永久留在 R2 且无人能列出 |
+| 60e | 上传是**唯一铸造租户的写入**，必须确认站点真实存在（`?site=` 只做形状校验，`nosuchsite` 能通过正则） |
+
+**为什么 60a 是硬规则**：这条分支原本在 `resolveSite` **之前**、**鉴权之前**直接 `env.MEDIA.get(key)`。
+于是 A 站铸的 key 在 B 站的域名下 200，未登录访客也 200——而 `media_files` 早就按站点分好了，
+后台列表也早就按站点收窄了。**恰恰因为另一扇门是对的，这个洞活过了所有既有断言。**
+行为测试看不见它（把分支挪回上面，只要所有站点恰好都是默认站就全绿），
+所以守卫是**结构的**：`architecture.test.mjs` 解析 `index.ts`，要求 `startsWith("/media/")`
+出现在 `await resolveSite(` 之后。
+
+**为什么 60b 要封"另一份策略"**：媒体策略是站点级设置（`settings` 行 `cfpress.media`：
+`isolation` = `owner|site`、`require_session`）。**解析不了 = 关（安全侧）**：owner 隔离 + 要求会话。
+⚠️ `require_session` 默认**开**，后果是**未登录访客（也就是前台所有读者）取不到任何媒体**——
+主题里 `<img src="/media/...">` 会 404。这是运营者的决定，不是缺陷；前台一旦挂图，
+**第一件事是看这个开关**（Media 屏，或那一行 settings）。它的存在就是为了让这个选择可逆。
+
+**为什么 60e 只在写入侧查站点**：读/改/删都靠 `site_id=?` 收窄 SQL，不存在的站点天然查不到行；
+只有上传会**铸造**一个租户（R2 键前缀 + 行），拼错的站点名会造出一批谁也列不出来的文件。
+
+**三条闸门都是 404，所以断言必须盯"哪一条闸门"**：`mediaReadDecision` 返回**原因**
+（`site`/`session`/`owner`/`missing`），套件把三条闸门**逐条单独打开**再断言——
+只在三条全关时断言"404"的写法，任何一条还在就能通过，删掉一条根本不会变红。
+`tests/suites/media.test.mjs`（69 条）按这个形状写，`tests/tools/_media-inject.mjs`（7 场景）
+逐条注入确认。**这个工具不在 `npm run gate` 里**（要跑 9 遍带 esbuild 的套件），手工跑。
+
+**顺带修掉的一个真缺陷（同一条轨道）**：`platform/sites.ts` 的站点列表 memo 注释写着"per-request"，
+但它以 `env` 为键、且**从不清理**——而 `env` 是 isolate，不是请求。于是**新建的站点在前台解析不到**
+（host 与 path 前缀都落到默认站），直到 isolate 恰好回收。修法是在入口每个请求开头
+`resetSiteListMemo(env)`。守卫：`media.test.mjs` §1 先发一次前台请求、再建站点、再请求它。
+
 ## 守卫失效记录（READ THIS）
 
 `tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。
