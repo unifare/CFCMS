@@ -1,11 +1,12 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-09-29 (GMT+8) ｜ 交接基线：**批次 10 —— 插件系统三支柱（自有表 / 通知渠道 / 声明式后台页面）**
-> （上一轮批次 5 后台界面语言 + 账户自助 + 菜单配置；再上一轮批次 4 脚手架 + eshop 范例主题；
-> 再上一轮 `48edc41` 多语言四层）
+> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 15 —— 数据驱动后台（块面板 / Dashboard 卡片 / 声明式设置表单）**
+> （批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；批次 13 mobai 主题 + RSS；
+> 批次 12 写入路径修复 + journal 主题；批次 11 平台功能开关。批次 10 及更早见下方各节与 `docs/history/`。）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
 >
 > ⚠️ 本轮的批次过程文档在 `docs/history/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
+> 每日工作日志在 `.workbuddy-ai/memory/YYYY-MM-DD.md`（gitignore，本机才有）。
 
 ---
 
@@ -18,12 +19,18 @@
 | Workers | 全部服务端逻辑（无 Node 服务器） |
 | D1 (SQLite) | 内容与配置 |
 | R2 | 主题模板包、媒体、扩展 zip |
-| KV | 会话、缓存 |
+| KV | 会话、缓存镜像（**镜像默认关**，见功能开关） |
 | Static Assets | 后台 SPA（`public/admin/`） |
 
 - 仓库：`https://github.com/unifare/CFCMS`（public，分支 `main`，许可证 AGPL-3.0）
-- 版本：v0.7.0 → 目标 v0.8.0（主题架构改造）
-- 参照物：WordPress 的主题/插件模型；多站 similar 到 WP multisite
+- 版本：v0.7.0 → 目标 v0.8.0
+- **线上**：`https://cfpress.2aass.workers.dev`（免费计划，账号 `2aass@proton.me`）
+  ——所有 `wrangler` 命令必须带 `-c wrangler.local.jsonc`（真资源 id 在里面，已 gitignore；
+  仓库里的 `wrangler.jsonc` 是 `REPLACE_WITH_*` 占位符）
+- **后台首登**：`admin` / `change-me-now`（bootstrap 自动建号；**公开站点，上生产前必须改密**）
+- dev 端口 **47913**（跨项目约定，env `CFP_PORT` 可覆盖）
+- ⚠️ 沙箱代理放行 `api.cloudflare.com` 但**拦截 `*.workers.dev`**——线上站点无法在沙箱内 HTTP
+  验证，部署成功靠 `wrangler deploy` 输出 + `wrangler deployments list` + GraphQL analytics 证明
 
 ## 2. 提交脉络
 
@@ -46,9 +53,58 @@ fb2b012  Add eshop sample theme, its test suite, and the three dev docs (batch 4
 34c0bc9  Owner-agnostic own tables: rebuild theme_table_defs with owner_type (step 2)
 bcc856c  Channel contract + plugin page contract + rules 48–51 (steps 3+4)
 9487b40  Channel runtime: webhook impl + dedup ledger + PluginApi.notify (step 5)
-9fd19db  Admin renderer: plugin-page blocks + channel settings form (step 6)  ← 上一基线
-本轮      plugins/notify sample plugin + tests/suites/plugin-pages.test.mjs + reverse verification (steps 7+8)
+9fd19db  Admin renderer: plugin-page blocks + channel settings form (step 6)
+(batch 10 steps 7+8: plugins/notify sample + plugin-pages suite + injectors — 见 §5)
+0aa6ed6  Opt-out feature switches: KV cache mirror + theme Worker sandbox (batch 11)
+622bcce  Fix savePost: PUT with an id now creates when the row is missing
+6a53ba7  Dashboard fields (recent/published) + deletePost site-ownership check
+9e9dde5  PBKDF2 120k→25k (free-plan 10ms CPU) + handleApi top-level try/catch
+f312143  journal theme (modern blog) + listing dates + CJK reading time
+0f2bd7f  mobai theme (墨白) + RSS feed + cover images + theme.strings for templates
+a81e5e0  Re-key tenant audit verdicts after the mobai batch
+7581387  Per-language slugs + hreflang + per-locale feeds + rules 56-59  ← 批次 14
+60f9a24  Dropdown check mark: show only on the active row
+176331b  Data-driven admin: block palette, dashboard cards, typed settings forms  ← 当前基线
 ```
+
+**批次 11（`0aa6ed6`，平台功能开关）**：`src/shared/features.ts` 单一定义
+（`FEATURE_SWITCHES`：key/varName/defaultOn/label），优先级 站点 settings 行 →
+`wrangler.jsonc` vars → `defaultOn`，解析不了=关。两个开关都默认关：
+`cache_mirror_kv`（KV 写入镜像）、`theme_runtime_worker`（主题 Worker 沙箱，
+**检查必须在绑定之前**）。后台 Tools → Features 屏 + `GET/POST /api/v1/features`。
+规则 52–55。
+
+**批次 12（写入路径修复 + journal 主题）**：三个「200 + 内容错」真缺陷——
+①`savePost` 对带 id 的 PUT 只 UPDATE（SQLite 零行更新不报错→孤儿翻译行，**判据必须是
+查询结果不是入参形状**）；②`deletePost` 不校验站点归属（A 站可删 B 站文章）；③dashboard
+漏发 `recent`/`published` 且 media 计数漏租户。外加 `handleApi` 顶层 try/catch（异常逃逸成
+平台错误页 → 客户端只见 "Request failed"）与 **PBKDF2 迭代 120000→25000**（免费计划单请求
+10ms CPU，实测 120k≈22ms 会在写库前被杀——症状是 `site_users` 恒 0、登录报 "Request failed"；
+迭代数写在 hash 串里，以后调高不破坏旧密码）。同批交付 `journal` 现代博客主题（39 条套件）、
+列表日期 `date_display`（Intl 按 locale 记忆化）、`readingTime` CJK 按字计。
+
+**批次 13（`0f2bd7f`，mobai 主题 + RSS）**：设计稿→主题 `content/themes/mobai`（杂志式中文博客，
+明暗两套、零构建零外链）。平台补 **RSS**（`/feed.xml`，原平台只有 sitemap/robots）与
+`cover`（从正文第一个 `core/image` 派生——字段类型无法诚实表达 URL，`text` 被规则 41 强制可翻译）。
+`theme.strings` 把主题自己的语言包暴露给模板（前端文案不再硬编码）。**顺带抓到
+`x-cfpress-scope` ByteString 缺陷**：站点标题/分类含中文时 worker 主题整条路径静默退化
+（请求头是 Latin-1）——该头只写不读，删除而非编码，回退路径改为 `console.error` 原因。
+
+**批次 14（`7581387`，多语言 URL）**：slug 按语言（迁移 0016：`post_translations.slug`，
+NULL=跟随主表 `posts.slug`=默认语言值；**DROP 全局 UNIQUE 索引**，唯一性改为写路径按语言
+检查 409；读一律 `COALESCE(t.slug,p.slug)`，规则 58）；hreflang（`lang_group` 兄弟版本 +
+x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56–59 + 四道架构守卫 +
+`_locale-url-inject.mjs` + `npm run gate`（纯 node 直调，刻意不含 tsc——lib.dom 上游噪音
+淹没退出码）。**锁定教训**：publish-only 的 PUT 曾把 URL 改名成 entityId
+（`tSlug || entityId` 兜底是 CREATE-only）。
+
+**批次 15（`176331b`，数据驱动后台）**：①编辑器块面板从 `CORE_BLOCKS` 下发
+（原硬编码 9 种 vs 渲染器 12 种——gallery/button/columns 一直插不出来），
+`GET /api/v1/blocks`（原本零消费的端点）升级为翻译后形状；②Dashboard 统计卡为 API 下发的
+`cards` 数组，插件经 **`dashboardCards` filter** 注入；③声明式设置表单按
+`ALLOWED_FIELD_TYPES` 出类型感知控件，`options` 终于被持久化（迁移 0017——校验器一直接受
+却从不存储）。三道新守卫（SPA 禁块名字面量 / dashboard 禁 stat 硬编码 / 13 类型逐个有 case）
++ `_skeleton-inject` 3 个新场景（23 场景 0 问题）。
 
 `265d03c`：**目录分层 + 架构红线机器强制 + 运行时清单校验**（37 文件、+2827/−122）。
 
@@ -139,6 +195,16 @@ scripts/                      脚手架（生成器可被 import —— 本机�
 6. **界面语言本期做** —— 后台 UI 语言与内容语言独立
 
 ## 5. 进度总览（路线图见 `docs/ARCHITECTURE.md` §8）
+
+### 批次 11–15（2026-10-08/09，全部完成——叙述见 §2 提交脉络）
+
+| 批次 | 内容 | 基线 |
+|---|---|---|
+| 11 | 平台功能开关（`shared/features.ts` + Features 屏 + 规则 52–55） | `0aa6ed6` |
+| 12 | savePost/deletePost/dashboard 写入路径修复 + PBKDF2 适配免费计划 CPU + handleApi try/catch + journal 主题 | `9e9dde5`/`f312143` |
+| 13 | mobai 主题 + RSS `/feed.xml` + `cover` 派生 + `theme.strings` + 删除 ByteString 缺陷头 | `0f2bd7f` |
+| 14 | slug 按语言（迁移 0016）+ hreflang + 按语言 feed + 切换器 + **规则 56–59 + `npm run gate`** | `7581387` |
+| 15 | 数据驱动后台：块面板 / Dashboard 卡片（插件可注入）/ 声明式设置类型感知表单（迁移 0017） | `176331b` |
 
 ### 批次 1（架构防错）—— ✅ 全部完成
 
@@ -317,7 +383,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：22 套件 / 1128 条 / 0 失败，另有 `_schema-scope` 21 条）
+## 6. 测试与验证（当前全绿：22 套件 / 1147 条 / 0 失败，另有 `_schema-scope` 21 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -326,7 +392,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 55 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 的闭集合双表对比（`ALLOWED_*` ↔ `RENDERED_*`）**、**规则 52/53 功能开关：词汇表单一定义 + 落叶子层 + 显式声明默认值 + 两个都默认关 + key 集合与 `varName` 在 `Env` 上** |
+| architecture | 69 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支** |
 | _schema-scope | 21 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
@@ -336,9 +402,11 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
 | locale-url | 29 | 按语言 slug 的路由/404/唯一性、hreflang、按语言 feed、切换器（规则 56–59） |
 | theme-fixture | 47 | fixture 主题的声明与模板自洽 |
-| multisite | 78 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**） |
+| theme-journal | 39 | journal 主题：每个声明模板真渲染 + 边界作用域（无文章/无菜单/无描述） |
+| theme-mobai | 52 | mobai 主题：模板真渲染 + head 的 SEO 契约（canonical/og/hreflang/feed）+ 语言包键完整性 |
+| multisite | 91 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |
 | i18n | 66 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
-| admin-contract | 32 | 后台 API 契约 |
+| admin-contract | 44 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、dashboard cards 数组、设置 options 往返） |
 | account | 27 | 账户自助：改密/改名的当前密码闸门、稳定错误码、menu_prefs 隔离、label_key 翻译端到端 |
 | menu-custom | 40 | 站点菜单编辑器三端点契约、权限分层、10 种结构违规 400、`applyMenuCustom` 纯函数语义 |
 | plugin-hooks | 32 | 插件 hook 生命周期 |
@@ -346,7 +414,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | plugin-channels | 55 | 通知渠道运行时：webhook fetch 计数、claim-before-send 去重（含跨站双向）、`readChannelConfig` 只读声明过的 key |
 | **features** | **55** | **平台功能开关（批次 11 新增）**：列表与来源标注（site/var/default）/ **两层鉴权**（匿名被拒 + 非管理员 `author` 写 → 403，读只需会话）/ 保存往返 + 只落一行 + INSERT 分支 / **三层优先级逐层单独验**（站点行 > `env` var > 默认）/ 脏行降级 / 未知 key → 400 且不落库 / 屏幕接线 / UPDATE 分支（两次保存仍一行） |
 | theme-worker | 37 | L3 沙箱（含 WorkerStub 不可跨请求）+ **§10 功能开关反向验证：`theme_runtime_worker` 关/删/显式 false/拼错时都不加载沙箱，站点设置关能压过 var 开** |
-| launcher-parity | 55 | `cfpress.sh` ↔ `cfpress.ps1` 动作/菜单编号/套件表/退出码逐项对齐（解析结构，非 grep）+ BOM |
+| launcher-parity | 57 | `cfpress.sh` ↔ `cfpress.ps1` 动作/菜单编号/套件表/退出码逐项对齐（解析结构，非 grep）+ BOM + 磁盘套件全集对齐 |
 
 ⚠️ **一跑必须有摘要行**：所有套件遵循「catch 里也打印摘要、崩溃标注 `(aborted)`」——
 脚本判据统一是 `^[0-9]+ passed, [0-9]+ failed`，**匹配不到就当失败**（见「第六种假绿」）。
@@ -374,7 +442,7 @@ node tests/tools/_plugin-pages-inject.mjs    # 10 场景：注入真实缺陷 �
 **系统骨架 + 功能开关**的反向验证工具（10+ 场景，手工跑）：
 
 ```bash
-node tests/tools/_skeleton-inject.mjs        # 20 场景：schema / 事件契约 / 断言拼法 / 功能开关（含 5 个开关场景）
+node tests/tools/_skeleton-inject.mjs        # 23 场景：schema / 事件契约 / 断言拼法 / 功能开关 / 块面板 / dashboard 卡 / 设置表单分支
 node tests/tools/_locale-url-inject.mjs     # 4 场景：规则 56–59（slug COALESCE / 散落回退 / locale 正则 / feed 站点隔离）
 node tests/tools/_launcher-inject.mjs        # 16 场景：启动器两侧对齐 / BOM / stderr 提示 / EOF 退出
 ```
@@ -442,7 +510,37 @@ fixture 的那一项**；修正方式是再加一个**同类型**的第二个 ow
 ⚠️ **新守卫必须反向验证**：写完守卫 → 故意注入一次违规 → 确认它 FAIL。测不出失败的检查等于没有检查。
 本轮 6 项注入（见 §5 批次 3）全部如期变红。
 
-## 7. 后台 SPA（两轮前拆分，批次 5 增 3 个模块，批次 10 再增 2 个）
+## 6b. 线上部署与运维（免费计划）
+
+- **部署顺序**：`wrangler d1 migrations apply cfpress --remote -c wrangler.local.jsonc`
+  → `wrangler deploy -c wrangler.local.jsonc` → 主题文件有变化时逐个
+  `wrangler r2 object put "cfpress-media/extensions/themes/<name>/<ver>/files/<path>" --file=… --remote`。
+  **迁移必须先于 deploy**（新代码写新列，列不存在即 500；旧代码+新列无害）。
+  ⚠️ **远端 `theme_installs` 有行 ≠ 远端 R2 有文件**（踩过两次的老坑）。
+- **远端灌内容**：`wrangler d1 execute cfpress --remote --file=…`。大 SQL 会报
+  `{"D1_RESET_DO":true}` → **按 ~4 条语句一批**分次执行。写完 bump
+  `content_cache_versions` 让前台缓存失效。
+- **监控**：沙箱/本地都无法访问 `*.workers.dev`（代理 502），用 Cloudflare **GraphQL
+  analytics**（`api.cloudflare.com` 放行）查 `workersInvocationsAdaptive` 的
+  `dimensions{status}`。⚠️ **标签 ≠ 根因**：`scriptThrewException` 那次的真因是 CPU 超限
+  （Error 1102 不打这个标签）。
+- **免费计划 = 单请求 10ms CPU**（付费 50ms，可调 3000ms）。`hashPassword` 的
+  `PBKDF2_ITERATIONS = 25000`（≈3.5–5ms）就是按这个预算定的，**别调回 120000**
+  （实测 22.4ms → 写库前被杀 → `site_users` 恒 0 → 登录报 "Request failed"）。
+  迭代数写在 hash 串里，调高不破坏旧密码；任何"每请求都要跑"的重计算先问 10ms 够不够。
+- **推送纪律**：`npx tsc --noEmit`（src/ 0 错误）+ `npm run gate` 全绿才许 push；
+  push 后三路验证（`git rev-parse` == `git ls-remote` == `gh api …/commits/main`）。
+- ⚠️ **待办**：之前曾在对话中泄漏过一个 Cloudflare API token（`cfut_` 开头，完整值见
+  当时的对话记录，**不要写进本仓库**——GitHub secret scanning 会拒收推送，这也是它仍被视为
+  泄露的证明）。应到 https://dash.cloudflare.com/profile/api-tokens 撤销。
+
+## 7. 后台 SPA（两轮前拆分，批次 5 增 3 个模块，批次 10 再增 2 个，批次 15 数据驱动三面）
+
+> 批次 15 起三块界面**只渲染平台下发的数据**，别在 SPA 里重新列清单：
+> 编辑器块面板 ← `GET /api/v1/blocks`（`CORE_BLOCKS`）；Dashboard 统计卡 ← dashboard API 的
+> `cards` 数组（插件经 `dashboardCards` filter 注入）；主题/插件设置表单 ←
+> `theme/{name}/settings`，按 `ALLOWED_FIELD_TYPES` 逐类型渲染
+> （architecture.test.mjs 有三节守卫盯着，硬编码即红灯）。
 
 `public/admin/admin.js` 1514 行单文件 → 入口 + 6 个基础模块 + 屏幕模块
 （`js/screens/` 现有 24 个文件：注册表 `index.js` + 23 个屏幕/工具模块）。
@@ -671,6 +769,16 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     （`features.test.mjs` 用 `/api/v1/users` 造了个 `author` 角色用户），
     否则 `can()` 会把 `role === "admin"` 短路成 true。这正是场景「drops its permission check」
     第一版**没变红**的原因。
+33. **写入路径的判据必须是查询结果，不是入参形状**。`savePost` 对「带 id 的 PUT」曾只做
+    UPDATE（SQLite 零行更新不报错）→ 孤儿翻译行 + 假成功 200；publish-only 的 PUT 又曾把
+    URL 改名成 entityId（`tSlug || entityId` 兜底只在 CREATE 分支合法）。`deletePost` 曾
+    不校验站点归属。三者同根：**先查行在不在、属不属于这个站，再写**。
+34. **多套件顺序跑也可能偶发 1 红**（`menu-custom` / `plugin-pages` 各出现过 1 次，共享本地 D1）。
+    症状：链内 1 条 FAIL、单独跑与链段重跑全绿、失败套件不碰你改的代码。先单独跑、
+    再跑一次链段确认；**两次独立全绿才能写成基线**。别把偶发当成自己的改动引入的回归，
+    也别不加验证就当成"环境问题"放过。
+35. **`{{#each x}}` 不写 `as` 时绑定的是 `this`**——循环体内直接写 `{{字段}}` 得到空，
+    200、零异常。必须 `{{#each x as item}}`。三处新主题模板同时踩过，探针/DOM 检查才现形。
 
 ## 9. 权威文档索引
 
@@ -679,16 +787,17 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `docs/ARCHITECTURE.md` | **唯一权威**：多语言 §2、主题 §3、插件 §4、防错 §5、表总览 §6、分层 §7、路线图与进度 §8、已确认决策 §9、假绿记录 |
 | `docs/design/PLUGIN-ARCHITECTURE.md` | 插件系统三支柱设计全文（自有表 / 通知渠道 / 声明式后台页面）+ 八步交付顺序 |
 | `docs/history/HANDOVER-PLUGIN-BATCH.md` | 批次 10 过程存档（步骤 1–6 细节、用户拍板决策、本轮新坑） |
-| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、明确不做的事） |
+| `AGENTS.md` | 改代码前的硬规则清单（红线、清单规则、后台 SPA 规则、共用定义规则、菜单注册表规则 32–37、**插件规则 48–51**、**功能开关规则 52–55**、**多语言与 URL 规则 56–59 + `npm run gate`**、明确不做的事） |
 | `docs/HANDOVER.md` | 本文 |
 | `src/shared/features.ts` | **功能开关唯一词汇表 + 解析器**（`FEATURE_SWITCHES` / `featureEnabled()` / `featureSnapshot()`）——开关定义只此一处 |
 | `public/admin/js/screens/features.js` | 功能开关后台屏（每开关一张卡：来源标注 / var 名 / 声明默认 / 继承值 / 重置为继承） |
 | `tests/suites/features.test.mjs` | 功能开关 API 契约（两层鉴权 / 三层优先级 / 脏行降级 / 未知 key 400 / INSERT+UPDATE 分支 / 屏幕接线） |
-| `tests/tools/_skeleton-inject.mjs` | 骨架 + 开关的反向验证工具（20 场景，含 5 个开关场景） |
+| `tests/tools/_skeleton-inject.mjs` | 骨架 + 开关 + 数据驱动后台的反向验证工具（**23 场景**：schema/事件契约/断言拼法/开关/块面板/dashboard 卡/设置表单分支） |
 | `tests/tools/_locale-url-inject.mjs` | 多语言与 URL 规则 56–59 的反向验证工具（4 场景） |
-| `tests/suites/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表 + **规则 52/53 开关守卫**） |
+| `tests/suites/architecture.test.mjs` | 分层与越界守门人（分层红线 + 默认值 + 闭集合双表对比 + 规则 41 分类表 + **规则 52–55 开关守卫 + 规则 56–59 多语言守卫 + 块面板/dashboard/设置表单三节**） |
 | `tests/suites/admin-menus.test.mjs` | 菜单注册表契约（归属隔离 / 安装级可见 / 停用只删自己 / 切主题切回） |
 | `tests/suites/i18n.test.mjs` | 多语言四层契约（§5.4① 八条 + 翻译组 + 主题自有表 + 9b 段 `lang_group` 回归） |
+| `tests/suites/locale-url.test.mjs` | 按语言 slug 的行为契约（两种存储形态的路由/404/唯一性/hreflang/按语言 feed/sitemap；规则 58 的行为面） |
 | `tests/tools/_i18n-browser.cjs` | 多语言后台的真实浏览器验收（22 条，自清理，可重复跑） |
 | `tests/tools/_admin-menus-browser.cjs` | 菜单 + 生成式屏幕的真实浏览器验收（31 条，自清理，可重复跑） |
 | `tests/suites/admin-spa.test.mjs` | 后台 SPA 的结构守门人（模块图 + `window.*` 契约 + 逐屏渲染） |
@@ -697,5 +806,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 | `tests/tools/_plugin-pages-inject.mjs` | 上者的反向验证工具（10 场景，注入→具名断言变红→还原→哈希一致） |
 | `tests/tools/_tenant-query-audit.mjs` | 租户查询审计（列出所有碰租户表但不带 `site_id` 的语句，逐条书面裁决；键是 `file:line`） |
 | `.wrangler/eshop-verify.cjs` | 全链路真浏览器验收（语言状态自愈，需 `wrangler dev`） |
+| `src/platform/seo.ts` | sitemap / robots / **feed（RSS 2.0，按站点+按语言）**——SEO 三端点都必须接收并使用 `siteId`（规则 59） |
+| `src/shared/features.ts` 之外的第二词汇表：`src/rendering/blocks.ts` 的 `CORE_BLOCKS` | **可插入块类型的唯一定义**——编辑器面板经 `GET /api/v1/blocks` 下发，SPA 里出现块名字面量即架构红灯 |
 | `docs/HANDOVER.md` | 本文 |
 | `.workbuddy-ai/memory/` | 工作日志（按天）+ `MEMORY.md`（长期记忆）——本机文件，不入库 |
