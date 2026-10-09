@@ -59,6 +59,14 @@ function api(page, path, init) {
 }
 const jsonInit = (data) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
 
+/** A raw GET through the page, for responses that are not JSON (a published
+ *  page's HTML). */
+const raw = (page, path) =>
+  page.evaluate(async (p) => {
+    const r = await fetch(p);
+    return { status: r.status, text: await r.text() };
+  }, path);
+
 /** The session cookie lives in the context's jar, so the page and the request
  *  context share it — which is convenient, and also a trap: signing in through
  *  the *request* context signs the browser in, and the sign-in form then never
@@ -172,6 +180,9 @@ async function main() {
     check("and the key is namespaced by site", mediaKey.startsWith(`uploads/${SITE}/`), `key=${mediaKey}`);
 
     console.log("\n4. the URL survives a save");
+    // Published rather than draft, so the front-end leg below can read it: the
+    // single-post route only serves `status='published'`.
+    await page.selectOption("#status", "published");
     await page.fill("#title", "Picker acceptance");
     await page.click('[data-action="save-content"]');
     await page.waitForTimeout(1200);
@@ -192,6 +203,21 @@ async function main() {
       check("the image's URL is stored under `url`, not `text`", image?.attrs?.url === url,
         `attrs=${JSON.stringify(image?.attrs)}`);
       check("and nothing was written to the key the renderer ignores", image?.attrs?.text === undefined);
+
+      // The last leg of the loop, and the one nothing else covers: the HTML a
+      // **visitor** gets. The Node suite proves contract → renderer on synthetic
+      // input, and the assertions above prove editor → saved JSON; neither proves
+      // that the theme renders it on a published page.
+      const published = await api(page, `/api/v1/posts?site=${SITE}`);
+      const pub = (published.body?.items || []).find((p) => p.title === "Picker acceptance");
+      const pageUrl = pub ? `${pub.locale || "en"}/blog/${pub.slug}` : null;
+      check("the post has a front-end URL", !!pageUrl, `slug=${pub?.slug}`);
+      if (pageUrl) {
+        const rendered = await raw(page, `/${pageUrl}`);
+        check("the published page renders", rendered.status === 200, `status=${rendered.status}`);
+        check("and contains the picked image", rendered.text.includes(`<img src="${url}"`),
+          rendered.text.slice(0, 200));
+      }
     }
 
     console.log("\n5. the operator's media policy holds end to end");

@@ -140,7 +140,11 @@ function fieldInputs(type) {
   return `<div class="panel" style="margin-top:1rem">
     <div class="card-title">${esc(t("core.editor.customFields", "Custom fields"))}</div>
     <div class="card-desc" style="margin-bottom:1rem">${esc(t("core.editor.customFieldsHint", "Declared by the active theme for this content type"))}</div>
-    ${inputs}</div>`;
+    ${inputs}
+    ${state.locales && state.locales.length > 1
+      ? `<div class="muted text-sm" style="margin-top:.75rem">${esc(t("core.editor.customFieldsShared",
+          "These fields are shared by every language version of this item. Editing them here changes them for all languages."))}</div>`
+      : ""}</div>`;
 }
 
 export async function editor(c, type) {

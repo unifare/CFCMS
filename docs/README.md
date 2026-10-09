@@ -26,7 +26,7 @@ These are kept current: they describe the system as it is, not as it was planned
 |---|---|
 | [`PLUGIN-ARCHITECTURE.md`](design/PLUGIN-ARCHITECTURE.md) | The plugin model decisions (v0.8.0 batch 10) |
 | [`PLUGIN-DESIGN-RESEARCH.md`](design/PLUGIN-DESIGN-RESEARCH.md) | The reference-implementation study those decisions came from |
-| [`MEDIA-EDITOR-PLAN.md`](design/MEDIA-EDITOR-PLAN.md) | ⚠️ A **plan, not implemented** — batch 16: media ownership/isolation, the shared media control, and the content editor's block-attribute contract |
+| [`MEDIA-EDITOR-PLAN.md`](design/MEDIA-EDITOR-PLAN.md) | Batch 16: media ownership/isolation, the shared media control, and the block-attribute contract — **shipped** (Tracks 0, B1–B4 part 1, A3–A4; the doc marks what is done and what is left) |
 | [`THEME-ARCHITECTURE-PLAN.md`](design/THEME-ARCHITECTURE-PLAN.md) | ⚠️ A **historical plan**, not current state — most of it has shipped, some was superseded |
 
 Design documents record why a choice was made. They are not updated when the code

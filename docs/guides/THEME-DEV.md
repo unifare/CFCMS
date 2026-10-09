@@ -248,6 +248,35 @@ curl -X POST "$BASE/api/v1/theme-tables/product?locale=zh-CN" \
 
 ---
 
+## 4b. 块属性清单（权威来源：`src/rendering/blocks.ts`）
+
+内容块的**属性集合只有一份声明**（`CORE_BLOCKS`），编辑器控件与前台渲染器都从它派生——
+所以你模板里要读什么，**照这张表写就不会错**。新增块或改属性时**只改那张表**，
+两侧会同时跟上（漏改任一侧是架构红灯，见 `AGENTS.md` 规则 61）。
+
+| 块 | 属性（key : 类型，`required` 加粗） | 渲染产物 |
+|---|---|---|
+| `core/paragraph` | `text` : textarea **required** | `<p>…</p>` |
+| `core/heading` | `text` : text **required** | `<h2>…</h2>` |
+| `core/list` | `text` : textarea **required**（一行一项） | `<ul><li>…</li></ul>` |
+| `core/quote` | `text` : textarea **required** | `<blockquote>…</blockquote>` |
+| `core/code` | `text` : textarea **required** | `<pre><code>…</code></pre>`（HTML 转义） |
+| `core/image` | `url` : media **required**；`alt` : text | `<figure><img … loading="lazy"></figure>`；**无 `url` 就什么都不渲染** |
+| `core/gallery` | `items` : media-list **required**，条目键 `url` + `alt` | `<div class="gallery">` 内一组 `<img … loading="lazy">` |
+| `core/button` | `text` : text；`url` : url | `<p><a class="wp-button" href="…">…</a></p>`；无 `url` 时 `href="#"`、无 `text` 时 `Button` |
+| `core/separator` | — | `<hr>` |
+| `core/html` | `html` : textarea **required** | **原样输出**（不转义） |
+| `core/group` | 无属性；**容器**（子块放在 `content[]`） | `<div class="wp-group">…</div>` |
+| `core/columns` | 无属性；**容器**（子块放在 `content[]`） | `<div class="wp-columns">`，每个子块各包一层 `<div>` |
+
+两条最常见的坑，都源自"模板读了声明之外的属性"：
+
+- **媒体属性持有 `/media/<key>` 形式的 URL**（`encodeURIComponent` 过的 key，一段式）。
+  别自己再拼一次 `/media/` + 原始 key——读取路径会按 key 判站点归属（见 `AGENTS.md` 规则 60）。
+- **容器块的子块在 `content[]` 里**，不是把子块摊平写进父块的 attrs。
+
+---
+
 ## 5. 多语言主题
 
 1. **声明语言**：`"locales": ["en", "zh-CN"]`，并为每个语言提供 `langs/<locale>.json`
