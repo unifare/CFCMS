@@ -41,6 +41,24 @@ let failed = 0;
 const failures = [];
 
 function check(name, condition, detail = "") {
+  // ⚠️ The condition must be a **boolean**.
+  //
+  // `check("…", offenders, [])` reads as "assert no offenders" and asserts
+  // nothing, because an empty array is truthy. So does
+  // `check("…", JSON.stringify(a), JSON.stringify(b))` — a non-empty string is
+  // truthy. This file shipped both spellings, and only the injection tool
+  // caught them: the suite was green with a guard that could not fail.
+  //
+  // The lexical patterns further down catch those two shapes early, but a
+  // pattern can only ban the spellings someone thought of. This check bans the
+  // *class*: whatever the condition is, it has to be an actual boolean, so a
+  // missing comparison is a loud TypeError instead of a silent `ok`.
+  if (typeof condition !== "boolean") {
+    const kind = Array.isArray(condition) ? "array" : condition === null ? "null" : typeof condition;
+    throw new TypeError(
+      `check("${name}") needs a boolean condition, got ${kind}: ${String(condition).slice(0, 90)}`
+    );
+  }
   if (condition) {
     passed++;
     console.log(`  ok   ${name}`);
@@ -1539,6 +1557,60 @@ section("A block's attributes are declared once and agreed on both sides (rule 6
 }
 
 // ---------------------------------------------------------------------------
+section("The media control is defined once and the media URL is built once (rule 62)");
+// ---------------------------------------------------------------------------
+
+/**
+ * "One control for choosing a file" is a claim about the *codebase*, not about
+ * one screen. Three places need it — a block's `media` / `media-list`
+ * attribute, a custom field of type `media` / `media-multiple`, and a
+ * theme/plugin setting of the same type — and before this batch each built its
+ * own answer. Two of them built no answer at all: the custom-field types are
+ * declared in `ALLOWED_FIELD_TYPES` with **no control branch**, so they fell
+ * through to a plain text input.
+ *
+ * Two lexical claims, both checkable without a browser:
+ *
+ *   1. the control's wrapper (`data-media-field`) and its button
+ *      (`data-media-pick`) are emitted by exactly one module;
+ *   2. `/media/<key>` is built in exactly one place. The read path checks the
+ *      key's tenant before serving it (rule 60), so a URL assembled by hand is
+ *      a 404 waiting for a filename with a slash in it — and the media screen
+ *      had three of them.
+ *
+ * `data-media-pick-many` is a *different* attribute (the editor's "append
+ * several" flow), so the pattern requires the name to end there.
+ */
+{
+  const spaFiles = walk(join(ROOT, "public", "admin"), [".js"]);
+  const sources = spaFiles.map((f) => ({ path: rel(f), src: blankComments(read(f)) }));
+
+  const controlOwners = sources.filter((s) => /data-media-field/.test(s.src)).map((s) => s.path);
+  checkEmpty("exactly one module emits the media control wrapper",
+    controlOwners.filter((p) => p !== "public/admin/js/media-picker.js"));
+  check("and it is the media picker", controlOwners.includes("public/admin/js/media-picker.js"),
+    `owners: ${JSON.stringify(controlOwners)}`);
+  const buttonOwners = sources.filter((s) => /data-media-pick(?![-\w])/.test(s.src)).map((s) => s.path);
+  checkEmpty("exactly one module emits the picker button",
+    buttonOwners.filter((p) => p !== "public/admin/js/media-picker.js"));
+  check("and it is the media picker too", buttonOwners.includes("public/admin/js/media-picker.js"),
+    `owners: ${JSON.stringify(buttonOwners)}`);
+  // Non-vacuity: both patterns must really match the module we expect, or the
+  // two checks above pass by finding nothing anywhere.
+  const pickerSrc = sources.find((s) => s.path === "public/admin/js/media-picker.js")?.src ?? "";
+  check("the picker module really defines both markers (non-vacuity)",
+    /data-media-field/.test(pickerSrc) && /data-media-pick(?![-\w])/.test(pickerSrc));
+
+  const urlBuilders = sources.filter((s) => /\/media\/\$\{encodeURIComponent/.test(s.src)).map((s) => s.path);
+  checkEmpty("exactly one module builds a /media/ URL",
+    urlBuilders.filter((p) => p !== "public/admin/js/media-picker.js"));
+  check("and it is the module that exports mediaUrl", urlBuilders.includes("public/admin/js/media-picker.js"),
+    `builders: ${JSON.stringify(urlBuilders)}`);
+  check("and it really exports mediaUrl (non-vacuity)",
+    /export function mediaUrl/.test(pickerSrc));
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 
@@ -1553,6 +1625,14 @@ section("This suite's own assertions can actually fail (meta-guard)");
  * rather than a structural one: the defect is a spelling, and the thing being
  * guarded is a spelling, which is the one case in this repo where text is the
  * right tool (see AGENTS.md on `theme_admin_menus`).
+ *
+ * ⚠️ A lexical ban only covers the spellings someone thought of, and this file
+ * has now shipped three vacuous assertions in two batches: a collection as the
+ * condition, a `JSON.stringify(...)` as the condition, and an array as the
+ * condition with the expected value as the *detail*. The load-bearing fix is
+ * therefore in `check()` itself — it now **throws** unless the condition is a
+ * real boolean, which bans the whole class. The patterns below are the earlier,
+ * friendlier net for the two shapes that have actually happened.
  *
  * It must not match its own source, so the pattern is assembled from parts and
  * the scan runs on the file with comments blanked (the explanatory comment

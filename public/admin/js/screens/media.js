@@ -4,6 +4,7 @@
 import { api, scoped } from "../state.js";
 import { pageHead, render } from "../shell.js";
 import { icon } from "../../icons.js";
+import { mediaUrl } from "../media-picker.js";
 import { attr, emptyRow, esc, toast } from "../../ui.js";
 
 export default async function media(c) {
@@ -15,7 +16,7 @@ export default async function media(c) {
         <div style="display:flex;align-items:center;gap:.75rem">
           <span class="team-logo" style="width:2.25rem;height:2.25rem;background:var(--muted);color:var(--muted-foreground)">
             ${isImg(x.mime_type)
-              ? `<img src="/media/${encodeURIComponent(x.object_key)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`
+              ? `<img src="${attr(mediaUrl(x.object_key))}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`
               : icon("file-text")}
           </span>
           <div><div style="font-weight:500">${esc(x.filename)}</div><div class="muted text-sm">${esc(x.mime_type)}</div></div>
@@ -24,8 +25,8 @@ export default async function media(c) {
       <td class="muted text-sm">${esc(formatBytes(x.size))}</td>
       <td class="muted text-sm">${esc(x.alt_text || "—")}</td>
       <td class="actions">
-        <a class="btn outline sm" href="/media/${encodeURIComponent(x.object_key)}" target="_blank" rel="noopener">${icon("external")}Open</a>
-        <button class="btn outline sm" data-copy="/media/${attr(encodeURIComponent(x.object_key))}">${icon("copy")}URL</button>
+        <a class="btn outline sm" href="${attr(mediaUrl(x.object_key))}" target="_blank" rel="noopener">${icon("external")}Open</a>
+        <button class="btn outline sm" data-copy="${attr(mediaUrl(x.object_key))}">${icon("copy")}URL</button>
       </td>
     </tr>`).join("");
 

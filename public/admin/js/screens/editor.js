@@ -9,9 +9,11 @@ import { api, contentPath, postTypeInfo, scoped, state } from "../state.js";
 import { go, pageHead, render } from "../shell.js";
 import { icon } from "../../icons.js";
 import {
-  addItemAt, duplicateBlockAt, insertBlock, moveBlockAt, removeBlockAt, removeItemAt,
-  renderBlockAttrs, setAttrAt, setItemAt,
+  addItemAt, appendMediaAt, duplicateBlockAt, insertBlock, locateBlock, moveBlockAt,
+  removeBlockAt, removeItemAt, renderBlockAttrs, setAttrAt, setItemAt,
 } from "../block-fields.js";
+import { mediaFieldHtml, openMediaPicker } from "../media-picker.js";
+import { t } from "../i18n.js";
 import { alertDialog, attr, confirmDialog, esc, fmtDate, openDialog, toast } from "../../ui.js";
 
 export function newContent(type) {
@@ -107,6 +109,20 @@ function fieldInputs(type) {
     if (f.field_type === "boolean") return `<div class="field"><label>${label}</label><select data-meta="${key}"><option value="">—</option><option value="1"${x[f.meta_key] === "1" ? " selected" : ""}>Yes</option><option value="0"${x[f.meta_key] === "0" ? " selected" : ""}>No</option></select></div>`;
     if (["textarea", "html", "richtext"].includes(f.field_type)) return `<div class="field"><label>${label}</label><textarea data-meta="${key}">${val}</textarea></div>`;
     if (f.field_type === "date") return `<div class="field"><label>${label}</label><input data-meta="${key}" type="date" value="${val}"></div>`;
+    // `media` / `media-multiple` are declared in `ALLOWED_FIELD_TYPES` and had
+    // **no branch here at all**, so they fell through to the plain text input
+    // below — a declared field type with no control, which is the same shape as
+    // the block attributes this batch fixed. They now use the shared control.
+    if (f.field_type === "media" || f.field_type === "media-multiple") {
+      const multiple = f.field_type === "media-multiple";
+      return mediaFieldHtml({
+        value: x[f.meta_key] ?? "",
+        multiple,
+        label: f.label || f.meta_key,
+        inputAttrs: `data-meta="${key}"`,
+        hint: multiple ? t("core.media.multiHint", "One URL per line") : "",
+      });
+    }
     return `<div class="field"><label>${label}</label><input data-meta="${key}" value="${val}"></div>`;
   }).join("");
   return `<div class="panel" style="margin-top:1rem">
@@ -274,7 +290,7 @@ function markDirty() {
   if (e) { e.textContent = "Unsaved changes"; e.className = "badge warn"; }
 }
 
-document.addEventListener("click", (e) => {
+document.addEventListener("click", async (e) => {
   const n = e.target.closest("[data-new]");
   if (n) { newContent(n.dataset.new); return; }
   const ed = e.target.closest("[data-edit]");
@@ -296,6 +312,18 @@ document.addEventListener("click", (e) => {
   if (del) { mutate(removeBlockAt, del.dataset.blockDel); return; }
   const itemAdd = e.target.closest("[data-block-item-add]");
   if (itemAdd) { const [p, k] = itemAdd.dataset.blockItemAdd.split("|"); mutate(addItemAt, p, k); return; }
+  // Append several picked files at once to a media-list attribute. The item
+  // shape comes from the attribute's own declaration, never from a literal
+  // here — see `appendMediaAt`.
+  const pickMany = e.target.closest("[data-media-pick-many]");
+  if (pickMany) {
+    const [p, k] = pickMany.dataset.mediaPickMany.split("|");
+    const picked = await openMediaPicker({ multiple: true });
+    if (!picked || !picked.length) return;
+    const field = (specOf(locateBlock(state.blocks, p)?.type).attrs ?? []).find((a) => a.key === k);
+    mutate(appendMediaAt, p, k, field?.itemKeys ?? [], picked);
+    return;
+  }
   const itemDel = e.target.closest("[data-block-item-del]");
   if (itemDel) {
     const [p, k, i] = itemDel.dataset.blockItemDel.split("|");

@@ -11,6 +11,7 @@ import { api, state } from "../state.js";
 import { pageHead } from "../shell.js";
 import { icon } from "../../icons.js";
 import { attr, esc, toast } from "../../ui.js";
+import { mediaFieldHtml } from "../media-picker.js";
 import { contentList } from "./content-list.js";
 import { tableListScreen } from "./table-list.js";
 import { tableEditScreen } from "./table-edit.js";
@@ -73,7 +74,14 @@ function settingControl(x) {
     }
     case "media":
     case "media-multiple":
-      return `<input type="text" ${name} value="${attr(val)}" placeholder="URL in the media library">`;
+      // The shared control. This used to be a bare text input whose only hint
+      // was "URL in the media library" — the author had to know the library
+      // existed, find the file, and paste a URL by hand.
+      return mediaFieldHtml({
+        value: val,
+        multiple: x.type === "media-multiple",
+        inputAttrs: name,
+      });
     case "text":
     default:
       return `<input type="text" ${name} value="${attr(val)}">`;

@@ -391,6 +391,30 @@ node 直调）。它**不含** `tsc --noEmit`——因为 lib.dom 与 workers-ty
 "集合当条件"与"字面量当条件"——但**元守卫只看本文件**，
 其它套件里同样的拼法只能靠注入工具抓。
 
+## 媒体控件与媒体 URL（规则 62）
+
+"选一个媒体文件"这个动作在后台有**三个**消费点，它们必须是**同一个控件**：
+
+| 消费点 | 声明来源 |
+|---|---|
+| 块的 `media` / `media-list` 属性 | `rendering/blocks.ts` 的 `CORE_BLOCKS`（规则 61） |
+| 内容自定义字段的 `media` / `media-multiple` | `ALLOWED_FIELD_TYPES`（13 种，**一直就有这两种**） |
+| 主题/插件设置的 `media` / `media-multiple` | 同一份 `ALLOWED_FIELD_TYPES` |
+
+| 规则 | 说明 |
+|---|---|
+| 62a | 控件的包装（`data-media-field`）与按钮（`data-media-pick`）**只许** `public/admin/js/media-picker.js` 产出。任何屏幕自己拼一份 = 架构红灯 |
+| 62b | `/media/<key>` 的 URL **只许** `mediaUrl()` 一处构造（`/media/` + `encodeURIComponent`）。手拼的 URL 遇到含 `/` 的文件名就会被读取路径解成另一个 key（规则 60 还会按站点判它 404） |
+| 62c | 控件的**唯一职责**是"把选中的 URL 写进那个发起请求的 input，并派发 `input`/`change`"。这样三个消费点都**不需要新接线**：块属性有监听写 `attrs[key]`、设置表单 `change` 即存、自定义字段在保存时读 `[data-meta]` |
+
+**为什么 62 存在**：`media` / `media-multiple` **从一开始就在 `ALLOWED_FIELD_TYPES` 里**，
+但**编辑器自定义字段没有任何分支** → 静默掉进默认文本框（与规则 61 同族的"声明了但没人读"），
+而主题设置屏只有一个 placeholder 写着 "URL in the media library" 的裸文本框——
+作者得先知道媒体库存在、再自己找到文件、再把 URL 抄进去。
+**"全平台统一的控件"因此不是重构，是补一个从来没被实现过的东西。**
+
+⚠️ 媒体屏也曾自己拼三处 `/media/` URL；现在它走 `mediaUrl()`，62b 才有意义。
+
 ## 守卫失效记录（READ THIS）
 
 `tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。

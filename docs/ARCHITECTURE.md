@@ -2094,6 +2094,17 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    ⚠️ 只有**行为**断言能看见它：`tests/suites/editor-blocks.test.mjs` 把
       契约 → 控件 → 写入的属性键 → **真实渲染器 markup** 整条链跑一遍；
       架构守卫只能证结构一致。两者互补，缺一不可
+
+【媒体控件与媒体 URL：各只有一处】（AGENTS.md 规则 62）
+62. "选一个媒体文件"的三个消费点（块属性 / 自定义字段 / 扩展设置）必须共用
+   `public/admin/js/media-picker.js` 的控件
+   a) `data-media-field`（包装）与 `data-media-pick`（按钮）**只许**该模块产出
+   b) `/media/<key>` 的 URL **只许** `mediaUrl()` 构造——手拼的 URL 遇到含 `/` 的文件名
+      会被读取路径解成另一个 key（规则 60 还会按站点判它 404）。媒体屏曾有 3 处手拼
+   c) 控件的唯一职责是"把 URL 写进发起请求的 input 并派发 `input`/`change`"，
+      于是三个消费点都不需要新接线（块属性监听 / 设置表单 change 即存 / `[data-meta]` 保存时读）
+   ⚠️ `media` / `media-multiple` 一直在 `ALLOWED_FIELD_TYPES` 里，而**编辑器自定义字段
+      没有分支** → 静默掉进文本框。**"统一控件"不是重构，是补一个从未实现的能力**
 ```
 
 ---

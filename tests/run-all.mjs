@@ -43,6 +43,9 @@ const suites = [
   // doors (the public `/media/<key>` read path and the admin API) so the two
   // cannot drift apart again.
   ["media access", "suites/media.test.mjs"],
+  // The one media control, and the loop it closes with the renderer: library
+  // row → picker item → block attribute → real renderer markup.
+  ["media picker", "suites/media-picker.test.mjs"],
   // The block attribute contract, walked end to end: declaration → the control
   // the editor draws → the key it writes → the markup the real renderer
   // produces. Six of twelve block types used to render empty at HTTP 200.

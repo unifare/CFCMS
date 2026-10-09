@@ -33,6 +33,8 @@
  * Leaf module: no state, no imports beyond the markup helpers.
  */
 import { attr, esc } from "../ui.js";
+import { t } from "./i18n.js";
+import { mediaFieldHtml } from "./media-picker.js";
 
 /** The attribute types this module renders a control for. Kept in the same
  *  order as `BLOCK_ATTR_TYPES` in `src/rendering/blocks.ts` so a reader can
@@ -152,6 +154,24 @@ export function addItemAt(blocks, path, key) {
   return true;
 }
 
+/**
+ * Append picked media to a `media-list` attribute.
+ *
+ * `itemKeys` is passed in rather than assumed: the item shape belongs to the
+ * attribute's declaration (rule 61c), and a control that hardcodes `url`/`alt`
+ * here would be the second list this repo keeps finding.
+ */
+export function appendMediaAt(blocks, path, key, itemKeys, sources) {
+  const block = locateBlock(blocks, path);
+  if (!block || !key || !Array.isArray(itemKeys) || !itemKeys.length) return false;
+  if (!block.attrs || typeof block.attrs !== "object") block.attrs = {};
+  if (!Array.isArray(block.attrs[key])) block.attrs[key] = [];
+  for (const src of sources ?? []) {
+    block.attrs[key].push(Object.fromEntries(itemKeys.map((k) => [k, src?.[k] ?? ""])));
+  }
+  return true;
+}
+
 export function removeItemAt(blocks, path, key, index) {
   const block = locateBlock(blocks, path);
   if (!block || !Array.isArray(block.attrs?.[key])) return false;
@@ -163,42 +183,41 @@ export function removeItemAt(blocks, path, key, index) {
 // Controls
 // ---------------------------------------------------------------------------
 
-/** A preview for a media value. Only image URLs get one: pointing `<img>` at a
- *  PDF renders a broken-image box, which reads as "the editor is broken". */
-function mediaPreview(value) {
-  const v = String(value ?? "").trim();
-  if (!v) return "";
-  if (!/\.(png|jpe?g|gif|webp|avif|svg)(\?|$)/i.test(v)) {
-    return `<div class="muted text-sm" style="margin-top:.25rem">${esc(v)}</div>`;
-  }
-  return `<img src="${attr(v)}" alt="" style="max-width:8rem;max-height:8rem;border-radius:.375rem;margin-top:.375rem">`;
-}
+/** A preview for a media value lives in `media-picker.js` — the control owns
+ *  what a media value looks like, so there is exactly one answer to it. */
 
 /**
  * A repeatable list of media items (one row per entry).
  *
- * The item's keys come from the contract (`itemKeys` on the attribute spec,
- * derived from `MEDIA_ITEM_KEYS`), not from a literal here — otherwise the
- * editor's row and the renderer's `x.url` read would be two lists that happen
- * to match today.
- *
- * ⚠️ `itemKeys` is **required** by `architecture.test.mjs` for every
- * `media-list` attribute, and this control has no way to invent them. An empty
- * list means the contract is broken; the row renders no inputs rather than
- * guessing, and the guard is what catches it.
+ * Each row's URL goes through `mediaFieldHtml` — the same control a block's
+ * `media` attribute and a settings field use — so "choose a file" behaves
+ * identically in all three places. The row also carries the item index and item
+ * key, which is what routes the picked value to the right entry rather than
+ * over the whole list.
  */
 function mediaListControl(field, attrs, path) {
   const keys = Array.isArray(field.itemKeys) ? field.itemKeys : [];
   const items = Array.isArray(attrs?.[field.key]) ? attrs[field.key] : [];
-  const rows = items.map((item, i) => `<div class="toolbar" style="gap:.375rem;margin-bottom:.375rem">
-      ${keys.map((k) => `<input data-block-path="${attr(path)}" data-block-attr="${attr(field.key)}"
-        data-block-item="${i}" data-item-key="${attr(k)}" value="${attr(item?.[k] ?? "")}"
-        placeholder="${attr(k === "alt" ? "alt text" : "/media/…")}" style="flex:1">`).join("")}
-      <button class="btn ghost sm" data-block-item-del="${attr(path)}|${attr(field.key)}|${i}" title="Remove">×</button>
-    </div>`).join("");
+  const [urlKey, ...restKeys] = keys;
+  const rows = items.map((item, i) => {
+    const urlAttrs = `data-block-path="${attr(path)}" data-block-attr="${attr(field.key)}" data-block-item="${i}" data-item-key="${attr(urlKey)}"`;
+    const rest = restKeys.map((k) => `<input data-block-path="${attr(path)}" data-block-attr="${attr(field.key)}"
+      data-block-item="${i}" data-item-key="${attr(k)}" value="${attr(item?.[k] ?? "")}"
+      placeholder="${attr(k)}" style="flex:1;margin-top:.375rem">`).join("");
+    return `<div style="display:flex;gap:.5rem;align-items:flex-start;margin-bottom:.625rem">
+      <div style="flex:1">
+        ${mediaFieldHtml({ value: item?.[urlKey] ?? "", inputAttrs: urlAttrs })}
+        ${rest}
+      </div>
+      <button type="button" class="btn ghost sm" data-block-item-del="${attr(path)}|${attr(field.key)}|${i}" title="Remove">×</button>
+    </div>`;
+  }).join("");
   return `<div class="field"><label${field.required ? ' class="req"' : ""}>${esc(attrLabel(field))}</label>
     ${rows || `<div class="muted text-sm" style="margin-bottom:.375rem">No items yet.</div>`}
-    <button class="btn outline sm" data-block-item-add="${attr(path)}|${attr(field.key)}">+ Add</button></div>`;
+    <div class="toolbar" style="gap:.375rem">
+      <button type="button" class="btn outline sm" data-media-pick-many="${attr(path)}|${attr(field.key)}">${esc(t("core.media.choose", "Choose from library"))}</button>
+      <button type="button" class="btn ghost sm" data-block-item-add="${attr(path)}|${attr(field.key)}">+ ${esc(t("core.media.addRow", "Add row"))}</button>
+    </div></div>`;
 }
 
 /**
@@ -227,7 +246,9 @@ export function renderBlockAttr(field, attrs, path) {
     case "url":
       return `<div class="field">${label}<input ${common} type="url" value="${attr(value ?? "")}" placeholder="https://"></div>`;
     case "media":
-      return `<div class="field">${label}<input ${common} type="url" value="${attr(value ?? "")}" placeholder="/media/…">${mediaPreview(value)}</div>`;
+      // The shared control, not a bespoke URL box: the library, the upload and
+      // the preview are the same everywhere (see `media-picker.js`).
+      return mediaFieldHtml({ value, label: attrLabel(field), required: field.required, inputAttrs: common });
     case "media-list":
       return mediaListControl(field, attrs, path);
     default:

@@ -60,6 +60,8 @@ const VALIDATION = join(ROOT, "src/extensions/contract/validation.ts");
 const BLOCKS = join(ROOT, "src/rendering/blocks.ts");
 const FRONTEND = join(ROOT, "src/platform/frontend.ts");
 const BLOCK_FIELDS = join(ROOT, "public/admin/js/block-fields.js");
+const MEDIA_PICKER = join(ROOT, "public/admin/js/media-picker.js");
+const MEDIA_SCREEN = join(ROOT, "public/admin/js/screens/media.js");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -364,6 +366,36 @@ const SCENARIOS = [
     after: [', required: true }]'],
     runs: [["tests/suites/architecture.test.mjs", "every media-list attribute declares its item keys"]],
   },
+  {
+    // "One control" is a claim about the codebase. A screen that grows its own
+    // copy is how three answers to the same question appear — and the two that
+    // had no answer at all (the media custom-field types) is how they started.
+    label: "a screen grows its own media control",
+    file: MEDIA_SCREEN,
+    before: ['import { mediaUrl } from "../media-picker.js";'],
+    after: ['import { mediaUrl } from "../media-picker.js";\nconst legacyControl = `<div data-media-field><button data-media-pick>Choose</button></div>`;'],
+    runs: [["tests/suites/architecture.test.mjs", "exactly one module emits the media control wrapper"]],
+  },
+  {
+    // The read path checks the key's tenant before serving (rule 60), so a URL
+    // assembled by hand is a 404 waiting for a filename with a slash in it. The
+    // media screen had three of them before the picker owned the URL.
+    label: "a screen hand-builds a /media/ URL again",
+    file: MEDIA_SCREEN,
+    before: ['href="${attr(mediaUrl(x.object_key))}"'],
+    after: ['href="/media/${encodeURIComponent(x.object_key)}"'],
+    runs: [["tests/suites/architecture.test.mjs", "exactly one module builds a /media/ URL"]],
+  },
+  {
+    // The URL builder itself: a key is one path segment, so it has to be
+    // percent-encoded. Un-encoded, a key containing `/` becomes several segments
+    // and the read path decodes a different key than the one that was stored.
+    label: "the media URL stops encoding the object key",
+    file: MEDIA_PICKER,
+    before: ['  return key ? `/media/${encodeURIComponent(key)}` : "";'],
+    after: ['  return key ? `/media/${key}` : "";'],
+    runs: [["tests/suites/media-picker.test.mjs", "a key becomes one encoded path segment"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -377,7 +409,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
-  BLOCKS, FRONTEND, BLOCK_FIELDS])];
+  BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN])];
 
 function hashAll() {
   const out = {};
@@ -597,13 +629,15 @@ const final = await runSuite("tests/suites/architecture.test.mjs");
 const finalScope = await runSuite("tests/tools/_schema-scope.mjs");
 const finalManifest = await runSuite("tests/suites/manifest-validation.test.mjs");
 const finalBlocks = await runSuite("tests/suites/editor-blocks.test.mjs");
+const finalPicker = await runSuite("tests/suites/media-picker.test.mjs");
 console.log(`post-restore: architecture ${final.passed}p/${final.failed}f, ` +
   `schema-scope ${finalScope.passed}p/${finalScope.failed}f, ` +
   `manifest ${finalManifest.passed}p/${finalManifest.failed}f, ` +
-  `editor-blocks ${finalBlocks.passed}p/${finalBlocks.failed}f`);
+  `editor-blocks ${finalBlocks.passed}p/${finalBlocks.failed}f, ` +
+  `media-picker ${finalPicker.passed}p/${finalPicker.failed}f`);
 // A missing summary here means "I could not read the result", which is a
 // failure — not an absence of failure.
-for (const [label, res] of [["architecture", final], ["schema-scope", finalScope], ["manifest", finalManifest], ["editor-blocks", finalBlocks]]) {
+for (const [label, res] of [["architecture", final], ["schema-scope", finalScope], ["manifest", finalManifest], ["editor-blocks", finalBlocks], ["media-picker", finalPicker]]) {
   if (res.aborted) problems.push(`${label} produced no readable verdict after restore (${res.err})`);
   else if (res.failed) problems.push(`${label} not green after restore (${res.failed} failed)`);
 }
