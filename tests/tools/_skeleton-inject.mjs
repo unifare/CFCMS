@@ -64,6 +64,7 @@ const MEDIA_PICKER = join(ROOT, "public/admin/js/media-picker.js");
 const MEDIA_SCREEN = join(ROOT, "public/admin/js/screens/media.js");
 const CORE_PACK = join(ROOT, "src/platform/i18n/core-pack.ts");
 const EDITOR_SCREEN = join(ROOT, "public/admin/js/screens/editor.js");
+const API = join(ROOT, "src/api.ts");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -374,8 +375,8 @@ const SCENARIOS = [
     // had no answer at all (the media custom-field types) is how they started.
     label: "a screen grows its own media control",
     file: MEDIA_SCREEN,
-    before: ['import { mediaUrl } from "../media-picker.js";'],
-    after: ['import { mediaUrl } from "../media-picker.js";\nconst legacyControl = `<div data-media-field><button data-media-pick>Choose</button></div>`;'],
+    before: ['import { mediaItem, mediaUrl } from "../media-picker.js";'],
+    after: ['import { mediaItem, mediaUrl } from "../media-picker.js";\nconst legacyControl = `<div data-media-field><button data-media-pick>Choose</button></div>`;'],
     runs: [["tests/suites/architecture.test.mjs", "exactly one module emits the media control wrapper"]],
   },
   {
@@ -384,8 +385,8 @@ const SCENARIOS = [
     // media screen had three of them before the picker owned the URL.
     label: "a screen hand-builds a /media/ URL again",
     file: MEDIA_SCREEN,
-    before: ['href="${attr(mediaUrl(x.object_key))}"'],
-    after: ['href="/media/${encodeURIComponent(x.object_key)}"'],
+    before: ['function formatBytes(n) {'],
+    after: ['const handBuiltUrl = `/media/${encodeURIComponent("uploads/default/x.png")}`;\nfunction formatBytes(n) {'],
     runs: [["tests/suites/architecture.test.mjs", "exactly one module builds a /media/ URL"]],
   },
   {
@@ -436,6 +437,16 @@ const SCENARIOS = [
     after: ['  clearInterval(state.autosaveTimer);\n  await api(scoped(contentPath(state.type) + "/" + state.editing.id), { method: "DELETE" });'],
     runs: [["tests/suites/architecture.test.mjs", "only the shared helper clears the autosave timer"]],
   },
+  {
+    // Uninstalling the theme that renders a live site takes the site down with
+    // it, so the endpoint refuses with a 409 that names the site. Removing the
+    // guard is how an operator discovers their front page is gone.
+    label: "theme uninstall accepts a theme a site is still using",
+    file: API,
+    before: ['  if(sites.length) return ok({error:`still active on: ${sites.join(", ")}`},409);'],
+    after: [''],
+    runs: [["tests/suites/theme-integration.test.mjs", "uninstalling the active theme is refused"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -449,7 +460,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
-  BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK])];
+  BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK, API])];
 
 function hashAll() {
   const out = {};

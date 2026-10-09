@@ -311,6 +311,8 @@ export function header() {
       ${icon("search")}<span>${esc(t("core.msg.searchPlaceholder", "Search…"))}</span><kbd>⌘K</kbd>
     </button>
     <div class="header-actions">
+      <button class="icon-btn" data-view-site="1" data-view-site-prefix="${attr(state.sites.find((s) => s.id === state.site)?.path_prefix || "")}"
+        title="${attr(t("core.action.viewSite", "View site"))}" aria-label="${attr(t("core.action.viewSite", "View site"))}">${icon("external")}</button>
       <div class="dropdown">
         <button class="icon-btn" onclick="toggleMenu('theme-menu')" aria-label="${attr(t("core.action.theme", "Theme"))}">${icon(THEME_ICON[current])}</button>
         <div class="menu right" id="theme-menu" hidden>

@@ -97,6 +97,15 @@ document.addEventListener("click", (e) => {
   }
   const siteBtn = e.target.closest("[data-switch-site]");
   if (siteBtn) { switchSite(siteBtn.dataset.switchSite); return; }
+  // Open the site's front end in a new window. The URL must respect the site's
+  // path prefix (a shop mounted at /shop serves its front end at /shop/<locale>),
+  // which is why it is built here rather than hardcoded to `/<locale>`.
+  const view = e.target.closest("[data-view-site]");
+  if (view) {
+    const prefix = String(view.dataset.viewSitePrefix || "");
+    window.open(`${prefix}/${state.defaultLocale}`, "_blank", "noopener");
+    return;
+  }
   const nav = e.target.closest("[data-nav]");
   if (nav) { go(nav.dataset.nav); return; }
 });

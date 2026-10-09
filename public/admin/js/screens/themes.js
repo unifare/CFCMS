@@ -6,7 +6,7 @@ import { api, loadContext, scoped, state } from "../state.js";
 import { pageHead, render } from "../shell.js";
 import { icon } from "../../icons.js";
 import { t } from "../i18n.js";
-import { alertDialog, attr, esc, toast } from "../../ui.js";
+import { alertDialog, attr, confirmDialog, esc, toast } from "../../ui.js";
 import { installExtension } from "./extension-install.js";
 
 function activeSitesFor(name, bySite) {
@@ -31,7 +31,8 @@ export default async function themes(c) {
       ${x.active
         ? `<div class="muted text-sm">${esc(t("core.themes.activeHere", "Active on this site"))}</div>`
         : `<div class="muted text-sm">${others.length ? esc(t("core.themes.alsoUsed", "Also used by: {sites}", { sites: others.join(", ") })) : esc(t("core.themes.notInUse", "Not in use"))}</div>
-           <button class="btn primary sm" style="margin-top:.75rem" data-theme-activate="${attr(x.name)}">${icon("check")}${esc(t("core.themes.activateHere", "Activate here"))}</button>`}
+           <button class="btn primary sm" style="margin-top:.75rem" data-theme-activate="${attr(x.name)}">${icon("check")}${esc(t("core.themes.activateHere", "Activate here"))}</button>
+           <button class="btn outline danger sm" style="margin-top:.5rem" data-theme-del="${attr(x.name)}">${icon("trash")}${esc(t("core.themes.uninstall", "Uninstall"))}</button>`}
     </div>`;
   }).join("");
 
@@ -76,11 +77,33 @@ async function themeCapabilitySummary(active) {
 
 document.addEventListener("click", async (e) => {
   const a = e.target.closest("[data-theme-activate]");
-  if (!a) return;
-  try {
-    await api(scoped("extensions/themes/" + a.dataset.themeActivate + "/activate"), { method: "POST" });
-    toast(t("core.themes.activated", "Theme activated for this site"));
-    await loadContext();
-    render();
-  } catch (err) { await alertDialog({ title: t("core.themes.activateFailed", "Could not activate theme"), description: err.message }); }
+  if (a) {
+    try {
+      await api(scoped("extensions/themes/" + a.dataset.themeActivate + "/activate"), { method: "POST" });
+      toast(t("core.themes.activated", "Theme activated for this site"));
+      await loadContext();
+      render();
+    } catch (err) { await alertDialog({ title: t("core.themes.activateFailed", "Could not activate theme"), description: err.message }); }
+    return;
+  }
+
+  const del = e.target.closest("[data-theme-del]");
+  if (del) {
+    const name = del.dataset.themeDel;
+    const sure = await confirmDialog({
+      title: t("core.themes.uninstallTitle", "Uninstall this theme?"),
+      description: t("core.themes.uninstallDesc", "Removes its files, registry row and generated tables. A theme that is still active on a site cannot be uninstalled."),
+      confirmLabel: t("core.themes.uninstall", "Uninstall"),
+    });
+    if (!sure) return;
+    try {
+      await api(`extensions/themes/${encodeURIComponent(name)}`, { method: "DELETE" });
+      toast(t("core.themes.uninstalled", "Theme uninstalled"));
+      render();
+    } catch (err) {
+      // A 409 names the sites that still use it — show that verbatim, it is the
+      // actionable part.
+      await alertDialog({ title: t("core.themes.uninstallFailed", "Could not uninstall theme"), description: err.message });
+    }
+  }
 });

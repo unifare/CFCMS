@@ -769,6 +769,62 @@ async function mediaRowForWrite(
 /** Update the language-neutral descriptive fields. The bytes never change here:
  *  replacing a file's contents would silently break every page already
  *  referencing the old object, so that is a delete + upload, not a PATCH. */
+/**
+ * Uninstall a theme: its R2 files, its registry row, and every generated table.
+ *
+ * Refuses while any site still selects it — uninstalling the theme that renders
+ * a live site takes the site down with it, and the 409 names the sites so the
+ * operator knows what to switch first. `active` on `theme_installs` cannot
+ * answer that (it is a global recomputed flag); `settings.theme.active` is the
+ * per-site truth.
+ *
+ * Order matters the same way it does for media: the registry row is what names
+ * the generated tables, so the tables are dropped **while the mapping is still
+ * readable**, and only then is the row removed. R2 files go last — a theme that
+ * is half-uninstalled (row gone, files left) is at least visible in the admin's
+ * next listing, whereas files gone with the row still present is a theme the
+ * admin believes exists and cannot load.
+ */
+async function uninstallTheme(env: Env, userId: string, name: string) {
+  const row=await env.DB.prepare("SELECT name,version FROM theme_installs WHERE name=?").bind(name).first<any>();
+  if(!row) return ok({error:"theme not found"},404);
+  const active=await env.DB.prepare("SELECT site_id FROM settings WHERE key='theme.active' AND value=?").bind(name).all();
+  const sites=((active.results as any[])??[]).map(r=>String(r.site_id));
+  if(sites.length) return ok({error:`still active on: ${sites.join(", ")}`},409);
+
+  const defs=await env.DB.prepare("SELECT table_name, i18n_table FROM theme_table_defs WHERE owner_type='theme' AND owner_name=?").bind(name).all();
+  for(const d of ((defs.results as any[])??[])){
+    for(const t of [d.table_name, d.i18n_table]){
+      if(t) await env.DB.prepare(`DROP TABLE IF EXISTS ${t}`).run().catch(()=>{});
+    }
+  }
+  await env.DB.prepare("DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name=?").bind(name).run();
+
+  // Capability rows applied on any site. An inactive theme's rows are normally
+  // gone already (deactivation clears them), but an interrupted activation
+  // would leave some behind — and the theme is going away entirely, so every
+  // site's leftovers go with it.
+  for(const table of ["post_types","taxonomies","field_defs","theme_routes","theme_blocks"]){
+    await env.DB.prepare(`DELETE FROM ${table} WHERE declared_by_theme=?`).bind(name).run().catch(()=>{});
+  }
+
+  // R2 files: every version, not only the installed one — re-uploading a theme
+  // leaves the previous version's prefix behind, and an uninstall that keeps
+  // those bytes is a leak nobody can list.
+  let files=0;
+  let cursor: string|undefined;
+  do {
+    const list=await env.MEDIA.list({prefix:`extensions/themes/${name}/`,cursor});
+    for(const o of list.objects){ await env.MEDIA.delete(o.key).catch(()=>{}); files++; }
+    cursor=list.truncated?list.cursor:undefined;
+  } while(cursor);
+
+  await env.DB.prepare("DELETE FROM theme_installs WHERE name=?").bind(name).run();
+  invalidateThemeWorker(env,name);
+  await activity(env,userId,"uninstall","theme",name,{files,tables:((defs.results as any[])??[]).length});
+  return ok({ok:true,name,files,tables:((defs.results as any[])??[]).length});
+}
+
 async function mediaUpdate(env: Env, userId: string, id: string, body: any, siteId: string) {
   const found = await mediaRowForWrite(env, id, siteId, userId);
   if ("error" in found) return ok({ error: found.error }, found.error === "not_found" ? 404 : 403);
@@ -1583,8 +1639,7 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
   const tm=path.match(/^extensions\/themes\/([^/]+)\/activate$/);
   if(tm&&method==="POST"){
     if(!(await requirePermission(env,user,"extensions.manage"))) return ok({error:"Forbidden"},403);
-    const target=tm[1];
-    const row=await env.DB.prepare("SELECT name,version,manifest FROM theme_installs WHERE name=? LIMIT 1").bind(target).first<any>();
+    const target=tm[1];    const row=await env.DB.prepare("SELECT name,version,manifest FROM theme_installs WHERE name=? LIMIT 1").bind(target).first<any>();
     if(!row)return ok({error:"theme not found"},404);
     let manifest:any;try{manifest=JSON.parse(String(row.manifest||"{}"))}catch{manifest={name:target,version:row.version}}
 
@@ -1615,6 +1670,11 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     return ok({ok:true,theme:target,site:siteId,previous,applied});
   }
 
+  const td=path.match(/^extensions\/themes\/([^/]+)$/);
+  if(td&&method==="DELETE"){
+    if(!(await requirePermission(env,user,"extensions.manage"))) return ok({error:"Forbidden"},403);
+    return uninstallTheme(env,user.id,decodeURIComponent(td[1]));
+  }
   // Theme business-capability introspection
   if(path==="theme/post-types"&&method==="GET") return ok({items:await listPostTypes(env,siteId),site:siteId});
   if(path==="theme/routes"&&method==="GET") return ok({items:await listRoutes(env,siteId),site:siteId});

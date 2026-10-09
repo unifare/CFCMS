@@ -124,6 +124,20 @@ function makeR2() {
       return { key };
     },
     async delete(key) { store.delete(key); },
+    // Real R2 bindings list by prefix; the theme uninstall walks this to delete
+    // every version's files. A stub without it would turn "uninstall" into a
+    // 500 that reads like a product bug rather than a harness gap.
+    async list({ prefix = "", cursor } = {}) {
+      const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).sort();
+      const start = cursor ? keys.indexOf(cursor) + 1 : 0;
+      const page = keys.slice(start, start + 1000);
+      const truncated = start + 1000 < keys.length;
+      return {
+        objects: page.map((key) => ({ key })),
+        truncated,
+        cursor: truncated ? page[page.length - 1] : undefined,
+      };
+    },
     _dump: () => [...store.keys()],
   };
 }
@@ -610,6 +624,45 @@ async function main() {
       "ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value"
     ).bind("theme-active-default", "default", "theme.active", String(keepSetting.value)).run();
   }
+
+  // -- 9. Uninstall --------------------------------------------------------
+  console.log("\n9. Theme uninstall");
+  // Uninstalling is the only way a theme leaves the registry, so the assertions
+  // below are the contract: files, registry row and generated tables all go,
+  // and a theme a site is still rendering cannot go at all.
+  const up2 = await req(worker, env, "/api/v1/extensions/themes/upload", {
+    method: "POST", headers: authHeaders,
+    body: (() => {
+      const fd = new FormData();
+      fd.append("file", new File([buildThemeZip("uninstallme")], "uninstallme.zip", { type: "application/zip" }));
+      return fd;
+    })(),
+  });
+  check("throwaway theme uploaded", up2.status, 201);
+  const ownKeys = env.MEDIA._dump().filter((k) => k.includes("extensions/themes/uninstallme/"));
+  checkTruthy("its files are in R2", ownKeys.length >= 5, ownKeys.length);
+
+  const delRes = await req(worker, env, "/api/v1/extensions/themes/uninstallme", { method: "DELETE", headers: authHeaders });
+  const delBody = await delRes.json();
+  check("uninstall accepted", delRes.status, 200);
+  check("it reports the files it removed", delBody.files, ownKeys.length);
+  const afterList = await (await req(worker, env, "/api/v1/extensions/themes", { headers: authHeaders })).json();
+  check("registry row gone", (afterList.items || []).some((x) => x.name === "uninstallme"), false);
+  check("its R2 files are gone",
+    env.MEDIA._dump().filter((k) => k.includes("extensions/themes/uninstallme/")).length, 0);
+  check("uninstalling it again is a 404",
+    (await req(worker, env, "/api/v1/extensions/themes/uninstallme", { method: "DELETE", headers: authHeaders })).status, 404);
+
+  // The theme this site is rendering cannot be uninstalled, and the 409 names
+  // the site so the operator knows what to switch first.
+  const activeRes = await req(worker, env, "/api/v1/extensions/themes/realestate", { method: "DELETE", headers: authHeaders });
+  const activeBody = await activeRes.json();
+  check("uninstalling the active theme is refused", activeRes.status, 409);
+  checkTruthy("and the refusal names the site", String(activeBody.error || "").includes("still active on"));
+
+  // §7 left realestate active; restore the default theme this suite started on,
+  // so a later suite reads the state it expects.
+  await req(worker, env, "/api/v1/extensions/themes/default/activate", { method: "POST", headers: authHeaders });
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));
