@@ -75,6 +75,9 @@ a81e5e0  Re-key tenant audit verdicts after the mobai batch
 (batch 16 Track B3: the content editor in every interface language — 见 §5)
 (batch 16 Track B4 part 1: the editor's timer, its schedule round trip and its locale identity — 见 §5)
 (batch 16 Track A4: the media library screen — tiles, search, inline alt text, delete — 见 §5)
+129c077  mobai 并入 default（捆绑主题只有一个名字）+ plugin-pages §8 夹具修正
+21e7018  Bundled themes ship through Worker assets + rule 66 — 清库后开箱即用，部署不再逐个 r2 object put
+(the Languages screen offers the bundled languages: `core_entries` — 见 §5 批次 5 与 §6b)
 ```
 
 **批次 16 Track 0（媒体隔离地基）**：`media_files` 自 0009 起就有 `site_id`，但
@@ -727,8 +730,9 @@ node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 �
 "昨天还好好的 URL 今天 404"）。`eshop-verify.cjs` 对此**自愈**：登录后先把界面语言
 重置为 en 再重载（`ui_lang` 按用户持久化，见坑位 23）。
 
-`_i18n-browser.cjs` 跑 22 条断言：登录 → Languages 屏 → 加语言 → 编辑器语言版本条 →
-建翻译 → 删翻译 → 停用语言，并断言**零 console 错误、零失败请求、零 5xx**。
+`_i18n-browser.cjs` 跑 31 条断言：登录 → Languages 屏（含**内置简体中文必须被列出**）→ 加语言 →
+编辑器语言版本条 → 建翻译 → 删翻译 → 停用语言 → 切界面语言，并断言**零 console 错误、零失败请求、零 5xx**。
+⚠️ §4 需要库里有「翻译版本不完整」的文章；全新空库上没有文章时它会红（夹具前提，不是代码缺陷）。
 
 `_admin-menus-browser.cjs` 跑 31 条断言：SEO 插件菜单出现在 "Extensions" 分组 → 打开
 插件设置 → 值写入后**刷新仍在**；再上传一个声明 `tables[]` 的主题 → 激活 → "From theme"

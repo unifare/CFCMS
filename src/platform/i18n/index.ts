@@ -54,4 +54,4 @@ export {
 
 export { createTranslator, interpolate, packForLocale, parsePack, mergePacks, type Pack, type Translator } from "./translate";
 
-export { CORE_PACKS, corePackLocales } from "./core-pack";
+export { CORE_PACKS, corePackLocales, corePackLocaleEntries, type CoreLocaleEntry } from "./core-pack";

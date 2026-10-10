@@ -43,14 +43,25 @@ async function afterLanguageChange() {
 export default async function languages(c) {
   const d = await api("i18n/locales");
   const ui = await api("i18n/ui-locale");
-  state.languages = d;
 
   const items = Array.isArray(d.items) ? d.items : [];
-  const dictionary = Array.isArray(d.dictionary) ? d.dictionary : [];
   const uiLocales = Array.isArray(d.ui_locales) ? d.ui_locales : [];
   const enabled = new Set(Array.isArray(d.enabled) ? d.enabled : []);
   const siteDefault = d.default || "—";
   const multilingual = d.multilingual === true;
+
+  // What this deployment knows about, from two sources that both have to be
+  // offered here: the platform dictionary (`locales` — what an admin added,
+  // which is what the panel's title used to mean) and the packs bundled with
+  // the code (`core_entries`). A fresh install seeds the dictionary with `en`
+  // alone, so with only the first source this panel was empty on every new
+  // deployment and Chinese had to be typed into the dialog by hand — while the
+  // platform was shipping a complete zh-CN pack. Dictionary rows win on a code
+  // collision: they carry an admin's own wording.
+  const known = new Map();
+  for (const l of Array.isArray(d.core_entries) ? d.core_entries : []) known.set(l.code, l);
+  for (const l of Array.isArray(d.dictionary) ? d.dictionary : []) known.set(l.code, l);
+  state.languages = { ...d, known: [...known.values()] };
 
   const rows = items
     .map((l) => {
@@ -76,7 +87,7 @@ export default async function languages(c) {
   // Dictionary entries the site does not expose yet. Offering them here is what
   // makes "the platform knows this language" and "this site serves it" visibly
   // two different things.
-  const available = dictionary
+  const available = [...known.values()]
     .filter((l) => !items.some((s) => s.code === l.code))
     .map((l) => `<tr>
         <td><code>${esc(l.code)}</code></td>
@@ -158,7 +169,10 @@ document.addEventListener("click", async (e) => {
   const enable = e.target.closest("[data-lang-enable]");
   if (enable) {
     const code = enable.dataset.langEnable;
-    const known = (state.languages?.dictionary || []).find((l) => l.code === code);
+    // Both sources, or a bundled language would be enabled under its own code
+    // as its display name (`native_name` would become "zh-CN") — the row is
+    // written from whatever is found here.
+    const known = (state.languages?.known || []).find((l) => l.code === code);
     try {
       await api("i18n/locales", {
         method: "POST",

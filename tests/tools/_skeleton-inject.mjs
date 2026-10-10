@@ -505,6 +505,18 @@ const SCENARIOS = [
     after: ['{{@extends "parts/layout"}}{{!-- drift: content/ was edited, public/ never re-synced --}}'],
     runs: [["tests/suites/architecture.test.mjs", "every synced theme file is byte-identical to its source"]],
   },
+  {
+    label: "the bundled languages stop being offered for the site",
+    // `core_locales` shipped for a long time with **no consumer at all**: the
+    // payload carried the fact, nothing read it, and a fresh install therefore
+    // offered no Chinese under System → Languages. Dropping the rows from the
+    // payload has to go red, or the new assertions are measuring the field's
+    // existence instead of what the screen can actually list.
+    file: API,
+    before: [`      core_entries: corePackLocaleEntries(),`],
+    after: [''],
+    runs: [["tests/suites/i18n.test.mjs", "bundled languages ship as rows for the Languages screen"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */

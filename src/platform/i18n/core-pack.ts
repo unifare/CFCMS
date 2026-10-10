@@ -902,6 +902,44 @@ export const CORE_PACKS: Record<string, Pack> = {
 };
 
 /**
+ * What the platform knows about each bundled language: its English name, the
+ * name its own readers use, and its writing direction.
+ *
+ * This is the ONE definition of the bundled language list. `CORE_PACK_NAMES`
+ * (the switcher's label) and `corePackLocaleEntries()` (the rows the Languages
+ * screen offers) are both views of it, so adding a pack cannot leave one of
+ * them behind.
+ *
+ * It exists because the Languages screen had no way to *offer* a bundled
+ * language: that screen lists the platform dictionary (the `locales` table),
+ * which a fresh install seeds with `en` only. So a brand-new deployment showed
+ * no Chinese anywhere under System → Languages and the admin had to hand-type
+ * `zh-CN` into the "Add language" dialog — while the platform was shipping a
+ * complete 413-key Chinese pack the whole time. The bundled packs are exactly
+ * "what this deployment knows", which is what that panel claims to show.
+ */
+export const CORE_PACK_LOCALES: Record<
+  string,
+  { name: string; native_name: string; direction: "ltr" | "rtl" }
+> = {
+  en: { name: "English", native_name: "English", direction: "ltr" },
+  "zh-CN": { name: "Simplified Chinese", native_name: "简体中文", direction: "ltr" },
+};
+
+/** One bundled language, shaped like a `locales` row minus the DB columns. */
+export interface CoreLocaleEntry {
+  code: string;
+  name: string;
+  native_name: string;
+  direction: "ltr" | "rtl";
+}
+
+/** The bundled languages as rows, for the admin Languages screen. */
+export function corePackLocaleEntries(): CoreLocaleEntry[] {
+  return Object.entries(CORE_PACK_LOCALES).map(([code, v]) => ({ code, ...v }));
+}
+
+/**
  * Native display names for the bundled core packs — a switcher shows a
  * language's own name, not its code. Bundled packs are the *complete*
  * baseline of the UI language list; languages added through the Languages
@@ -909,12 +947,18 @@ export const CORE_PACKS: Record<string, Pack> = {
  * packs.ts) without any code change, degrading to English per key until
  * their overrides are filled in.
  */
-export const CORE_PACK_NAMES: Record<string, string> = {
-  en: "English",
-  "zh-CN": "简体中文",
-};
+export const CORE_PACK_NAMES: Record<string, string> = Object.fromEntries(
+  Object.entries(CORE_PACK_LOCALES).map(([code, v]) => [code, v.native_name])
+);
 
-/** The locales a platform pack ships for. Used by the admin language picker. */
+/**
+ * The locales a platform pack ships for. Used by the admin language picker.
+ *
+ * Derived from `CORE_PACKS` (a language with no pack is not a UI language),
+ * while `corePackLocaleEntries()` reads `CORE_PACK_LOCALES`. The two maps must
+ * therefore describe the same set; `tests/suites/i18n.test.mjs` pins that on
+ * the API payload, where both views are visible side by side.
+ */
 export function corePackLocales(): string[] {
   return Object.keys(CORE_PACKS);
 }

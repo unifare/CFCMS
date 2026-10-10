@@ -103,6 +103,20 @@ function check(name, cond, detail = "") {
   const multilingualBefore = /More than one is enabled/.test(body || "");
   check("site starts monolingual", !multilingualBefore, "expected the single-language note");
 
+  // The bundled languages must be *offered here*, not merely known to the
+  // interface switcher: a fresh install seeds the platform dictionary
+  // (`locales`) with `en` alone, so before the screen read `core_entries` this
+  // page showed no Chinese anywhere and section 3 had to type `zh-CN` into the
+  // dialog by hand. Assert the affordance rather than the code path — the
+  // enable control is the same whether the row is sitting in the site table
+  // (disabled, from a previous run) or in the "not enabled here" panel.
+  check(
+    "the bundled Chinese language is offered for this site",
+    !!(await page.$('[data-lang-enable="zh-CN"]')),
+    (body || "").slice(0, 300)
+  );
+  check("offered under its own name, not the raw code", /简体中文/.test(body || ""));
+
   console.log("\n3. Enable a second language through the dialog");
   await page.click('[data-action="add-language"]');
   await page.waitForSelector("#dlg-form", { timeout: 5000 });

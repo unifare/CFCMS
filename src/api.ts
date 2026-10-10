@@ -24,6 +24,7 @@ import {applyThemeCapabilities, clearThemeCapabilities, listPostTypes, listTaxon
 import {
   availableUiLocaleEntries,
   availableUiLocales,
+  corePackLocaleEntries,
   corePackLocales,
   disableSiteLocale,
   enableSiteLocale,
@@ -1079,7 +1080,15 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
       multilingual: enabled.length >= 2,
       dictionary,
       ui_locales: uiLocales,
+      // Codes only, for anything that just needs to know which UI packs exist.
       core_locales: corePackLocales(),
+      // The same bundled languages as *rows*. `dictionary` is the `locales`
+      // table, which a fresh install seeds with `en` alone — so without this
+      // the Languages screen could not offer the Chinese pack the platform
+      // ships, and the panel titled "Platform dictionary — not enabled here"
+      // was empty on every new deployment. Consumed by
+      // `public/admin/js/screens/languages.js`.
+      core_entries: corePackLocaleEntries(),
     });
   }
   if (path === "i18n/locales" && method === "POST") {

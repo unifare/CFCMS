@@ -267,6 +267,28 @@ async function main() {
   check("not multilingual", before.multilingual, false);
   checkTruthy("core packs are offered for the interface", before.core_locales.includes("zh-CN"));
 
+  // The bundled languages must also be offered **for the site**, not merely
+  // known to the interface switcher. The Languages screen lists the `locales`
+  // table, and a fresh install seeds that with `en` alone — so without
+  // `core_entries` the panel titled "Platform dictionary — not enabled here"
+  // was empty on every new deployment and the admin had to hand-type `zh-CN`
+  // into the dialog, while the platform shipped a complete Chinese pack the
+  // whole time. `core_locales` had shipped with no consumer at all, which is
+  // exactly the "declared, never read" shape this suite exists to catch.
+  const coreEntries = Array.isArray(before.core_entries) ? before.core_entries : [];
+  const zhEntry = coreEntries.find((e) => e && e.code === "zh-CN");
+  checkTruthy("bundled languages ship as rows for the Languages screen", !!zhEntry);
+  check("with the name its own readers use", zhEntry && zhEntry.native_name, "简体中文");
+  check("and the English name the admin list shows", zhEntry && zhEntry.name, "Simplified Chinese");
+  // Two views of one list (`CORE_PACKS` vs `CORE_PACK_LOCALES`). Adding a pack
+  // to one and not the other is invisible until someone wonders why the
+  // switcher offers a language the Languages screen cannot.
+  check(
+    "core_entries and core_locales describe the same set",
+    coreEntries.map((e) => e.code).sort(),
+    [...before.core_locales].sort()
+  );
+
   // -- 2. install + activate a theme that declares a business table --------
   console.log("\n2. Theme-owned table, monolingual");
   const form = new FormData();
