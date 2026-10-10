@@ -17,8 +17,68 @@
  */
 const PW = "C:/Users/TF/.workbuddy-ai/binaries/node/workspace/node_modules/playwright-core";
 const { chromium } = require(PW);
+const { join } = require("path");
+const { readdirSync } = require("fs");
+const { DatabaseSync } = require("node:sqlite");
 
+const ROOT = join(__dirname, "..", "..");
 const BASE = process.env.CFPRESS_BASE || "http://127.0.0.1:47913";
+
+/** Open the shared local D1, or null when it does not exist yet. */
+function openDb() {
+  const dir = join(ROOT, ".wrangler", "state", "v3", "d1", "miniflare-D1DatabaseObject");
+  let file;
+  try { file = readdirSync(dir).find((x) => x.endsWith(".sqlite")); } catch { return null; }
+  return file ? new DatabaseSync(join(dir, file)) : null;
+}
+
+/**
+ * The site's language set, snapshotted so it can be put back.
+ *
+ * This script *enables* zh-CN to exercise the flow, and it used to leave it
+ * registered: a leftover language is visible in the Languages screen, and a
+ * leftover *enabled* one changes what "the site is now described as
+ * multilingual" looks like on the next run — which is exactly how this script
+ * went flaky. Snapshot, normalize, restore: the same shape `i18n.test.mjs` uses
+ * for the same reason.
+ */
+function snapshotLanguages() {
+  const db = openDb();
+  if (!db) return null;
+  try {
+    return { site: db.prepare("SELECT * FROM site_locales").all(), global: db.prepare("SELECT * FROM locales").all() };
+  } finally { db.close(); }
+}
+
+function resetLanguages() {
+  const db = openDb();
+  if (!db) return;
+  try {
+    db.exec("DELETE FROM site_locales WHERE code <> 'en'");
+    db.exec("DELETE FROM locales WHERE code <> 'en'");
+    // Re-pin en as the default: deleting the others can leave the site with no
+    // default row at all if a previous run had made zh-CN the default.
+    db.exec("UPDATE site_locales SET is_default=1, enabled=1, sort_order=0 WHERE site_id='default' AND code='en'");
+  } finally { db.close(); }
+}
+
+function restoreLanguages(snap) {
+  if (!snap) return;
+  const db = openDb();
+  if (!db) return;
+  const put = (table, rows) => {
+    for (const r of rows) {
+      const k = Object.keys(r);
+      db.prepare(`INSERT INTO ${table} (${k.join(",")}) VALUES (${k.map(() => "?").join(",")})`).run(...k.map((x) => r[x]));
+    }
+  };
+  try {
+    db.exec("DELETE FROM site_locales");
+    db.exec("DELETE FROM locales");
+    put("site_locales", snap.site);
+    put("locales", snap.global);
+  } finally { db.close(); }
+}
 
 const problems = [];
 /** Every write the script performs, with its status — so a silent 4xx cannot
@@ -89,6 +149,11 @@ function check(name, cond, detail = "") {
       });
     }, locale);
   await setUiLocale("en");
+  // Same idea for the site's language set: snapshot it, normalize to en-only so
+  // the "enable a second language" transition below is genuine, and put the
+  // operator's set back at the end (see `snapshotLanguages`).
+  const langSnapshot = snapshotLanguages();
+  resetLanguages();
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector("#app-header", { timeout: 15000 });
 
@@ -146,24 +211,56 @@ function check(name, cond, detail = "") {
   check("native name is shown, not just the English one", /简体中文/.test(body2 || ""));
 
   console.log("\n4. Editor language-version bar");
-  await page.click('[data-nav="posts"]');
-  await page.waitForTimeout(900);
-
   // Pick the post to work on through the app's own API rather than guessing:
   // we need one whose translation group is genuinely incomplete, so the
   // "create the missing version" path is exercised. A previous run leaves its
   // result behind (disabling a language keeps content), so a fixed row would
   // stop testing the interesting branch after the first run.
   const target = await page.evaluate(async () => {
-    const list = await (await fetch("/api/v1/posts?site=default&limit=50")).json();
-    for (const it of list.items ?? []) {
-      const g = await (await fetch(`/api/v1/i18n/translations?id=${encodeURIComponent(it.id)}&site=default`)).json();
-      const gap = (g.versions ?? []).find((v) => !v.exists);
-      if (gap) return { id: it.id, title: it.title, locale: gap.locale, group: g.group };
+    const find = async () => {
+      const list = await (await fetch("/api/v1/posts?site=default&limit=50")).json();
+      for (const it of list.items ?? []) {
+        const g = await (await fetch(`/api/v1/i18n/translations?id=${encodeURIComponent(it.id)}&site=default`)).json();
+        const gap = (g.versions ?? []).find((v) => !v.exists);
+        if (gap) return { id: it.id, title: it.title, locale: gap.locale, group: g.group };
+      }
+      return null;
+    };
+    // Sweep this script's own marker post first. An aborted run leaves it
+    // behind (the cleanup is at the end), and without this the *next* run would
+    // adopt it as "content that was already there" and never remove it — the
+    // same leftover class the suites sweep up front.
+    const pre = await (await fetch("/api/v1/posts?site=default&limit=100")).json();
+    for (const it of pre.items ?? []) {
+      if (it.slug === "i18n-browser-fixture") {
+        await fetch(`/api/v1/posts/${encodeURIComponent(it.id)}?site=default`, { method: "DELETE" });
+      }
     }
-    return null;
+
+    const found = await find();
+    if (found) return { ...found, created: false };
+    // The dev database may legitimately be empty — a fresh install, or one just
+    // cleaned of test residue. This script is an acceptance test, not a seed, so
+    // it makes the single fixture it needs instead of assuming demo content is
+    // there: on an empty database the run used to fail with "every post already
+    // has all languages — nothing to exercise", which reads like a content
+    // problem rather than an unmet precondition. The post is created in `en`
+    // only, so the zh-CN version enabled in step 3 is exactly the gap it wants.
+    await fetch("/api/v1/posts?site=default", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "I18N Browser Fixture", slug: "i18n-browser-fixture",
+        locale: "en", status: "draft", content: "[]",
+      }),
+    });
+    const made = await find();
+    return made ? { ...made, created: true } : null;
   });
   check("found a post whose translations are incomplete", !!target, "every post already has all languages — nothing to exercise");
+
+  // Open the list *after* the lookup, so a fixture created just above is in it.
+  await page.click('[data-nav="posts"]');
+  await page.waitForTimeout(900);
 
   if (target) {
     console.log(`  [target] ${target.id} (${target.title}) is missing ${target.locale}`);
@@ -315,11 +412,22 @@ function check(name, cond, detail = "") {
   check("with the dictionary back in English",
     /Posts|Dashboard/.test(await page.locator(".sidebar").innerText()));
 
+  // Take back the fixture post if this run created it (see the `target` lookup):
+  // the script is an acceptance test, not a seed, so it must not leave content
+  // in the operator's database. A post that was already there is left alone.
+  if (target && target.created) {
+    await page.evaluate(async (id) => {
+      await fetch(`/api/v1/posts/${encodeURIComponent(id)}?site=default`, { method: "DELETE" });
+    }, target.id);
+  }
+
   // Leave the operator's own interface language as we found it. This script
   // forces `en` so its assertions can read English; it must not make that a
   // permanent change to someone's admin.
   await setUiLocale(originalUiLang);
-  console.log(`\n(interface language restored to "${originalUiLang}")`);
+  // And the language set this run was allowed to disturb.
+  restoreLanguages(langSnapshot);
+  console.log(`\n(interface language and language set restored)`);
 
   console.log("\n6. Console / network health");
   const real = problems.filter((p) => !/401/.test(p));

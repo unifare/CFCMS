@@ -11,8 +11,16 @@
  * sidebar grows an "Extensions" group, the menu opens the plugin's own settings
  * and saving them is accepted.
  *
- * Self-cleaning: the plugin is disabled, the theme deactivated, and then the
- * fixture's own database footprint removed (`theme_table_defs` row,
+ * Self-provisioning and self-cleaning. It installs the reference plugin and the
+ * fixture theme itself (it used to *assume* `notify` was installed, because
+ * `admin-menus.test.mjs` left it behind — that suite now cleans up, and the
+ * assumption turned into a script that failed on a plugin that was never
+ * there), pins the admin's interface language to English for the run (every
+ * label asserted here is the English spelling), and restores both the plugin
+ * and the language preference at the end.
+ *
+ * Self-cleaning detail: the plugin is disabled, the theme deactivated, and then
+ * the fixture's own database footprint removed (`theme_table_defs` row,
  * `theme_installs` row, the generated table). Deactivation alone is not enough
  * — the registry deliberately survives it — and a leftover row makes a later
  * suite read this theme's table as if it were its own.
@@ -25,7 +33,7 @@ const PW = "C:/Users/TF/.workbuddy-ai/binaries/node/workspace/node_modules/playw
 const { chromium } = require(PW);
 const { zipSync, strToU8 } = require("fflate");
 const { join } = require("path");
-const { readdirSync } = require("fs");
+const { readdirSync, readFileSync } = require("fs");
 const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = join(__dirname, "..", "..");
@@ -104,12 +112,19 @@ function resetFixture() {
   try {
     file = readdirSync(dir).find((x) => x.endsWith(".sqlite"));
   } catch {
-    return; // no local D1 yet — nothing to clean
+    return { tables: [], defs: 0, installs: 0 }; // no local D1 yet — nothing to clean
   }
-  if (!file) return;
+  if (!file) return { tables: [], defs: 0, installs: 0 };
   const db = new DatabaseSync(join(dir, file));
   const stmts = [
-    `DELETE FROM theme_table_defs WHERE theme_name='${THEME}'`,
+    // ⚠️ `theme_table_defs` is keyed by **owner_type / owner_name**, not
+    // `theme_name`. The old spelling threw `no such column: theme_name`, the
+    // `catch` below swallowed it, and the declaration survived — so the next
+    // boot re-created this fixture's `_i18n` table from the leftover row. A
+    // cleanup that is never verified is indistinguishable from one that did
+    // nothing (AGENTS.md false-green #5), which is why this function now
+    // returns what is still there and the caller asserts on it.
+    `DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`,
     `DELETE FROM post_types WHERE declared_by_theme='${THEME}'`,
     `DELETE FROM theme_installs WHERE name='${THEME}'`,
     `DROP TABLE IF EXISTS theme_${THEME}_${TABLE}`,
@@ -117,6 +132,81 @@ function resetFixture() {
   ];
   for (const s of stmts) {
     try { db.exec(s); } catch { /* table may not exist on a first run */ }
+  }
+  const residue = {
+    tables: db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?").all(`theme_${THEME}_%`).map((r) => r.name),
+    defs: db.prepare("SELECT COUNT(*) AS n FROM theme_table_defs WHERE owner_name=?").get(THEME)?.n ?? 0,
+    installs: db.prepare("SELECT COUNT(*) AS n FROM theme_installs WHERE name=?").get(THEME)?.n ?? 0,
+  };
+  db.close();
+  return residue;
+}
+
+/** Open the shared local D1, or null when it does not exist yet. */
+function openDb() {
+  const dir = join(ROOT, ".wrangler", "state", "v3", "d1", "miniflare-D1DatabaseObject");
+  let file;
+  try { file = readdirSync(dir).find((x) => x.endsWith(".sqlite")); } catch { return null; }
+  return file ? new DatabaseSync(join(dir, file)) : null;
+}
+
+/**
+ * The admin's own interface-language preference.
+ *
+ * Every label this script asserts on ("Extensions", "From theme", "Products")
+ * is the **English** spelling, so the script has to establish an English
+ * interface — and put the operator's choice back afterwards. It used not to,
+ * and the whole run silently became 4 failures the day the preference was
+ * `zh-CN`: the sidebar grew `扩展` instead of `Extensions`, the group lookup
+ * found nothing, and the failures read like broken features rather than an
+ * unmet precondition.
+ */
+function readUiLang() {
+  const db = openDb();
+  if (!db) return null;
+  try {
+    const row = db.prepare("SELECT ui_lang FROM site_users WHERE username='admin'").get();
+    return row ? row.ui_lang ?? null : null;
+  } catch { return null; } finally { db.close(); }
+}
+
+function writeUiLang(value) {
+  const db = openDb();
+  if (!db) return;
+  try { db.prepare("UPDATE site_users SET ui_lang=? WHERE username='admin'").run(value); } catch { /* ok */ } finally { db.close(); }
+}
+
+/** The reference plugin, zipped from the repo copy — same idea as the theme. */
+function pluginZipBase64() {
+  const manifest = JSON.parse(readFileSync(join(ROOT, "content", "plugins", "notify", "plugin.json"), "utf8"));
+  const zip = zipSync({ "plugin.json": strToU8(JSON.stringify(manifest, null, 2)) });
+  return Buffer.from(zip).toString("base64");
+}
+
+/**
+ * Undo a plugin install this run performed. There is no uninstall route for
+ * plugins (only enable/disable), so this goes straight at the shared D1 — the
+ * same way `resetFixture` cleans up the theme fixture.
+ */
+function removePlugin() {
+  const dir = join(ROOT, ".wrangler", "state", "v3", "d1", "miniflare-D1DatabaseObject");
+  let file;
+  try { file = readdirSync(dir).find((x) => x.endsWith(".sqlite")); } catch { return; }
+  if (!file) return;
+  const db = new DatabaseSync(join(dir, file));
+  const stmts = [
+    "DELETE FROM plugin_settings WHERE plugin_id IN (SELECT id FROM plugin_installs WHERE name='notify')",
+    "DELETE FROM plugin_setting_defs WHERE plugin_name='notify'",
+    "DELETE FROM extension_capabilities WHERE extension_type='plugin' AND extension_name='notify'",
+    "DELETE FROM extension_versions WHERE extension_name='notify'",
+    "DELETE FROM theme_table_defs WHERE owner_type='plugin' AND owner_name='notify'",
+    "DELETE FROM admin_menu_registry WHERE owner_type='plugin' AND owner_name='notify'",
+    "DROP TABLE IF EXISTS plugin_notify_log_i18n",
+    "DROP TABLE IF EXISTS plugin_notify_log",
+    "DELETE FROM plugin_installs WHERE name='notify'",
+  ];
+  for (const s of stmts) {
+    try { db.exec(s); } catch { /* not there */ }
   }
   db.close();
 }
@@ -156,9 +246,35 @@ function resetFixture() {
   // theme active or the plugin enabled, which would make the "before" asserts
   // meaningless.
   console.log("\n2. Reset to a known state");
+  // Install the reference plugin if the shared dev D1 does not already have it.
+  //
+  // This script used to *assume* `notify` was installed, because
+  // `admin-menus.test.mjs` left it behind. That suite now cleans up after
+  // itself, so the assumption turned into a broken acceptance script:
+  // `.../notify/enable` answered 200 for a plugin that was never installed, no
+  // Extensions group appeared, and step 4 timed out on a menu that could not
+  // exist. A fixture this script needs, it installs itself.
+  const installedPlugin = await page.evaluate(async (b64) => {
+    const list = await (await fetch("/api/v1/extensions/plugins")).json();
+    if ((list.items || []).some((p) => p.name === "notify")) return false;
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const fd = new FormData();
+    fd.append("file", new File([bytes], "notify.zip", { type: "application/zip" }));
+    const up = await fetch("/api/v1/extensions/plugins/upload", { method: "POST", body: fd });
+    return up.status === 201 || up.status === 200;
+  }, pluginZipBase64());
+  check("the reference plugin is installed for this run", true, `installed here: ${installedPlugin}`);
+
+  // Assertions below read English labels, so pin the interface language (and
+  // put the operator's preference back in step 9).
+  const prevUiLang = readUiLang();
   await page.evaluate(async () => {
     await fetch("/api/v1/extensions/themes/default/activate?site=default", { method: "POST" });
     await fetch("/api/v1/extensions/plugins/notify/disable", { method: "POST" });
+    await fetch("/api/v1/i18n/ui-locale", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale: "en" }),
+    });
   });
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(800);
@@ -297,8 +413,19 @@ function resetFixture() {
 
   // Deactivation alone leaves the table registry behind (by design), so the
   // fixture removes its own rows too — otherwise the next suite to read the
-  // shared D1 inherits this theme's table.
-  resetFixture();
+  // shared D1 inherits this theme's table. Verified, not assumed: this cleanup
+  // silently did nothing for a long time (see `resetFixture`).
+  const residue = resetFixture();
+  check(
+    "the fixture left nothing behind (tables, table defs, install row)",
+    residue.tables.length === 0 && residue.defs === 0 && residue.installs === 0,
+    JSON.stringify(residue)
+  );
+  // And take back the plugin if this run installed it, so the operator's
+  // database is left as it was found.
+  if (installedPlugin) removePlugin();
+  // Restore the interface-language preference (see `readUiLang`).
+  writeUiLang(prevUiLang);
 
   await browser.close();
 

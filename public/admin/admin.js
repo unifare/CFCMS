@@ -21,7 +21,7 @@
  * contract described next.
  */
 import { api, loadContext, state } from "./js/state.js";
-import { go, render, setLoginScreen, setScreenTable, switchSite, toggleGroup, toggleSidebar } from "./js/shell.js";
+import { applyHash, go, render, setHashEditor, setLoginScreen, setScreenTable, switchSite, toggleGroup, toggleSidebar } from "./js/shell.js";
 import { doLogin, logout, renderLogin, setThemeForTest } from "./js/auth.js";
 import { cachedMessages, loadMessages } from "./js/i18n.js";
 import { SCREENS } from "./js/screens/index.js";
@@ -32,6 +32,9 @@ import { applyTheme, closeMenus, setTheme, toggleMenu, watchSystemTheme } from "
 
 setScreenTable(SCREENS);
 setLoginScreen(renderLogin);
+// The shell knows the URL grammar but must not import a screen, so the two
+// editor entry points are injected here — same direction as the screen table.
+setHashEditor({ edit: editContent, create: newContent });
 
 /**
  * The external contract of the SPA.
@@ -66,6 +69,9 @@ cachedMessages();
     state.user = d.user;
     if (!state.user) { renderLogin(); return; }
     await Promise.all([loadContext(), loadMessages()]);
-    await render();
+    // Land on the page the URL names (a bookmark, a refresh, a shared link),
+    // not unconditionally on the dashboard. An empty hash keeps the default and
+    // writes it into the URL.
+    await applyHash();
   } catch { renderLogin(); }
 })();

@@ -6,7 +6,7 @@
  * login screen is *injected* into the shell here, once, at import time.
  */
 import { api, app, loadContext, state } from "./state.js";
-import { render, setLoginScreen } from "./shell.js";
+import { applyHash, render, setLoginScreen } from "./shell.js";
 import { icon } from "../icons.js";
 import { alertDialog, esc, setTheme } from "../ui.js";
 import { loadMessages, t } from "./i18n.js";
@@ -38,7 +38,10 @@ export async function doLogin() {
     // Menu labels are translated server-side and the shell strings client-side;
     // both must be loaded before the first post-login render.
     await Promise.all([loadContext(), loadMessages()]);
-    render();
+    // Not a bare `render()`: a deep link pasted to someone who then has to sign
+    // in must still land on the page it names, not on the dashboard. The login
+    // screen never touches the hash, so it is still there to be honoured.
+    await applyHash();
   } catch (e) {
     await alertDialog({ title: t("core.auth.failed", "Sign-in failed"), description: e.message });
   }

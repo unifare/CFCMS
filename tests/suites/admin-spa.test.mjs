@@ -385,6 +385,25 @@ try {
   // shape every screen already handles. Declared outside the `try` so the
   // render sections below can add routes.
   routeTable = new Map();
+  // One row, shaped so the list screens' row builders actually run (see the
+  // fetch stub below). Fields are deliberately over-supplied: a screen reads
+  // whichever ones it needs, and `undefined` is what a real sparse row looks
+  // like anyway.
+  const probeItem = {
+    id: "probe", name: "Probe", title: "Probe", label: "Probe", slug: "probe",
+    key: "probe", url: "/probe", path: "/probe", href: "/probe", target: "",
+    locale: "en", code: "en", status: "published", type: "post", value: "probe",
+    enabled: 1, active: 1, bundled: 0, sort_order: 0, parent_id: null,
+    menu_id: "probe", location: "header", meta_key: "probe", field_type: "text",
+    count: 0, host: null, path_prefix: null, is_default: 0, widget_type: "text",
+    sidebar: "sidebar", config: "{}", content: "[]", excerpt: "",
+    version: "1.0.0", description: "", icon: "file", screen: "probe",
+    capability: "", created_at: 0, updated_at: 0, installed_at: 0,
+    meta: {}, attrs: {}, query: {}, resolve: {}, post_types: [], supports: [],
+    templates: [], capabilities: [], permissions: [], hooks: [], pages: [],
+    locales: ["en"], groups: [], items: [], routes: [], blocks: [], fields: [],
+    menu_locations: [], sidebars: [], settings: [], channels: [], adminMenus: [],
+  };
   const store = new Map();
   winStub = { matchMedia: () => ({ matches: false, addEventListener() {} }), addEventListener() {}, removeEventListener() {}, scrollY: 0 };
 
@@ -393,6 +412,11 @@ try {
     documentElement: makeEl("html"),
     body: makeEl("body"),
     querySelector: (sel) => (sel === "#app" ? appEl : sel === "#content" ? contentEl : makeEl("div")),
+    // Real browsers have it and a screen that reaches for it is not wrong — the
+    // stub was. `menus` wires drag-and-drop through it, which only runs once a
+    // menu exists, so the omission stayed invisible while the stub answered
+    // every list with an empty one.
+    getElementById: (id) => (id === "app" ? appEl : id === "content" ? contentEl : makeEl("div")),
     querySelectorAll: () => [],
     createElement: (t) => makeEl(t),
     addEventListener() {},
@@ -416,7 +440,17 @@ try {
       return { ok: status >= 200 && status < 300, status, json: async () => body };
     }
     if (init && String(init.method || "GET").toUpperCase() !== "GET") return { ok: true, status: 200, json: async () => ({ ok: true }) };
-    return { ok: true, status: 200, json: async () => ({ user: null }) };
+    // ⚠️ The default GET payload is deliberately **not** the empty-state shape.
+    // A screen's row-building code only runs when the list has a row, so an
+    // empty stub silently skips it — which is exactly how a screen that used an
+    // identifier it never imported (`attr`, in the menus screen) rendered "fine"
+    // here and threw in the browser the moment a menu existed. One generously
+    // shaped item makes every list loop execute; a screen that cannot render it
+    // is a genuine defect, not missing data.
+    // Order matters: `probeItem` carries its own empty `items: []`, so it is
+    // spread *first* and the one-row list written after it. Spreading last would
+    // silently restore the empty-state shape this whole change exists to avoid.
+    return { ok: true, status: 200, json: async () => ({ user: null, ...probeItem, items: [probeItem] }) };
   };
   globalThis.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = init?.detail; } };
   globalThis.location = { origin: "http://localhost" };
@@ -507,7 +541,11 @@ if (modules && !bootError) {
     // actually written instead — this is the difference between a check and a
     // decoration.
     if (contentEl.innerHTML.includes("Something went wrong")) {
-      renderErrors.push(`${page}: rendered the error panel`);
+      // Carry the screen's own message into the failure. "rendered the error
+      // panel" alone sends you back to the browser to find out *why*; the
+      // message is already on the page.
+      const msg = contentEl.innerHTML.match(/<p class="muted">([\s\S]*?)<\/p>/)?.[1] ?? "";
+      renderErrors.push(`${page}: rendered the error panel${msg ? ` — ${msg}` : ""}`);
     }
     if (!contentEl.innerHTML) {
       renderErrors.push(`${page}: rendered nothing`);
@@ -528,6 +566,80 @@ if (modules && !bootError) {
     shellHtml.includes('class="sidebar"') && shellHtml.includes('id="app-header"') && shellHtml.includes('id="content"'),
     "the rendered shell markup is missing one of sidebar / header / content"
   );
+
+  // -------------------------------------------------------------------------
+  section("The URL is the page: hash routing");
+  // -------------------------------------------------------------------------
+  //
+  // The admin is a single-page app, so without this the URL never changed: a
+  // refresh, a bookmark or a link pasted to a colleague always landed on the
+  // dashboard, and Back left the admin entirely instead of returning to the
+  // previous screen. `pageToHash` / `hashToPage` are the two directions of one
+  // mapping, and the round-trip is what makes a deep link survive.
+
+  const { pageToHash, hashToPage } = modules.shell;
+
+  // Every page grammar, including the two whose segments carry characters a
+  // naive join mangles: a table slug with a slash, and one that is *already*
+  // percent-encoded (encoding the whole page name would double-encode it).
+  const PAGES = [
+    // Every registered screen, so a new one that cannot round-trip is caught
+    // here rather than in a bookmark that lands on the dashboard.
+    ...Object.keys(SCREENS),
+    "cpt:news",
+    "menu:main",
+    "table:product",
+    "table-new:product",
+    "table-edit:product:hello",
+    "table-edit:product:a%2Fb",
+    "plugin-page:probe",
+  ];
+  const badRound = PAGES.filter((p) => hashToPage(pageToHash(p, null))?.page !== p);
+  check("every page name round-trips through the URL", badRound.length === 0, `failed: ${badRound.join(", ")}`);
+  check("a colon becomes a path separator, not an escape",
+    pageToHash("cpt:news", null) === "#/cpt/news", pageToHash("cpt:news", null));
+  check("a segment containing a slash survives the round-trip",
+    hashToPage(pageToHash("table-edit:product:a%2Fb", null))?.page === "table-edit:product:a%2Fb",
+    hashToPage(pageToHash("table-edit:product:a%2Fb", null))?.page);
+
+  // The editor is state *about* a page, not a page of its own — the content
+  // list renders it — so its target rides along as a query on the fragment.
+  check("editing an item names it in the URL",
+    pageToHash("posts", { id: "post_1" }) === "#/posts?edit=post_1", pageToHash("posts", { id: "post_1" }));
+  check("a new item says so", pageToHash("posts", { id: null }) === "#/posts?new=1", pageToHash("posts", { id: null }));
+  const roundTrip = hashToPage("#/posts?edit=post_1");
+  check("the editor target survives the round-trip",
+    roundTrip?.page === "posts" && roundTrip?.edit === "post_1", JSON.stringify(roundTrip));
+  check("an empty hash means 'no page chosen', not a crash", hashToPage("") === null);
+
+  // The live app, both directions: navigating writes the URL, the URL navigates.
+  const live = modules.state.state;
+  live.page = "dashboard";
+  live.editing = null;
+  await modules.shell.go("widgets");
+  check("navigating writes the page into the URL", globalThis.location.hash === "#/widgets", globalThis.location.hash);
+
+  globalThis.location.hash = "#/menus";
+  await modules.shell.applyHash();
+  check("the URL navigates (boot / Back / a hand-edited hash)", live.page === "menus", live.page);
+  check("and the screen it names is what rendered",
+    contentEl.innerHTML.includes('id="menu-items-body"'), contentEl.innerHTML.slice(0, 120));
+
+  globalThis.location.hash = "#/posts?edit=post_1";
+  await modules.shell.applyHash();
+  check("a deep link into the editor restores the item being edited",
+    live.page === "posts" && live.editing?.id === "post_1",
+    `${live.page} / ${live.editing?.id}`);
+
+  // The editor's language-version bar loads asynchronously and re-renders when
+  // it lands. Flush it here: left pending, it fires during the next section and
+  // paints an *editing* editor over that section's new-item render.
+  for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+
+  // Leave the shared state where the sections below expect it.
+  globalThis.location.hash = "";
+  live.page = "dashboard";
+  live.editing = null;
 
   // -------------------------------------------------------------------------
   section("The content editor renders, for a new item and an existing one");
@@ -738,6 +850,9 @@ if (modules && !bootError) {
   check("and the footer reports the totals", mediaBodyHtml([row], { total: 50, hasMore: true }).includes("Showing 1 of 50"));
 
   // The screen itself: toolbar, drop zone, upload control, empty state.
+  // This section is about the *empty* library, so it pins an empty list
+  // explicitly — the stub's default is now one row (see the fetch stub).
+  routeTable.set("/api/v1/media", { items: [] });
   contentEl.innerHTML = "";
   await modules.screens.SCREENS.media(contentEl);
   const mediaHtml = contentEl.innerHTML;

@@ -15,7 +15,7 @@ import { api, scoped, state } from "../state.js";
 import { pageHead, render } from "../shell.js";
 import { icon } from "../../icons.js";
 import { t } from "../i18n.js";
-import { alertDialog, confirmDialog, emptyRow, esc, openDialog, toast } from "../../ui.js";
+import { alertDialog, attr, confirmDialog, emptyRow, esc, openDialog, toast } from "../../ui.js";
 
 let selectedMenuId = null;
 
