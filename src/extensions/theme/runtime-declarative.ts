@@ -9,7 +9,7 @@
  */
 import { Env } from "../../shared/types";
 import { bundledThemeFile } from "../../shared/bundled";
-import { esc, setting, siteInfo, menusForLocation, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale, readingTime } from "../../platform/frontend";
+import { esc, setting, siteInfo, menusForLocation, widgetGroups, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale, readingTime } from "../../platform/frontend";
 import { resolveMetaByPost } from "../../platform/post-meta";
 import { parsePack } from "../../platform/i18n/translate";
 import { resolveLocale } from "../../platform/i18n/resolve";
@@ -34,6 +34,11 @@ export interface ThemeMenuLocation {
   label?: string;
 }
 
+export interface ThemeSidebar {
+  id: string;
+  label?: string;
+}
+
 export interface ThemeManifest {
   name: string;
   title: string;
@@ -46,6 +51,8 @@ export interface ThemeManifest {
   routes?: ThemeRoute[];
   /** Menu locations the theme can render; falls back to `header` alone. */
   menuLocations?: ThemeMenuLocation[];
+  /** Widget sidebars the theme renders. */
+  sidebars?: ThemeSidebar[];
   adminMenus?: ThemeAdminMenu[];
   blocks?: ThemeBlock[];
   settings?: ThemeSettingDef[];
@@ -444,11 +451,12 @@ export async function buildScope(
   o: ThemeRenderOptions
 ): Promise<Record<string, unknown>> {
   const siteId = o.siteId;
-  const [s, ls, strings, siteDefault] = await Promise.all([
+  const [s, ls, strings, siteDefault, widgets] = await Promise.all([
     siteInfo(env, siteId),
     locales(env, siteId),
     loadThemeStrings(env, theme, o.locale),
     defaultLocale(env, siteId),
+    widgetGroups(env, siteId, o.locale),
   ]);
   // Menus per declared location (rule 73 — one deterministic winner per
   // location). The locations come from the active theme's manifest, read at
@@ -520,6 +528,9 @@ export async function buildScope(
     locale: o.locale,
     locales: (ls as any[]).map((l) => ({ code: l.code, name: l.name, is_default: l.is_default })),
     menu: menuCtx,
+    // Rendered widget groups keyed by declared sidebar id; a sidebar with no
+    // enabled widgets is absent so templates can `{{#if …}}` on it.
+    widgets,
     post: o.post ?? null,
     lang_nav: langNavRows.length > 1 ? langNavRows : [],
     theme: { name: theme.name, version: theme.version, title: theme.manifest.title, strings },

@@ -216,6 +216,55 @@ export async function menusForLocation(env:Env,siteId:string,location:string,loc
   const r=await env.DB.prepare("SELECT * FROM menu_items WHERE menu_id=? AND site_id=? AND (locale IS NULL OR locale=?) ORDER BY sort_order,id").bind(m.id,siteId,locale).all();
   return r.results as any[];
 }
+
+/**
+ * One widget instance rendered to HTML. Rule 74: every read is site-scoped —
+ * `widget_instances` went install-wide → per-site in 0020 because the only
+ * read path that existed had no tenant filter and every site's sidebar showed
+ * every site's widgets.
+ *
+ * Locale semantics mirror `menu_items`: `locale=''` renders in every
+ * language, a specific locale renders only on that language's pages. No
+ * cross-language fallback on purpose — a widget that says "关注公众号" must
+ * not appear on the English pages just because nobody wrote an English body.
+ */
+async function renderWidget(env:Env,siteId:string,locale:string,w:any):Promise<string|null>{
+  let cfg:any={};try{cfg=JSON.parse(String(w.config||"{}"))}catch{}
+  const title=w.title?`<h6 class="widget-title">${esc(String(w.title))}</h6>`:"";
+  if(w.widget_type==="text") return `<section class="widget widget-text">${title}<p>${esc(String(cfg.body||""))}</p></section>`;
+  if(w.widget_type==="html") return `<section class="widget widget-html">${title}${String(cfg.body||"")}</section>`;
+  if(w.widget_type==="recent-posts"){
+    const n=Math.min(20,Math.max(1,Math.round(Number(cfg.count||5))));
+    const r=await env.DB.prepare("SELECT p.slug, COALESCE(t.title,p.slug) AS title FROM posts p LEFT JOIN post_translations t ON t.post_id=p.id AND t.locale=? WHERE p.site_id=? AND p.type='post' AND p.status='published' ORDER BY p.created_at DESC LIMIT ?").bind(locale,siteId,n).all();
+    const lis=((r.results as any[])??[]).map(x=>`<li><a href="/${locale}/blog/${esc(String(x.slug))}">${esc(String(x.title))}</a></li>`).join("");
+    return `<section class="widget widget-recent">${title}<ul class="widget-list">${lis}</ul></section>`;
+  }
+  // menu — the widget pins a menu by id; the items carry site_id (rule 6).
+  const r=await env.DB.prepare("SELECT title,url FROM menu_items WHERE site_id=? AND menu_id=? AND (locale IS NULL OR locale=?) ORDER BY sort_order,id").bind(siteId,String(cfg.menu_id||""),locale).all();
+  const lis=((r.results as any[])??[]).map(x=>`<li><a href="${esc(String(x.url))}">${esc(String(x.title))}</a></li>`).join("");
+  return `<section class="widget widget-menu">${title}<ul class="widget-list">${lis}</ul></section>`;
+}
+
+/**
+ * Enabled widgets of a site, rendered and grouped by sidebar. The keys are
+ * the sidebar ids the theme declares (`sidebars[]` in its manifest); a
+ * sidebar with no widgets has no key, so templates can `{{#if …}}` on it.
+ */
+export async function widgetGroups(env:Env,siteId:string,locale:string):Promise<Record<string,string>>{
+  let rows:any[]=[];
+  try{
+    const r=await env.DB.prepare("SELECT * FROM widget_instances WHERE site_id=? AND enabled=1 AND (locale='' OR locale=?) ORDER BY sidebar,sort_order,id").bind(siteId,locale).all();
+    rows=(r.results as any[])??[];
+  }catch{/* pre-0020 install without the rebuilt table */}
+  const groups:Record<string,string>={};
+  for(const w of rows){
+    const html=await renderWidget(env,siteId,locale,w).catch(()=>null);
+    if(!html)continue;
+    const sb=String(w.sidebar||"sidebar");
+    groups[sb]=(groups[sb]||"")+html;
+  }
+  return groups;
+}
 export function renderBlocks(content:string){
  return parseBlocks(content).map((b:any)=>{const a=b.attrs||{};switch(b.type){
  case"core/paragraph":return`<p>${esc(a.text||"")}</p>`;case"core/heading":return`<h2>${esc(a.text||"")}</h2>`;case"core/list":return`<ul>${String(a.text||"").split(/\n/).filter(Boolean).map((x:string)=>`<li>${esc(x)}</li>`).join("")}</ul>`;

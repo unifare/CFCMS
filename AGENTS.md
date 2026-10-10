@@ -675,6 +675,27 @@ isolate 全新启动，**不发任何激活请求**，字段自己回来——�
 + 二次渲染逐字一致）；注入场景在 `_skeleton-inject.mjs`（LIMIT 1 无排序 + 渲染器硬编码
 header——两条都是历史真实形状）。
 
+## 小工具必须站点隔离地端到端（规则 74）
+
+批次 27 修的隔离缺口：`widget_instances` 建表时**没有 site_id**，而唯一存在过的读路径
+（`GET /widgets`）连租户过滤都没有——多站点安装里每个站点的侧栏都会显示所有站点的
+小工具，正是 §10 规则 6 禁止的泄漏（菜单侧同一教训的孪生：商店的导航项出现在默认站点
+首页）。批次 27 同时把"后台有、前台没有"的小工具真正接到了模板上。
+
+| 规则 | 说明 |
+|---|---|
+| 74a | widget 的**每次读取都带 `site_id`**（前台渲染 `widgetGroups` 与后台列表同样）；0020 迁移重建表（site_id + locale，旧行归 default——与 0009 同哲学），契约声明 `tenant: "site"` |
+| 74b | locale 语义与 `menu_items` 一致：`locale=''` 所有语言渲染，指定语言**只在该语言的页面渲染**——故意不做跨语言回退："关注公众号"这种小工具不该因为没人写英文版就出现在英文页上 |
+| 74c | 前台接线是契约不是福利：`buildScope` 必须把渲染好的 widget 组放进模板作用域（`widgets.<sidebar>`，无小工具的侧栏无键），消费点在 layout（sidebar 区）与 footer（footer 区）；theme.json 用 `sidebars[]` 声明，SPA 的分组就是声明列表——"在没人渲染的侧栏里建小工具"从此不可能 |
+| 74d | config 按类型校验：text/html → body；recent-posts → count 1–20；menu → menu_id 必须属于本站点。html 不过 esc（信任边界：仅管理员可写，与 block 渲染一致，文档注明） |
+
+守卫在 `architecture.test.mjs`（规则 74 节，**5 条**：渲染查询带 site_id / buildScope
+喂 widgets 进模板作用域 / 后台列表同样 scoped / 契约 tenant=site / 内置主题声明
+sidebars）；行为断言在 `admin-contract.test.mjs` §14（scoped CRUD + 三种 config 校验
+400 + 跨站 404）与 `theme-integration.test.mjs` §12（独立站点端到端：四类型渲染 +
+禁用不出现 + 异语言不出现 + default 站点小工具不泄漏进本次渲染）；注入场景在
+`_skeleton-inject.mjs`（渲染查询丢 site_id + 模板作用域没有 widgets——两条都是历史形状）。
+
 ## 守卫失效记录（READ THIS）
 
 `tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。

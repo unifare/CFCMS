@@ -13,6 +13,10 @@
     { "id": "header", "label": "Header" },
     { "id": "footer", "label": "Footer" }
   ],
+  "sidebars": [
+    { "id": "sidebar", "label": "Sidebar" },
+    { "id": "footer", "label": "Footer" }
+  ],
   "templates": [
     "index",
     "home",

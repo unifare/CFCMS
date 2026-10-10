@@ -426,6 +426,8 @@ export interface ThemeManifest extends ExtensionManifest {
   routes?: unknown[];
   /** Menu locations the theme renders; absence means the legacy `header`. */
   menuLocations?: { id: string; label?: string }[];
+  /** Widget sidebars the theme renders; the SPA groups widgets by this list. */
+  sidebars?: { id: string; label?: string }[];
   blocks?: unknown[];
   locales?: string[];
   tables?: TableDecl[];

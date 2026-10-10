@@ -54,6 +54,10 @@
 <main id="content">
 {{@section "content"}}
 </main>
+{{! Sidebar widgets — rendered by the platform, grouped under the theme's
+    declared `sidebar` location. A site with no sidebar widgets renders
+    nothing here: the single-column reading layout stays untouched. }}
+{{#if widgets.sidebar}}<aside class="wrap side-widgets">{{{widgets.sidebar}}}</aside>{{/if}}
 {{@include "parts/footer"}}
 <div class="toast" id="toast"></div>
 {{! One listener registered on every page: the toggle is part of the chrome, and

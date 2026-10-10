@@ -114,7 +114,7 @@ export const PLATFORM_SCHEMA = [
   { table: "theme_setting_defs", tenant: "platform", locale: null, note: "theme-declared setting schema, keyed by theme_name" },
   { table: "theme_settings", tenant: "platform", locale: null, note: "theme setting values, keyed (theme_name,key); config read only by the admin, not the front end" },
   { table: "shortcodes", tenant: "platform", locale: null, note: "registered shortcodes (platform-global registry)" },
-  { table: "widget_instances", tenant: "platform", locale: null, note: "sidebar widget placement" },
+  { table: "widget_instances", tenant: "site", locale: { kind: "column" }, note: "sidebar widget placement; per site since 0020 (was install-wide — leaked across sites)" },
   { table: "notification_log", tenant: "site", locale: null, note: "host-written send ledger: also the dedup store for ChannelMessage.dedupKey" },
 ] as const;
 

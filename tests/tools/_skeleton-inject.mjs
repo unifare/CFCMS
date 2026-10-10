@@ -920,6 +920,28 @@ const SCENARIOS = [
     after: ["  const menuLocs: { id: string }[] = [{ id: \"header\" }];"],
     runs: [["tests/suites/architecture.test.mjs", "the renderer reads locations from the theme manifest, not a literal (rule 73b)"]],
   },
+  // --- widgets are site-scoped end to end (batch 27, rule 74) ----------------
+  {
+    // The historical shape, verbatim: the only widget read path had no tenant
+    // filter at all — every site's sidebar showed every site's widgets. The
+    // render query losing its site_id must turn the rule-74 guard red.
+    label: "the widget render ignores the site",
+    file: FRONTEND,
+    before: ["SELECT * FROM widget_instances WHERE site_id=? AND enabled=1 AND (locale='' OR locale=?)"],
+    after: ["SELECT * FROM widget_instances WHERE enabled=1 AND (locale='' OR locale=?)"],
+    runs: [["tests/suites/architecture.test.mjs", "the widget render query carries the site id (rule 74)"]],
+  },
+  {
+    // The historical shape: widgets existed in the admin but the template
+    // scope never carried them — operators filed widgets under sidebars
+    // nothing rendered, and the screen looked implemented while the front
+    // end ignored every row.
+    label: "the widgets never reach the template scope",
+    file: join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
+    before: ["    widgetGroups(env, siteId, o.locale),"],
+    after: ["    Promise.resolve({}),"],
+    runs: [["tests/suites/architecture.test.mjs", "buildScope feeds the rendered widget groups into the template scope (rule 74b)"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */

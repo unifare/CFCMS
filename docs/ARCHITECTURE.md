@@ -2289,6 +2289,21 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    守卫：`architecture.test.mjs`（规则 73 节，4 条）；行为：`admin-contract.test.mjs`
    §13 + `theme-integration.test.mjs` §11（独立站点双 header 确定性 + footer 渲染）；
    注入 `_skeleton-inject.mjs`（LIMIT 1 无排序 + 硬编码 header，历史形状）
+
+【小工具必须站点隔离地端到端】（AGENTS.md 规则 74，批次 27）
+74. `widget_instances` 建表时没有 site_id，唯一读路径（`GET /widgets`）连租户过滤都
+    没有——多站点下每个站点的侧栏显示所有站点的小工具（规则 6 泄漏的菜单孪生）
+   a) 每次读取都带 `site_id`（前台 `widgetGroups` 与后台列表同样）；0020 重建表
+      （site_id + locale，旧行归 default），契约 `tenant: "site"`
+   b) locale 语义同 `menu_items`：`''` 全语言，指定语言只在该语言页面渲染——
+      **故意不跨语言回退**（语言专属小工具是特性，静默串语言是缺陷）
+   c) 前台接线是契约：`buildScope` 输出 `widgets.<sidebar>`（无则无键），消费点在
+      layout/footer；`sidebars[]` 声明 = SPA 分组 = 渲染集合
+   d) config 按类型校验（body / count 1–20 / menu_id 属本站点）；html 不过 esc
+      （信任边界：仅管理员可写）
+   守卫：`architecture.test.mjs`（规则 74 节，5 条）；行为：`admin-contract.test.mjs`
+   §14 + `theme-integration.test.mjs` §12（四类型渲染 + 禁用/异语言/跨站均不出现）；
+   注入 `_skeleton-inject.mjs`（渲染丢 site_id + 作用域无 widgets，历史形状）
 ```
 
 ---

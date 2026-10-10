@@ -1874,6 +1874,13 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     const locs=t?.manifest?.menuLocations?.length?t.manifest.menuLocations:[{id:"header"}];
     return ok({items:locs,site:siteId});
   }
+  // Declared widget sidebars of the active theme — the SPA groups the widgets
+  // screen by this list, so the groups it offers are exactly what renders.
+  if(path==="theme/sidebars"&&method==="GET"){
+    const t=await activeTheme(env,siteId).catch(()=>null);
+    const sbs=t?.manifest?.sidebars?.length?t.manifest.sidebars:[{id:"sidebar"},{id:"footer"}];
+    return ok({items:sbs,site:siteId});
+  }
   if(path==="theme/routes"&&method==="GET") return ok({items:await listRoutes(env,siteId),site:siteId});
   if(path==="theme/menus"&&method==="GET") return ok({items:await listThemeAdminMenus(env,siteId),site:siteId});
   // The unified view: theme menus and plugin menus in one list, grouped by
@@ -1930,14 +1937,63 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
   if(psm&&method==="GET") return pluginSettings(env,psm[1]);
   if(psm&&method==="POST") return savePluginSetting(env,user.id,psm[1],await jsonBody(request));
 
+  // -- widgets ----------------------------------------------------------------
+  // Site-scoped since 0020. Before that this table was install-wide and the
+  // one read path had no tenant filter at all — on a multi-site install every
+  // site's sidebar showed every site's widgets, the exact leak §10 rule 6
+  // forbids (see the comment on `menusForLocation` for the menu twin).
+  const widgetTypes = new Set(["text", "html", "recent-posts", "menu"]);
+  /** Validate a widget payload's config against its type. Throws with a
+   * user-facing message; the route turns that into a 400. */
+  async function normaliseWidgetConfig(type: string, cfg: unknown): Promise<Record<string, unknown>> {
+    const c = (cfg && typeof cfg === "object" && !Array.isArray(cfg)) ? cfg as Record<string, unknown> : {};
+    if (type === "text" || type === "html") return { body: String(c.body ?? "") };
+    if (type === "recent-posts") {
+      const n = Math.round(Number(c.count ?? 5));
+      if (!Number.isFinite(n) || n < 1 || n > 20) throw new Error("recent-posts count must be 1-20");
+      return { count: n };
+    }
+    // type === "menu"
+    const menuId = String(c.menu_id ?? "");
+    if (!menuId) throw new Error("menu widget needs menu_id");
+    const m = await env.DB.prepare("SELECT id FROM menus WHERE site_id=? AND id=?").bind(siteId, menuId).first<any>();
+    if (!m) throw new Error("menu_id does not exist on this site");
+    return { menu_id: menuId };
+  }
   if(path==="widgets"&&method==="GET"){
-    const rows=await env.DB.prepare("SELECT * FROM widget_instances ORDER BY sidebar,sort_order").all();return ok({items:rows.results});
+    const rows=await env.DB.prepare("SELECT * FROM widget_instances WHERE site_id=? ORDER BY sidebar,sort_order,id").bind(siteId).all();return ok({items:rows.results,site:siteId});
   }
   if(path==="widgets"&&method==="POST"){
-    const b=await jsonBody(request),id=await randomId();
-    await env.DB.prepare("INSERT INTO widget_instances (id,sidebar,widget_type,title,config,sort_order,enabled) VALUES (?,?,?,?,?,?,?)")
-      .bind(id,b.sidebar||"sidebar",b.widget_type||"text",b.title||"",JSON.stringify(b.config||{}),Number(b.sort_order||0),b.enabled===false?0:1).run();
-    return ok({id},201);
+    const b=await jsonBody(request);
+    const type=String(b.widget_type||"text");
+    if(!widgetTypes.has(type)) return ok({error:"unknown widget_type"},400);
+    let cfg:Record<string,unknown>;
+    try{ cfg=await normaliseWidgetConfig(type,b.config); }catch(e:any){ return ok({error:e?.message||"invalid config"},400); }
+    const id=await randomId();
+    await env.DB.prepare("INSERT INTO widget_instances (id,site_id,sidebar,widget_type,title,config,sort_order,enabled,locale) VALUES (?,?,?,?,?,?,?,?,?)")
+      .bind(id,siteId,String(b.sidebar||"sidebar"),type,String(b.title||""),JSON.stringify(cfg),Number(b.sort_order||0),b.enabled===false?0:1,String(b.locale||"")).run();
+    await activity(env,user.id,"create","widget",id);
+    return ok({id,site:siteId},201);
+  }
+  const wim=path.match(/^widgets\/([^/]+)$/);
+  if(wim&&method==="PUT"){
+    const cur=await env.DB.prepare("SELECT * FROM widget_instances WHERE site_id=? AND id=?").bind(siteId,wim[1]).first<any>();
+    if(!cur) return ok({error:"widget not found"},404);
+    const b=await jsonBody(request);
+    const type=String(b.widget_type||cur.widget_type);
+    if(!widgetTypes.has(type)) return ok({error:"unknown widget_type"},400);
+    let cfg:Record<string,unknown>;
+    try{ cfg=await normaliseWidgetConfig(type,b.config===undefined?JSON.parse(String(cur.config||"{}")):b.config); }catch(e:any){ return ok({error:e?.message||"invalid config"},400); }
+    await env.DB.prepare("UPDATE widget_instances SET sidebar=?,widget_type=?,title=?,config=?,sort_order=?,enabled=?,locale=? WHERE site_id=? AND id=?")
+      .bind(String(b.sidebar||cur.sidebar),type,b.title===undefined?String(cur.title??""):String(b.title),JSON.stringify(cfg),b.sort_order===undefined?Number(cur.sort_order||0):Number(b.sort_order),b.enabled===undefined?Number(cur.enabled??1):(b.enabled?1:0),b.locale===undefined?String(cur.locale||""):String(b.locale||""),siteId,wim[1]).run();
+    await activity(env,user.id,"update","widget",wim[1]);
+    return ok({ok:true});
+  }
+  if(wim&&method==="DELETE"){
+    const r=await env.DB.prepare("DELETE FROM widget_instances WHERE site_id=? AND id=?").bind(siteId,wim[1]).run();
+    if(!r.meta.changes) return ok({error:"widget not found"},404);
+    await activity(env,user.id,"delete","widget",wim[1]);
+    return ok({ok:true});
   }
   const uploadMatch=path.match(/^extensions\/(plugins|themes)\/upload$/);
   if(uploadMatch&&method==="POST") { if(!(await requirePermission(env,user,"extensions.manage"))) return ok({error:"Forbidden"},403); return uploadExtension(env,user.id,request,uploadMatch[1]==="plugins"?"plugin":"theme"); }

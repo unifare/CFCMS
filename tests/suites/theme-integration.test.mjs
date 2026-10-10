@@ -374,6 +374,23 @@ async function main() {
     "DELETE FROM settings WHERE site_id='menutest'",
     "DELETE FROM posts WHERE site_id='menutest'",
     "DELETE FROM sites WHERE id='menutest'",
+    // §12's throwaway site: the widget rendering section runs on its own site
+    // so neither user widgets on `default` nor another suite's fixtures can
+    // blur what should and should not appear.
+    "DELETE FROM widget_instances WHERE site_id='widgetest'",
+    "DELETE FROM menu_items WHERE site_id='widgetest'",
+    "DELETE FROM menus WHERE site_id='widgetest'",
+    "DELETE FROM post_meta WHERE post_id='wtest_post'",
+    "DELETE FROM post_translations WHERE post_id='wtest_post'",
+    "DELETE FROM posts WHERE id='wtest_post'",
+    "DELETE FROM theme_routes WHERE site_id='widgetest'",
+    "DELETE FROM site_locales WHERE site_id='widgetest'",
+    "DELETE FROM settings WHERE site_id='widgetest'",
+    "DELETE FROM posts WHERE site_id='widgetest'",
+    "DELETE FROM sites WHERE id='widgetest'",
+    // The §12 cross-site leak probe plants one marker widget on `default`;
+    // an aborted run must not leave it in the user's real sidebar.
+    "DELETE FROM widget_instances WHERE title='wtest_default_leak'",
   ]) {
     try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
   }
@@ -882,6 +899,92 @@ async function main() {
     "DELETE FROM site_locales WHERE site_id='menutest'",
     "DELETE FROM settings WHERE site_id='menutest'",
     "DELETE FROM posts WHERE site_id='menutest'",
+  ]) { try { sqlite.exec(sql); } catch { /* table may not exist */ } }
+
+  console.log("\n12. Widgets render site-scoped, per locale, disabled hidden (rule 74)");
+  // Widgets went install-wide → per-site in 0020 because the only read path
+  // that existed had no tenant filter. The contract, end to end on a real
+  // render: every declared widget type shows up, a disabled widget does not,
+  // another site's widget never leaks in, and a locale-pinned widget renders
+  // only on its own language's pages.
+  const jh = { ...authHeaders, "Content-Type": "application/json" };
+  const wMkSite = await req(worker, env, "/api/v1/sites", {
+    method: "POST", headers: jh,
+    body: JSON.stringify({ id: "widgetest", name: "Widget Test", path_prefix: "/widgetest" }),
+  });
+  check("throwaway site created", wMkSite.status, 201);
+  checkTruthy("bundled default theme activates on the throwaway site",
+    (await req(worker, env, "/api/v1/extensions/themes/default/activate?site=widgetest", { method: "POST", headers: authHeaders })).status === 200);
+  // One published post so the recent-posts widget has something to list.
+  const wMkPost = await req(worker, env, "/api/v1/posts/wtest_post?site=widgetest", {
+    method: "PUT", headers: jh,
+    body: JSON.stringify({ locale: "en", title: "WPost", slug: "wpost", status: "published", content: [] }),
+  });
+  check("fixture post created", wMkPost.status === 200 || wMkPost.status === 201, true);
+  // A menu for the menu widget.
+  await req(worker, env, "/api/v1/menus?site=widgetest", {
+    method: "POST", headers: jh, body: JSON.stringify({ id: "menu_wtest", name: "WT", location: "footer" }),
+  });
+  await req(worker, env, "/api/v1/menus/menu_wtest/items?site=widgetest", {
+    method: "POST", headers: jh, body: JSON.stringify({ title: "WIDGET-MENU-LINK", url: "/wt" }),
+  });
+  const wMkWidget = (title, body2) => req(worker, env, "/api/v1/widgets?site=widgetest", {
+    method: "POST", headers: jh, body: JSON.stringify(body2),
+  }).then(async (r) => ({ status: r.status, id: (await r.json()).id, title }));
+  const wText = await wMkWidget("wtest_text", { title: "wtest_text", widget_type: "text", sidebar: "sidebar", config: { body: "WIDGET-TEXT-BODY" } });
+  const wHtml = await wMkWidget("wtest_html", { title: "wtest_html", widget_type: "html", sidebar: "sidebar", config: { body: "<b>WIDGET-HTML-BOLD</b>" } });
+  const wRecent = await wMkWidget("wtest_recent", { title: "wtest_recent", widget_type: "recent-posts", sidebar: "sidebar", config: { count: 5 } });
+  const wMenu = await wMkWidget("wtest_menu", { title: "wtest_menu", widget_type: "menu", sidebar: "footer", config: { menu_id: "menu_wtest" } });
+  const wOff = await wMkWidget("wtest_off", { title: "wtest_off", widget_type: "text", sidebar: "sidebar", enabled: false, config: { body: "DISABLED-WIDGET-BODY" } });
+  check("all five fixture widgets created", [wText.status, wHtml.status, wRecent.status, wMenu.status, wOff.status].every((s) => s === 201), true);
+  // A locale-pinned widget: assert against whatever language the page actually
+  // renders in (the site has no declared locales, so don't guess).
+  const wProbe = await req(worker, env, "/widgetest/", { headers: authHeaders });
+  const wProbeBody = await wProbe.text();
+  const pageLocale = (wProbeBody.match(/<html lang="([^"]+)"/) || [])[1] || "en";
+  const otherLocale = pageLocale === "en" ? "zh-CN" : "en";
+  const wLoc = await wMkWidget("wtest_loc", { title: "wtest_loc", widget_type: "text", sidebar: "sidebar", locale: pageLocale, config: { body: "PAGE-LOCALE-WIDGET" } });
+  const wForeign = await wMkWidget("wtest_foreign", { title: "wtest_foreign", widget_type: "text", sidebar: "sidebar", locale: otherLocale, config: { body: "OTHER-LOCALE-WIDGET" } });
+  check("locale-pinned widgets created", [wLoc.status, wForeign.status].every((s) => s === 201), true);
+  // The leak probe: a widget on the DEFAULT site must never reach this render.
+  const leakRes = await req(worker, env, "/api/v1/widgets?site=default", {
+    method: "POST", headers: jh,
+    body: JSON.stringify({ title: "wtest_default_leak", widget_type: "text", sidebar: "sidebar", config: { body: "DEFAULT-SITE-WIDGET" } }),
+  });
+  check("leak-probe widget created on the default site", leakRes.status, 201);
+
+  const res = await req(worker, env, "/widgetest/", { headers: authHeaders });
+  const body = await res.text();
+  check("text widget renders its escaped body", body.includes("WIDGET-TEXT-BODY"), true);
+  check("html widget renders raw markup", body.includes("<b>WIDGET-HTML-BOLD</b>"), true);
+  check("recent-posts widget lists the site's post with a frontend URL", body.includes("/blog/wpost"), true);
+  check("menu widget renders its menu's items", body.includes("WIDGET-MENU-LINK"), true);
+  check("the page-locale widget renders", body.includes("PAGE-LOCALE-WIDGET"), true);
+  check("a disabled widget does not render", body.includes("DISABLED-WIDGET-BODY"), false);
+  check("a widget pinned to the other locale does not render", body.includes("OTHER-LOCALE-WIDGET"), false);
+  check("another site's widget never leaks in", body.includes("DEFAULT-SITE-WIDGET"), false);
+  // The probe page was fetched before the last three widgets existed; fetch
+  // once more so the assertions above describe the final state, not a stale one.
+  const body2 = await (await req(worker, env, "/widgetest/", { headers: authHeaders })).text();
+  check("a second render is consistent", body2.includes("PAGE-LOCALE-WIDGET") && !body2.includes("DEFAULT-SITE-WIDGET"), true);
+
+  // Cleanup: the throwaway site and the leak probe leave nothing behind.
+  await req(worker, env, "/api/v1/sites/widgetest", { method: "DELETE", headers: authHeaders });
+  const leakList = await (await req(worker, env, "/api/v1/widgets?site=default", { headers: authHeaders })).json();
+  for (const w of (leakList.items || []).filter((x) => x.title === "wtest_default_leak")) {
+    await req(worker, env, `/api/v1/widgets/${w.id}?site=default`, { method: "DELETE", headers: authHeaders });
+  }
+  for (const sql of [
+    "DELETE FROM widget_instances WHERE site_id='widgetest'",
+    "DELETE FROM menu_items WHERE site_id='widgetest'",
+    "DELETE FROM menus WHERE site_id='widgetest'",
+    "DELETE FROM post_meta WHERE post_id='wtest_post'",
+    "DELETE FROM post_translations WHERE post_id='wtest_post'",
+    "DELETE FROM posts WHERE id='wtest_post'",
+    "DELETE FROM theme_routes WHERE site_id='widgetest'",
+    "DELETE FROM site_locales WHERE site_id='widgetest'",
+    "DELETE FROM settings WHERE site_id='widgetest'",
+    "DELETE FROM posts WHERE site_id='widgetest'",
   ]) { try { sqlite.exec(sql); } catch { /* table may not exist */ } }
 
   console.log(`\n${pass} passed, ${fail} failed`);

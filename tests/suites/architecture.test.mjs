@@ -2212,6 +2212,48 @@ section("A menu location resolves deterministically (rule 73)");
 }
 
 // ---------------------------------------------------------------------------
+section("Widgets are site-scoped end to end (rule 74)");
+// ---------------------------------------------------------------------------
+
+/**
+ * `widget_instances` was install-wide and the one read path that existed
+ * (`GET /widgets`) had no tenant filter — on a multi-site install every
+ * site's sidebar showed every site's widgets, the exact leak §10 rule 6
+ * forbids (the menu twin: a shop's nav item on the default site's front
+ * page). Rule 74: widgets are placement content, so every read carries
+ * `site_id`, the scope the front end renders is the scope the admin edits,
+ * and the contract declares the table what it really is.
+ */
+{
+  const feSrc = blankComments(read(join(ROOT, "src", "platform", "frontend.ts")));
+  const rdSrc = blankComments(read(join(ROOT, "src", "extensions", "theme", "runtime-declarative.ts")));
+  const apiSrc = blankComments(read(join(ROOT, "src", "api.ts")));
+  const schemaSrc = blankComments(read(join(ROOT, "src", "extensions", "contract", "schema.ts")));
+  const themeJson = JSON.parse(read(join(ROOT, "content", "themes", "default", "theme.json")));
+
+  check(
+    "the widget render query carries the site id (rule 74)",
+    /SELECT \* FROM widget_instances WHERE site_id=\? AND enabled=1/.test(feSrc)
+  );
+  check(
+    "buildScope feeds the rendered widget groups into the template scope (rule 74b)",
+    /widgetGroups\(env, siteId, o\.locale\)/.test(rdSrc)
+  );
+  check(
+    "the admin widget listing is site-scoped too (rule 74c)",
+    /SELECT \* FROM widget_instances WHERE site_id=\?/.test(apiSrc)
+  );
+  check(
+    "the contract declares widget_instances a site table (rule 74d)",
+    /table: "widget_instances", tenant: "site"/.test(schemaSrc)
+  );
+  check(
+    "the bundled theme declares the sidebars it renders",
+    Array.isArray(themeJson.sidebars) && themeJson.sidebars.some((s) => s.id === "footer")
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

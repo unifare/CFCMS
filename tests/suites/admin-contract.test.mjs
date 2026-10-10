@@ -434,6 +434,34 @@ async function main() {
   check("deleting a menu removes its items too", mGone.items, []);
   await req(worker, env, "/api/v1/menus/m_a?site=adm", { method: "DELETE", headers: json });
 
+  console.log("\n14. Widgets: scoped CRUD, config validation, site isolation");
+  // Idempotent: an aborted earlier run must not leave half a fixture behind.
+  sqlite.exec("DELETE FROM widget_instances WHERE site_id='adm' AND title LIKE 'wdg_%'");
+  const mkW = (title, body) =>
+    req(worker, env, "/api/v1/widgets?site=adm", { method: "POST", headers: json, body: JSON.stringify({ title, widget_type: "text", sidebar: "sidebar", config: { body } }) });
+  const w1 = await (await mkW("wdg_one", "W-BODY-1")).json();
+  check("widget create answers 201 with an id", typeof w1.id, "string");
+  const wList = await (await req(worker, env, "/api/v1/widgets?site=adm", { headers: auth })).json();
+  const w1row = wList.items.find((x) => x.id === w1.id);
+  check("the widget list is site-scoped and returns the stored config",
+    [Boolean(w1row), w1row?.config], [true, JSON.stringify({ body: "W-BODY-1" })]);
+  const badType = await req(worker, env, "/api/v1/widgets?site=adm", { method: "POST", headers: json, body: JSON.stringify({ title: "wdg_bad", widget_type: "clock", config: {} }) });
+  check("an unknown widget_type is refused", badType.status, 400);
+  const badCount = await req(worker, env, "/api/v1/widgets?site=adm", { method: "POST", headers: json, body: JSON.stringify({ title: "wdg_bad", widget_type: "recent-posts", config: { count: 99 } }) });
+  check("recent-posts count outside 1-20 is refused", badCount.status, 400);
+  const badMenu = await req(worker, env, "/api/v1/widgets?site=adm", { method: "POST", headers: json, body: JSON.stringify({ title: "wdg_bad", widget_type: "menu", config: { menu_id: "no_such_menu" } }) });
+  check("a menu_id from another world is refused", badMenu.status, 400);
+  const wUpd = await req(worker, env, `/api/v1/widgets/${w1.id}?site=adm`, { method: "PUT", headers: json, body: JSON.stringify({ title: "wdg_one", enabled: false, sort_order: 3 }) });
+  check("widget update answers 200", wUpd.status, 200);
+  const w1b = (await (await req(worker, env, "/api/v1/widgets?site=adm", { headers: auth })).json()).items.find((x) => x.id === w1.id);
+  check("disable and reorder persisted", [w1b?.enabled, w1b?.sort_order], [0, 3]);
+  const wForeignPut = await req(worker, env, `/api/v1/widgets/${w1.id}?site=default`, { method: "PUT", headers: json, body: JSON.stringify({ title: "Hijack" }) });
+  check("another site cannot update this site's widget", wForeignPut.status, 404);
+  const delW = await req(worker, env, `/api/v1/widgets/${w1.id}?site=adm`, { method: "DELETE", headers: json });
+  check("widget delete answers 200", delW.status, 200);
+  const w1gone = (await (await req(worker, env, "/api/v1/widgets?site=adm", { headers: auth })).json()).items.some((x) => x.id === w1.id);
+  check("and the widget is really gone", w1gone, false);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));
   sqlite.close();
