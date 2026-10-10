@@ -47,8 +47,12 @@ function checkTruthy(name, v) {
   else { fail++; failures.push(name); console.log(`  FAIL ${name} (got ${JSON.stringify(v)})`); }
 }
 function summary(tag = "") {
+  // Always exit explicitly. Relying on the event loop draining means a harness
+  // that runs this suite in a worker thread (see tests/tools/_residue-guard.mjs)
+  // never sees a completion signal, and reads "I could not tell" as a failure —
+  // the same "no summary" trap AGENTS.md warns about, one layer out.
   console.log(`\n${pass} passed, ${fail} failed${tag}`);
-  if (fail) process.exit(1);
+  process.exit(fail ? 1 : 0);
 }
 
 async function compileWorker() {
@@ -331,4 +335,4 @@ async function testApplyMenuCustom() {
   }
 }
 
-main().catch((e) => { console.error("SUITE ERROR:", e && e.stack || e); summary(" (aborted)"); });
+main().catch((e) => { console.error("SUITE ERROR:", e && e.stack || e); fail++; summary(" (aborted)"); });

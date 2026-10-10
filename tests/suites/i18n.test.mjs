@@ -23,6 +23,7 @@ import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
 import { assetsStub } from "../fixtures/_assets-stub.mjs";
+import { snapshotCapabilities, restoreCapabilities } from "../fixtures/_capability-snapshot.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -271,6 +272,10 @@ async function main() {
   // that crashed after turning it on would otherwise leave the next run
   // asserting against a menu narrowed by the previous one — a clean failure
   // translated into a confusing one (AGENTS.md, the third false-green note).
+  // `cfpress.features` is the operator's own switch row, not a fixture: the
+  // delete below (and this suite's writes to it) would otherwise reset every
+  // feature they turned on. Snapshot it first and put it back in the teardown.
+  const prevFeatureRows = sqlite.prepare("SELECT * FROM settings WHERE site_id='default' AND key LIKE 'cfpress.features%'").all();
   sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key LIKE 'cfpress.features%'");
   // Content created below through the editor API gets a random id and a
   // title-derived slug, so the `slug LIKE 'i18n-%'` sweeps above cannot see it.
@@ -278,6 +283,12 @@ async function main() {
   // complement, which is what stops this suite leaving stray posts/pages on the
   // shared dev database (they showed up on the operator's content list).
   const postsBefore = sqlite.prepare("SELECT id FROM posts").all().map((r) => r.id);
+  // Activating the test theme below rewrites the default site's capability rows
+  // (field_defs / theme_routes / admin_menu_registry) and the derived
+  // `theme_installs.active` column. Capture them now, after the sweep above, so
+  // the teardown can restore the operator's real theme instead of leaving the
+  // fixture's rows (or an "active" badge on nothing).
+  const caps = snapshotCapabilities(sqlite);
 
   console.log("\n0. Admin bootstrap & auth");
   const loginRes = await req(worker, env, "/api/v1/auth/login", {
@@ -694,6 +705,18 @@ async function main() {
     }
     sqlite.exec("DELETE FROM scheduled_posts WHERE post_id NOT IN (SELECT id FROM posts)");
   }
+  // Put the operator's feature switches and the default theme's capability rows
+  // back (see the snapshots above). Without this the editor loses its custom
+  // fields, the front-end routes 404 and the Themes screen shows the wrong theme
+  // as active — silently, until something re-activates the theme by hand.
+  sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key LIKE 'cfpress.features%'");
+  for (const r of prevFeatureRows) {
+    const keys = Object.keys(r);
+    try {
+      sqlite.prepare(`INSERT INTO settings (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map((k) => r[k]));
+    } catch { /* ok */ }
+  }
+  restoreCapabilities(sqlite, caps);
 
   console.log(`\n${"=".repeat(64)}`);
   console.log(`${pass} passed, ${fail} failed`);

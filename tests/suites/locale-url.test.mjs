@@ -26,6 +26,7 @@ import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
 import { assetsStub } from "../fixtures/_assets-stub.mjs";
+import { snapshotCapabilities, restoreCapabilities } from "../fixtures/_capability-snapshot.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -180,8 +181,12 @@ async function main() {
   // table and the menu registry are SITE-WIDE and the activation below rewrites
   // them clear-then-insert, so they are snapshotted and restored at the end.
   const previousActive = sqlite.prepare("SELECT value FROM settings WHERE site_id='default' AND key='theme.active'").get()?.value ?? null;
-  const previousRoutes = sqlite.prepare("SELECT * FROM theme_routes WHERE site_id='default'").all();
-  const previousMenus = sqlite.prepare("SELECT * FROM admin_menu_registry WHERE site_id IN ('default','*')").all();
+  // Activating the test theme below clear-then-inserts the default site's
+  // capability rows — field_defs, theme_routes, admin_menu_registry — and
+  // recomputes `theme_installs.active`. One whole-table snapshot covers all of
+  // them (see _capability-snapshot.mjs); the earlier hand-rolled routes/menus
+  // pair missed `field_defs`, so the operator's custom fields vanished.
+  const caps = snapshotCapabilities(sqlite);
   const previousSiteLocales = sqlite.prepare("SELECT * FROM site_locales WHERE site_id='default'").all();
   const previousLocales = sqlite.prepare("SELECT * FROM locales").all();
   sqlite.exec(`DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`);
@@ -391,14 +396,7 @@ async function main() {
   sqlite.exec(`DELETE FROM post_revisions WHERE post_id IN (SELECT id FROM posts WHERE slug LIKE '${PREFIX}%')`);
   sqlite.exec(`DELETE FROM post_translations WHERE post_id IN (SELECT id FROM posts WHERE slug LIKE '${PREFIX}%')`);
   sqlite.exec(`DELETE FROM posts WHERE slug LIKE '${PREFIX}%'`);
-  sqlite.exec("DELETE FROM theme_routes WHERE site_id='default'");
-  for (const r of previousRoutes) {
-    sqlite.prepare(`INSERT INTO theme_routes (${Object.keys(r).join(",")}) VALUES (${Object.keys(r).map(() => "?").join(",")})`).run(...Object.values(r));
-  }
-  sqlite.exec("DELETE FROM admin_menu_registry WHERE site_id IN ('default','*')");
-  for (const r of previousMenus) {
-    sqlite.prepare(`INSERT INTO admin_menu_registry (${Object.keys(r).join(",")}) VALUES (${Object.keys(r).map(() => "?").join(",")})`).run(...Object.values(r));
-  }
+  restoreCapabilities(sqlite, caps);
   sqlite.exec("DELETE FROM site_locales WHERE site_id='default'");
   for (const r of previousSiteLocales) {
     sqlite.prepare(`INSERT INTO site_locales (${Object.keys(r).join(",")}) VALUES (${Object.keys(r).map(() => "?").join(",")})`).run(...Object.values(r));

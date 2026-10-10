@@ -23,6 +23,7 @@ import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
 import { assetsStub } from "../fixtures/_assets-stub.mjs";
+import { snapshotCapabilities, restoreCapabilities } from "../fixtures/_capability-snapshot.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -209,15 +210,7 @@ async function main() {
   // `theme.active`, `theme_routes` and `admin_menu_registry` rows
   // clear-then-insert, so snapshot them and put them back — otherwise the
   // operator's own front-end routes and admin menu vanish after a test run.
-  const insertRows = (table, rows) => {
-    for (const r of rows) {
-      const keys = Object.keys(r);
-      sqlite.prepare(`INSERT INTO ${table} (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map((k) => r[k]));
-    }
-  };
   const prevActive = sqlite.prepare("SELECT value FROM settings WHERE site_id='default' AND key='theme.active'").get()?.value ?? null;
-  const prevRoutes = sqlite.prepare("SELECT * FROM theme_routes WHERE site_id='default'").all();
-  const prevAdminMenus = sqlite.prepare("SELECT * FROM admin_menu_registry WHERE site_id IN ('default','*')").all();
   const sweep = () => {
     for (const sql of [
       "DELETE FROM post_meta WHERE post_id LIKE 'ms_%'",
@@ -243,15 +236,10 @@ async function main() {
       "DELETE FROM settings WHERE site_id IN ('shop','de')",
       "DELETE FROM content_cache_versions WHERE id IN ('content_version_shop','content_version_de')",
       "DELETE FROM sites WHERE id IN ('shop','de','tmp')",
-      // Restore what activating a fixture on `default` overwrote.
-      "DELETE FROM theme_routes WHERE site_id='default'",
-      "DELETE FROM admin_menu_registry WHERE site_id IN ('default','*')",
     ]) {
       try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
     }
     try {
-      insertRows("theme_routes", prevRoutes);
-      insertRows("admin_menu_registry", prevAdminMenus);
       if (prevActive !== null) {
         sqlite.prepare("INSERT INTO settings(id,site_id,key,value,autoload) VALUES('setting-theme-active','default','theme.active',?,1) ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value").run(prevActive);
       } else {
@@ -260,6 +248,12 @@ async function main() {
     } catch { /* table may not exist yet */ }
   };
   sweep();
+  // Capture the default site's capability rows (field_defs / post_types /
+  // theme_routes / theme_blocks / admin_menu_registry) and the derived
+  // `theme_installs.active` column *after* the sweep, so the teardown restores
+  // the operator's real theme rather than this suite's fixtures. Activating
+  // `detheme` on `default` clear-then-inserts all of them.
+  const caps = snapshotCapabilities(sqlite);
 
   // -- 0. auth -------------------------------------------------------------
   console.log("0. Admin bootstrap & auth");
@@ -657,8 +651,10 @@ async function main() {
   check("site rename persisted", afterUpd.items.find((s) => s.id === "shop").name, "Shop Renamed");
   check("host preserved on partial update", afterUpd.items.find((s) => s.id === "shop").host, "shop.example.com");
 
-  // Leave the shared local D1 as we found it (see `sweep` above).
+  // Leave the shared local D1 as we found it: drop this run's fixtures, then put
+  // back the capability rows the activations above rewrote (see `caps`).
   sweep();
+  restoreCapabilities(sqlite, caps);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

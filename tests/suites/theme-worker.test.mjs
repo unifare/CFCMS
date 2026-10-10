@@ -32,6 +32,7 @@ import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
 import { assetsStub } from "../fixtures/_assets-stub.mjs";
+import { snapshotCapabilities, restoreCapabilities } from "../fixtures/_capability-snapshot.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -255,6 +256,16 @@ async function main() {
     "DELETE FROM theme_installs WHERE name LIKE 'wtheme%'",
     "DELETE FROM extension_versions WHERE extension_name LIKE 'wtheme%'",
   ]) { try { sqlite.exec(sql); } catch { /* ok */ } }
+
+  // Capture what the run is allowed to disturb, so the cleanup below can put it
+  // back instead of deleting the operator's state: the site-wide capability rows
+  // a theme activation rewrites (see _capability-snapshot.mjs) and the operator's
+  // own feature/theme settings. Deleting `settings.theme.active` is data loss —
+  // the site falls back to the bundled theme and the operator has no idea why.
+  const caps = snapshotCapabilities(sqlite);
+  const prevSettings = sqlite.prepare(
+    "SELECT * FROM settings WHERE site_id='default' AND key IN ('cfpress.features','theme.active')"
+  ).all();
 
   const worker = (await compileWorker()).default;
 
@@ -626,9 +637,10 @@ async function main() {
     checkTruthy("dropping the row falls back to the var again", backOn.html.includes("WORKER_RENDERED"));
   }
 
-  // Cleanup
+  // Cleanup: drop this run's fixtures, then restore what it was allowed to
+  // disturb (see the snapshot above) — the shared local D1 must be left as the
+  // suite found it.
   for (const sql of [
-    "DELETE FROM settings WHERE site_id='default' AND key='cfpress.features'",
     "DELETE FROM post_meta WHERE post_id LIKE 'wpost_%'",
     "DELETE FROM post_translations WHERE post_id LIKE 'wpost_%'",
     "DELETE FROM posts WHERE id LIKE 'wpost_%'",
@@ -639,8 +651,15 @@ async function main() {
     "DELETE FROM theme_settings WHERE theme_name LIKE 'wtheme%'",
     "DELETE FROM theme_installs WHERE name LIKE 'wtheme%'",
     "DELETE FROM extension_versions WHERE extension_name LIKE 'wtheme%'",
-    "DELETE FROM settings WHERE site_id='default' AND key='theme.active'",
+    "DELETE FROM settings WHERE site_id='default' AND key IN ('cfpress.features','theme.active')",
   ]) { try { sqlite.exec(sql); } catch { /* ok */ } }
+  for (const r of prevSettings) {
+    const keys = Object.keys(r);
+    try {
+      sqlite.prepare(`INSERT INTO settings (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map((k) => r[k]));
+    } catch { /* ok */ }
+  }
+  restoreCapabilities(sqlite, caps);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) { console.log("Failures:", failures.join(", ")); process.exit(1); }

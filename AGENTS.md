@@ -48,6 +48,26 @@
    ⚠️ 改 `cfpress.ps1` 后**必须确认 BOM 还在**（`head -c 3 scripts/cfpress.ps1 | xxd`
    应显示 `efbbbf`）——多数编辑器/写入工具会把它吃掉，而症状要到 Windows
    PowerShell 5.1 下才出现（中文变乱码），PS 7 与文本编辑器都看不出来。
+7e. **如果加了/改了会碰共享本地 D1 的套件，跑
+   `node tests/tools/_residue-guard.mjs [suite…]`**（先停 `wrangler dev`，它占着
+   那个 sqlite 文件）。套件跑的是 `wrangler dev` 用的**同一个** sqlite（见下），
+   所以**套件留下的任何一行都会出现在本地站点的后台**：主题屏的幽灵主题、站点屏的
+   幽灵站点、内容列表里的野文章。
+   **铁律：清理必须在首尾各做一次**（`media.test.mjs` 是范式）。只在开头清
+   （"clear what a previous run left behind"）等于把残留**永久化**——跑完就多一堆，
+   下一次跑才清掉；本仓库曾因此让后台长期挂着一堆测试主题。
+   在 `default` 站激活一个 fixture 主题会 clear-then-insert 掉该站的
+   `field_defs`/`post_types`/`taxonomies`/`theme_routes`/`theme_blocks`/
+   `admin_menu_registry` 与派生的 `theme_installs.active`，**必须快照+还原**
+   （用 `tests/fixtures/_capability-snapshot.mjs`），否则操作员的真实主题能力行
+   被静默冲掉。**别删操作员自己的 settings 行**（`cfpress.features`、
+   `theme.active`）——快照+还原，删掉就是丢数据。
+   守卫的判据是**逐行内容比对**（不是按名字），所以"同名的旧残留先被清、新的又被留下"
+   这种会漏掉的情况也能抓到；它只对**应用自己会物化的行**放行（捆绑主题/插件的能力行）。
+   新增套件要加进它的 `SHARED_D1_SUITES` 列表。
+   ⚠️ 改守卫本身也要反向验证：注掉一个套件的收尾清理，确认守卫**点名该套件**并打印
+   泄漏的那一行。
+
 8. **加了新的架构规则，必须同时做一次「反向验证」**：故意注入一次违规，
    确认测试真的会 FAIL，再撤回。**测不出失败的检查等于没有检查**——
    本仓库已经发生过**十四种**（见下方「守卫失效记录」与「同一意图的两种写法」）；

@@ -17,6 +17,7 @@ import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
 import { assetsStub } from "../fixtures/_assets-stub.mjs";
+import { snapshotCapabilities, restoreCapabilities } from "../fixtures/_capability-snapshot.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
@@ -399,6 +400,12 @@ async function main() {
   ];
   const sweep = () => { for (const sql of CLEANUP) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } } };
   sweep();
+  // Capture the site-wide capability rows (field_defs / post_types / theme_routes
+  // / admin_menu_registry / theme_installs.active) *after* the sweep, so the
+  // teardown restores the operator's real theme rather than this suite's
+  // fixtures. Activating `realestate` on the default site rewrites them, and the
+  // throwaway `menutest`/`widgetest` sites each get their own copy.
+  const caps = snapshotCapabilities(sqlite);
 
   // -- 1. bootstrap + login ------------------------------------------------
   console.log("1. Admin bootstrap & auth");
@@ -979,8 +986,10 @@ async function main() {
   for (const w of (leakList.items || []).filter((x) => x.title === "wtest_default_leak")) {
     await req(worker, env, `/api/v1/widgets/${w.id}?site=default`, { method: "DELETE", headers: authHeaders });
   }
-  // Leave the shared local D1 as we found it (see `sweep` above).
+  // Leave the shared local D1 as we found it: drop this run's fixtures, then put
+  // back the capability rows the activations above rewrote (see `caps`).
   sweep();
+  restoreCapabilities(sqlite, caps);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

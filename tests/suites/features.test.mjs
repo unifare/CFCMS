@@ -169,6 +169,11 @@ async function main() {
   // violation at a line that has nothing to do with the first failure. An
   // equality-only cleanup turns one honest red into a confusing second one.
   const clearRow = () => sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key LIKE 'cfpress.features%'");
+  // Snapshot the operator's own feature row first. `cfpress.features` is a
+  // person's setting, not a fixture: deleting it silently resets every switch
+  // they turned on, and the row only *looks* like suite state because the suite
+  // rewrites it. Restore it at the end (see below).
+  const prevFeatureRows = sqlite.prepare("SELECT * FROM settings WHERE site_id='default' AND key LIKE 'cfpress.features%'").all();
   clearRow();
   sqlite.exec("DELETE FROM site_users WHERE username='features-probe'");
 
@@ -447,6 +452,13 @@ async function main() {
   });
 
   clearRow();
+  // Put the operator's feature row back (see the snapshot above).
+  for (const r of prevFeatureRows) {
+    const keys = Object.keys(r);
+    try {
+      sqlite.prepare(`INSERT INTO settings (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map((k) => r[k]));
+    } catch { /* ok */ }
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) { console.log("Failures:", failures.join(", ")); process.exit(1); }
