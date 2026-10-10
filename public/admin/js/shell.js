@@ -92,7 +92,18 @@ document.addEventListener("click", (e) => {
   const langBtn = e.target.closest("[data-ui-locale]");
   if (langBtn) {
     closeMenus();
-    awaitWrap(setUiLocale(langBtn.dataset.uiLocale).then(() => loadContext()));
+    // `awaitWrap` renders in a `finally`, so the menu closes and the header
+    // repaints whichever way this goes. A refusal has to be visible: a tick
+    // that stays put with nothing on screen is what "the language switch does
+    // nothing" looks like, and it is indistinguishable from a stale render.
+    const code = langBtn.dataset.uiLocale;
+    awaitWrap(
+      setUiLocale(code)
+        .then(() => loadContext())
+        .catch((err) =>
+          toast(t("core.msg.uiLocaleFailed", "Could not switch to {code}: {why}", { code, why: err.message }), "error")
+        )
+    );
     return;
   }
   const siteBtn = e.target.closest("[data-switch-site]");

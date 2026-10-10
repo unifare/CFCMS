@@ -6,6 +6,11 @@
  * and checks the editor's language-version bar appeared. Collects console
  * errors, page errors, failed requests and 5xx responses.
  *
+ * §8 covers the one thing no Node-level check can see: the interface-language
+ * switch has two viewers (the header dropdown ticks from module state in
+ * `js/i18n.js`, the Languages screen re-reads the server), and the question is
+ * whether they still agree *after* a save, with no page reload in between.
+ *
  * Usage:
  *   npx wrangler dev --port 47913 --ip 127.0.0.1   (in another shell)
  *   node tests/tools/_i18n-browser.cjs
@@ -250,6 +255,56 @@ function check(name, cond, detail = "") {
   await page.waitForSelector("#app-header", { timeout: 15000 });
   const en = await openEditor();
   check("and it reads English again after switching back", /\bTitle\b/.test(en) && !/标题/.test(en), en.slice(0, 220));
+
+  console.log("\n8. The interface-language switch repaints both viewers (no reload)");
+  // One server fact, two client-side readers that refresh on different paths.
+  // The header dropdown ticks from `currentLocale()` — module state in
+  // `js/i18n.js`, set only by `loadMessages()` — while this screen re-reads
+  // `GET i18n/ui-locale`. The Save button used to POST the preference itself and
+  // re-render without reloading the dictionary, so the panel said one language
+  // and the dropdown kept ticking the other until a full page reload. A Node
+  // guard can prove the code shape; only a browser can prove the screen.
+  const readTick = () =>
+    page.evaluate(() => {
+      const on = document.querySelector("#lang-menu .menu-item.active");
+      return on ? on.dataset.uiLocale : null;
+    });
+
+  await page.click('[data-nav="languages"]');
+  await page.waitForTimeout(800);
+
+  const opts = await page.evaluate(() => [...document.querySelectorAll("#ui-locale-select option")].map((o) => o.value));
+  // The site does not serve Chinese at this point in the run (section 5
+  // disabled it) and the interface menu still offers it — that is the whole
+  // point of the two lists being separate, and it is also why the operator
+  // sees Chinese in the dropdown after disabling it as a *site* language.
+  check("the interface menu offers the bundled packs regardless of the site's languages",
+    opts.includes("zh-CN") && opts.includes("en"), opts.join(","));
+
+  const tick0 = await readTick();
+  const sel0 = await page.inputValue("#ui-locale-select");
+  check("the header and the panel agree before any change", tick0 === sel0, `tick=${tick0} select=${sel0}`);
+
+  // Drive the real button, not the API: the defect lived in its handler.
+  await page.selectOption("#ui-locale-select", "zh-CN");
+  await page.click('[data-action="save-ui-locale"]');
+  await page.waitForTimeout(1500);
+  const tick1 = await readTick();
+  const sel1 = await page.inputValue("#ui-locale-select");
+  check("the header tick follows the save with no reload", tick1 === "zh-CN", `tick=${JSON.stringify(tick1)}`);
+  check("and the panel agrees with it", sel1 === "zh-CN", `select=${JSON.stringify(sel1)}`);
+  check("the save was accepted, not a silent 4xx",
+    apiLog.some((l) => /^POST i18n\/ui-locale -> 200/.test(l)),
+    apiLog.filter((l) => l.includes("ui-locale")).join("\n       ") || "no POST seen");
+  check("the dictionary really switched with it (sidebar is Chinese)",
+    /内容|仪表盘/.test(await page.locator(".sidebar").innerText()));
+
+  await page.selectOption("#ui-locale-select", "en");
+  await page.click('[data-action="save-ui-locale"]');
+  await page.waitForTimeout(1500);
+  check("and switching back moves the tick back", (await readTick()) === "en", `tick=${JSON.stringify(await readTick())}`);
+  check("with the dictionary back in English",
+    /Posts|Dashboard/.test(await page.locator(".sidebar").innerText()));
 
   console.log("\n6. Console / network health");
   const real = problems.filter((p) => !/401/.test(p));

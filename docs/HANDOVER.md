@@ -197,6 +197,51 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
 
+**批次 18（界面语言偏好：一个写者、两个读者）—— ✅ 本轮完成**
+
+起点是用户的一句报告：**"Your interface language 是 en，但是下拉的还是勾选的 zh"**，
+以及"停用 zh-CN 后语言下拉里还是有中文"。两件事、两个答案。
+
+**先回答概念**（三个东西各管一件事，实测数字见下）：
+
+| | 管什么 | 数据源 | 停用 zh-CN 会变吗 |
+|---|---|---|---|
+| Languages → **Site languages** | 站点**对外服务**哪些语言（L0） | `i18n/locales`（`locales` 表的 enabled 行） | **会**——这是被停用的那个列表 |
+| Languages → **Your interface language** | **你**读后台用哪种语言（L2） | `GET i18n/ui-locale` → `resolveUiLocale`（用户偏好 → cookie → 站点默认 → en） | **不会**——它按用户存（`site_users.ui_lang`） |
+| 后台顶部**语言下拉** | 同 L2，只是另一个渲染位置 | `currentLocale()`（`i18n.js` 模块状态，由 `GET i18n/messages` 的 `locale` 写入） | **不会**——除非开 `ui_locale_follow_site` |
+
+实测（本地 dev，zh-CN 已从站点停用）：`GET i18n/ui-locale` → `{"locale":"en","user_preference":"en","available":["en","zh-CN"]}`；
+`GET i18n/messages` → `locale=en`，`ui_locales=[{en,English},{zh-CN,简体中文}]`。
+**"站点不服务中文、界面菜单仍然提供中文"是设计内的解耦**（§2.4）；要让界面菜单跟着站点收窄，
+开 `ui_locale_follow_site`（规则 52–55，默认关）。
+
+**然后是缺陷**（用户看到的"两个位置不一致"是真的）：
+
+| 项 | 状态 |
+|---|---|
+| 根因：Languages 屏的 Save **自己** POST `i18n/ui-locale`，再 `toast()` + `render()`，**一次字典重载都没有** | ✅ 定位 |
+| 后果：服务端已存新语言、面板重新读到新语言，而顶部下拉的勾选读的是 `i18n.js` 的**模块状态**——它只在 `loadMessages()` 里被写。于是**两个读者显示两个答案，直到整页刷新** | ✅ 复现 |
+| 为什么以前没人发现：两个端点都由同一个 `resolveUiLocale` 解析，**curl 两次都拿到正确答案**；服务端完全一致，分歧**只在浏览器里** | ✅ |
+| 修法：`setUiLocale()` 成为**唯一写者**，且**字典重载写在它内部**；Languages 屏改调它（`reloadDictionary:false` 只为省掉一次重复拉取，`loadContext()` 仍必须——菜单标签在服务端翻译） | ✅ |
+| 顺带修掉的死代码：`setUiLocale()` 原本 `catch {}` **吞掉** POST 失败，于是两个调用点的错误分支**永不可达**——"保存成功"的提示配着一个没变的语言。现在被拒（400 无语言包）**抛错**，`shell.js` 弹 toast（新键 `core.msg.uiLocaleFailed`，两包同步），Languages 屏弹对话框 | ✅ |
+| 守卫：`admin-spa` +7（→51）——**单写者扫描**（只有 `js/i18n.js` 能写这个偏好）+ 写者必须重载字典 + 运行时"保存后顶部勾选跟着走、不需要刷新" + "被拒绝时不改语言"。后两条要 fetch 桩能表达 400，为此给桩加了 `__status` 标记 | ✅ |
+| 注入场景 +3（→51）：① 屏幕自己写偏好 ② 写者不再重载字典 ③ 被拒的切换被吞掉 | ✅ |
+| 真浏览器验收 `_i18n-browser.cjs` **§8**（+8 条）：面板与顶部勾选在改动前一致 → 点 Save → **不刷新**断言勾选跟到 zh-CN + 侧栏真的变中文 + POST 是 200 → 切回 en | ✅ |
+
+**这一批的教训**：
+
+1. **"同一个事实有两个前端读者"是缺陷的温床，而它躲得过服务端的一切检查。** 服务端只有
+   一个答案，两个读者各自缓存、各自刷新，差异**只存在于渲染出来的界面里**。所以规则 67
+   把"唯一写者 + 写者自己刷新"写成硬规则：**读者可以各自缓存，写者只能有一个。**
+2. ⚠️ **反向验证注入的必须是历史真实形状，不是"看起来差不多"的形状。** §8 的第一次反向验证
+   **通过了**——因为我注入的是「自己 POST + `afterLanguageChange()`」，而
+   `afterLanguageChange()` 默认就会重载字典。真实的旧代码是「自己 POST + `toast()` + `render()`」，
+   一行重载都没有。换成真实形状后立刻红：`tick="en"` 而面板是 `zh-CN`——**与用户报告逐字一致**。
+   **注入前先 `git diff` 看一眼自己删掉的是什么。**
+3. **吞掉的错误 = 永不可达的错误分支。** `catch {}` 让两个调用点里的 `alertDialog`/`toast`
+   变成装饰，而"保存成功"的提示会盖在没变的语言上。凡是"调用方写了错误处理"的地方，
+   都要问一句：**被调用方真的会抛吗？**
+
 ### 批次 16 Track B1（块 attrs 契约）—— ✅ 本轮完成
 
 **起点是一个用户看得见、而所有守卫都看不见的缺陷**：编辑器给**所有**块写 `attrs.text`，
@@ -660,7 +705,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：25 套件 / 1348 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 26 项 / 1374 条）
+## 6. 测试与验证（当前全绿：25 套件 / 1425 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 26 项 / 1451 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -669,20 +714,20 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 111 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**规则 66 捆绑主题经 assets 分发：`BUNDLED_THEMES` ↔ `content/themes` 对齐、`public/themes` 逐文件逐字节同步、每个消费点都有兜底、上传/卸载守卫**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
+| architecture | 114 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**规则 66 捆绑主题经 assets 分发：`BUNDLED_THEMES` ↔ `content/themes` 对齐、`public/themes` 逐文件逐字节同步、每个消费点都有兜底、上传/卸载守卫**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
 | _schema-scope | 26 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
-| admin-spa | 44 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次、**内容编辑器真渲染（新条目 / 已存在条目）：排期往返 + `#locale` 只读 + 自动保存定时器起停**、**媒体屏：查询串形状与编码 + 分页算术（空 payload 不产出 NaN）+ 瓦片走共享 URL + 垃圾行不产出瓦片 + 工具栏/投放区/上传控件** |
+| admin-spa | 51 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次、**内容编辑器真渲染（新条目 / 已存在条目）：排期往返 + `#locale` 只读 + 自动保存定时器起停**、**媒体屏：查询串形状与编码 + 分页算术（空 payload 不产出 NaN）+ 瓦片走共享 URL + 垃圾行不产出瓦片 + 工具栏/投放区/上传控件**、**规则 67 界面语言偏好：单写者扫描（只有 `js/i18n.js` 能写）+ 写者自己重载字典 + 运行时"保存后顶部勾选跟着走、不需要刷新" + "被拒绝时不改语言"** |
 | template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
 | scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
-| theme-integration | 65 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
+| theme-integration | 101 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
 | locale-url | 29 | 按语言 slug 的路由/404/唯一性、hreflang、按语言 feed、切换器（规则 56–59） |
 | theme-fixture | 47 | fixture 主题的声明与模板自洽 |
 | theme-journal | 39 | journal 主题：每个声明模板真渲染 + 边界作用域（无文章/无菜单/无描述） |
 | theme-default | 52 | default 主题（墨白 MOBAI）：模板真渲染 + head 的 SEO 契约（canonical/og/hreflang/feed）+ 语言包键完整性 |
-| multisite | 91 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |
-| i18n | 66 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
+| multisite | 94 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |
+| i18n | 75 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
 | admin-contract | 51 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、**调色板下发的 attrs 契约（类型/必填/翻译标签/`itemKeys`/容器标记）**、dashboard cards 数组、设置 options 往返） |
 | **media-picker** | **31** | **统一媒体控件（批次 16 Track A3 新增）**：`mediaUrl()` 的形状与**能被读取路径解回同一个 key** / `mediaItem()` 归一化（`media_files` 行与已存值两种输入、垃圾输入拒绝）/ 坏 payload 不炸对话框 / 控件的单值与多值两种形态 + 调用方寻址透传 + 转义 / **闭环：选择器给的 URL，真实渲染器画得出图片与画廊** / 三个消费点都走共享控件 |
 | **editor-blocks** | **40** | **块 attrs 契约的往返（批次 16 Track B1 新增）**：契约良构（类型闭集合/标签/`itemKeys`）+ **契约 → 控件 → 写入的属性键 → 真实渲染器 markup** 的往返 + `required` 的语义（无 url 的图片渲染空）+ 嵌套寻址（子块按路径写入、父块不被穿透）+ **§8 反向对照**（按旧编辑器形状构造的图片/画廊/HTML 块必须渲染为空） |
@@ -692,9 +737,9 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | plugin-hooks | 32 | 插件 hook 生命周期 |
 | **plugin-pages** | **56** | **插件声明式后台页面（批次 10 新增）**：未声明页面 id 被拒（规则 50）/ 块类型闭集合（规则 49）/ `form` 块写入落到**真实物理行** / `stats` 聚合数字正确（`sum` 空集 = `null` 非 0）/ 禁用插件菜单与页面从注册表消失 / 按站点租户边界 / **§9 渲染器真渲染（读回 markup——本轮唯一一条把响应变成 HTML 再断言的守卫）** |
 | plugin-channels | 55 | 通知渠道运行时：webhook fetch 计数、claim-before-send 去重（含跨站双向）、`readChannelConfig` 只读声明过的 key |
-| **features** | **55** | **平台功能开关（批次 11 新增）**：列表与来源标注（site/var/default）/ **两层鉴权**（匿名被拒 + 非管理员 `author` 写 → 403，读只需会话）/ 保存往返 + 只落一行 + INSERT 分支 / **三层优先级逐层单独验**（站点行 > `env` var > 默认）/ 脏行降级 / 未知 key → 400 且不落库 / 屏幕接线 / UPDATE 分支（两次保存仍一行） |
+| **features** | **56** | **平台功能开关（批次 11 新增）**：列表与来源标注（site/var/default）/ **两层鉴权**（匿名被拒 + 非管理员 `author` 写 → 403，读只需会话）/ 保存往返 + 只落一行 + INSERT 分支 / **三层优先级逐层单独验**（站点行 > `env` var > 默认）/ 脏行降级 / 未知 key → 400 且不落库 / 屏幕接线 / UPDATE 分支（两次保存仍一行） |
 | theme-worker | 37 | L3 沙箱（含 WorkerStub 不可跨请求）+ **§10 功能开关反向验证：`theme_runtime_worker` 关/删/显式 false/拼错时都不加载沙箱，站点设置关能压过 var 开** |
-| launcher-parity | 57 | `cfpress.sh` ↔ `cfpress.ps1` 动作/菜单编号/套件表/退出码逐项对齐（解析结构，非 grep）+ BOM + 磁盘套件全集对齐 |
+| launcher-parity | 62 | `cfpress.sh` ↔ `cfpress.ps1` 动作/菜单编号/套件表/退出码逐项对齐（解析结构，非 grep）+ BOM + 磁盘套件全集对齐 |
 
 ⚠️ **一跑必须有摘要行**：所有套件遵循「catch 里也打印摘要、崩溃标注 `(aborted)`」——
 脚本判据统一是 `^[0-9]+ passed, [0-9]+ failed`，**匹配不到就当失败**（见「第六种假绿」）。
@@ -757,7 +802,7 @@ node tests/tools/_i18n-data-inventory.mjs    # 清点所有承载数据的声明
 
 ```bash
 npx wrangler dev --port 47913 --ip 127.0.0.1     # 另开一个 shell
-node tests/tools/_i18n-browser.cjs                     # 多语言：29 条断言（含 §7 编辑器界面语言）
+node tests/tools/_i18n-browser.cjs                     # 多语言：39 条断言（含 §7 编辑器界面语言、§8 界面语言开关）
 node tests/tools/_admin-menus-browser.cjs              # 菜单与生成式屏幕：31 条断言
 node tests/tools/_media-picker-browser.cjs             # 媒体控件 + 媒体屏：34 条断言（批次 16 A3/A4）
 node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 新功能：47 条断言
@@ -773,8 +818,10 @@ node .wrangler/eshop-verify.cjs                  # eshop 全链路 + 批次 5 �
 "昨天还好好的 URL 今天 404"）。`eshop-verify.cjs` 对此**自愈**：登录后先把界面语言
 重置为 en 再重载（`ui_lang` 按用户持久化，见坑位 23）。
 
-`_i18n-browser.cjs` 跑 31 条断言：登录 → Languages 屏（含**内置简体中文必须被列出**）→ 加语言 →
+`_i18n-browser.cjs` 跑 39 条断言：登录 → Languages 屏（含**内置简体中文必须被列出**）→ 加语言 →
 编辑器语言版本条 → 建翻译 → 删翻译 → 停用语言 → 切界面语言，并断言**零 console 错误、零失败请求、零 5xx**。
+§8 是**唯一**能看见「面板与顶部勾选是否一致」的地方：它读 `#lang-menu .menu-item.active` 的
+`data-ui-locale`，点真 Save，**不刷新**断言勾选跟着走（规则 67）。
 ⚠️ §4 需要库里有「翻译版本不完整」的文章；全新空库上没有文章时它会红（夹具前提，不是代码缺陷）。
 
 `_admin-menus-browser.cjs` 跑 31 条断言：SEO 插件菜单出现在 "Extensions" 分组 → 打开
@@ -921,7 +968,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 
 全部集中在入口的 `WINDOW_HANDLERS` 映射里，一眼可见。
 
-### 配套测试 `tests/suites/admin-spa.test.mjs`（15 条）
+### 配套测试 `tests/suites/admin-spa.test.mjs`（51 条）
 
 1. 相对 import 全部可解析；模块图无环（DFS，报出完整环路径）；无孤儿模块
 2. `window.*`：入口有 `WINDOW_HANDLERS` 映射；17 个一个不少；markup 里调用的名字全部登记过
@@ -929,6 +976,8 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 4. **真实 import 入口**（复制到临时目录加 `type: module`，用 DOM/fetch 替身）：
    启动不抛错、无未处理 rejection、17 个处理器都是函数
 5. **所有页面各真渲染一次**，断言写进 `#content` 的内容非空且不含错误面板
+6. 编辑器（新条目 / 已存在条目）、媒体屏（分页/编码/瓦片）、**规则 67 的界面语言偏好**
+   （单写者扫描 + 写者自己重载字典 + 保存后顶部勾选跟着走 + 被拒绝时不改语言）
 
 ### 真实浏览器验收（三套）
 

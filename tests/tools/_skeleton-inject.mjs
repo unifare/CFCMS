@@ -66,6 +66,13 @@ const CORE_PACK = join(ROOT, "src/platform/i18n/core-pack.ts");
 const PACKS = join(ROOT, "src/platform/i18n/packs.ts");
 const EDITOR_SCREEN = join(ROOT, "public/admin/js/screens/editor.js");
 const API = join(ROOT, "src/api.ts");
+// The admin's interface-language preference. One server fact with two
+// client-side readers — the header dropdown ticks from module state, the
+// Languages screen re-reads the server — so "one writer, and it reloads the
+// dictionary" is the invariant, and `languages.js` writing it itself is the
+// defect that made the two disagree on screen.
+const ADMIN_I18N = join(ROOT, "public/admin/js/i18n.js");
+const LANGUAGES_SCREEN = join(ROOT, "public/admin/js/screens/languages.js");
 // The deploy-time layer of the feature switches. Editing it is what an operator
 // does to turn a capability on for every site at once, so it is the half of the
 // switch definition that no source-level guard would otherwise see.
@@ -595,6 +602,44 @@ const SCENARIOS = [
     after: [''],
     runs: [["tests/suites/i18n.test.mjs", "bundled languages ship as rows for the Languages screen"]],
   },
+  // --- the interface language: one writer, two viewers ----------------------
+  {
+    // The historical defect, reproduced. The Languages screen POSTed the
+    // preference itself and re-rendered without reloading the dictionary, so
+    // the panel said `zh-CN` while the header dropdown kept ticking `en` until
+    // a full page reload. Nothing else in this repo can see that: the server
+    // answered 200, the screen rendered, the request succeeded. The only
+    // observer is the single-writer scan, so it is what has to be pinned.
+    label: "the Languages screen writes the interface-language preference itself",
+    file: LANGUAGES_SCREEN,
+    before: ["      await setUiLocale(locale);\n"],
+    after: [
+      '      await api("i18n/ui-locale", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locale }) });\n',
+    ],
+    runs: [["tests/suites/admin-spa.test.mjs", "only js/i18n.js writes the interface-language preference"]],
+  },
+  {
+    // The other half of the same invariant, and the half a single-writer scan
+    // cannot see: the writer is still the only one, and it no longer refreshes
+    // the dictionary. That is precisely the original bug with the write moved
+    // into the right module — the tick stays stale after a successful save.
+    label: "the interface-language writer stops reloading the dictionary",
+    file: ADMIN_I18N,
+    before: ["  await loadMessages();\n}"],
+    after: ["  // reload dropped\n}"],
+    runs: [["tests/suites/admin-spa.test.mjs", "and that one writer reloads the dictionary itself"]],
+  },
+  {
+    // A refused switch that resolves quietly is a screen reporting success
+    // while nothing changed — the shape this repo keeps fixing. Both callers
+    // now branch on the rejection (`shell.js` toasts, the Languages screen
+    // opens a dialog), and both branches are dead code if this swallow returns.
+    label: "a refused interface language is swallowed instead of thrown",
+    file: ADMIN_I18N,
+    before: ["  if (!res.ok) {"],
+    after: ["  if (false) {"],
+    runs: [["tests/suites/admin-spa.test.mjs", "a refused interface language rejects instead of reporting success"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -613,6 +658,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
+  ADMIN_I18N, LANGUAGES_SCREEN,
   BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK, API, WRANGLER])];
 
 function hashAll() {

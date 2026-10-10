@@ -120,14 +120,41 @@ export async function loadMessages() {
  * Switch the interface language: persist the preference server-side, load the
  * dictionary for it, and remember it locally. The caller re-renders (and
  * re-fetches the menu context, because labels are translated server-side).
+ *
+ * ⚠️ **This is the only writer of the preference, and the dictionary reload
+ * belongs inside it.** The fact has two client-side readers that refresh on
+ * different paths: the header switcher ticks from `currentLocale()` — module
+ * state, set only by `setMessages()` — while the Languages screen re-reads
+ * `GET i18n/ui-locale` from the server. A caller that POSTs the preference
+ * itself updates the server and leaves the tick on the old language until a
+ * full page reload, i.e. the two disagree on screen with nothing to explain
+ * it. Keeping the write and the reload in one function is what makes that
+ * impossible to reintroduce; a caller can still forget to *render*.
+ *
+ * A refusal **throws**. The server rejects a locale with no pack (400 + the
+ * list it does have), and swallowing that reported success while nothing
+ * changed — the "declared but never consumed" shape this repo keeps fixing.
+ * Both callers handle it: `shell.js` toasts, the Languages screen opens a
+ * dialog.
  */
 export async function setUiLocale(loc) {
+  let res;
   try {
-    await fetch("/api/v1/i18n/ui-locale", {
+    res = await fetch("/api/v1/i18n/ui-locale", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ locale: loc }),
     });
-  } catch { /* the GET below still switches this session */ }
+  } catch {
+    throw new Error("the request could not be sent");
+  }
+  if (!res.ok) {
+    let why = `HTTP ${res.status}`;
+    try {
+      const d = await res.json();
+      if (d && d.error) why = String(d.error);
+    } catch { /* not a JSON error body — the status is all we have */ }
+    throw new Error(why);
+  }
   await loadMessages();
 }

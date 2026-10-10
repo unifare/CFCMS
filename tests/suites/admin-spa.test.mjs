@@ -406,7 +406,15 @@ try {
   };
   globalThis.fetch = async (url, init) => {
     const path = String(url).replace(/^https?:\/\/[^/]+/, "").split("?")[0];
-    if (routeTable.has(path)) return { ok: true, status: 200, json: async () => routeTable.get(path) };
+    if (routeTable.has(path)) {
+      // A route may pin a status (`{ __status: 400, error: … }`) so a caller's
+      // *failure* path is reachable from here. Without it every route answers
+      // 200, and "the refusal is loud and changes nothing" cannot be observed
+      // at all — the stub would be the reason the guard is vacuous.
+      const body = routeTable.get(path);
+      const status = Number(body && body.__status) || 200;
+      return { ok: status >= 200 && status < 300, status, json: async () => body };
+    }
     if (init && String(init.method || "GET").toUpperCase() !== "GET") return { ok: true, status: 200, json: async () => ({ ok: true }) };
     return { ok: true, status: 200, json: async () => ({ user: null }) };
   };
@@ -653,6 +661,96 @@ if (modules && !bootError) {
     mediaHtml.includes('id="media-q"') && mediaHtml.includes('id="media-type"'), mediaHtml.slice(0, 200));
   check("a drop zone and an upload control", mediaHtml.includes('id="media-drop"') && mediaHtml.includes('id="upload"'));
   check("and says the library is empty", mediaHtml.includes('class="empty"'));
+}
+
+// ---------------------------------------------------------------------------
+section("The interface language has exactly one writer, and it repaints both viewers");
+// ---------------------------------------------------------------------------
+//
+// One server fact, two client-side readers that refresh on different paths:
+//
+//   * the header switcher ticks from `currentLocale()` — module state in
+//     `js/i18n.js`, set only by `setMessages()`, i.e. by `loadMessages()`;
+//   * the Languages screen re-reads `GET i18n/ui-locale` from the server.
+//
+// The screen used to POST the preference itself and re-render without
+// reloading the dictionary, so after saving, the panel said `zh-CN` while the
+// top dropdown still ticked `en` — until a full page reload, which is why it
+// survived every earlier check here. The defect is a *second writer*, so the
+// guard is a scan for one, plus a runtime check that the one writer moves the
+// tick without a reload.
+
+const WRITE_VERBS = ["POST", "PUT", "PATCH", "DELETE"];
+const localeWriters = [];
+for (const f of jsFiles) {
+  const src = stripComments(read(f));
+  for (const m of src.matchAll(/i18n\/ui-locale/g)) {
+    // The options object follows the path in both shapes — the raw `fetch` and
+    // the `api()` wrapper — so a short window after the match sees the verb.
+    const verb = src.slice(m.index, m.index + 160).match(/method:\s*"([A-Z]+)"/);
+    if (verb && WRITE_VERBS.includes(verb[1])) localeWriters.push(rel(f));
+  }
+}
+check(
+  "only js/i18n.js writes the interface-language preference",
+  localeWriters.length > 0 && localeWriters.every((f) => f === "public/admin/js/i18n.js"),
+  localeWriters.length
+    ? `writers found: ${[...new Set(localeWriters)].join(", ")} — a second writer leaves the header tick stale`
+    : "no writer found anywhere: the scan is broken, not the code"
+);
+
+const i18nSrc = stripComments(read(join(ADMIN, "js/i18n.js")));
+check(
+  "and that one writer reloads the dictionary itself",
+  /export async function setUiLocale[\s\S]*?await loadMessages\(\)/.test(i18nSrc),
+  "setUiLocale() must end with `await loadMessages()` — a caller cannot be trusted to remember it, and forgetting it is the original bug"
+);
+
+if (modules && !bootError) {
+  const i18n = await import(pathToFileURL(join(tmpDir, "js/i18n.js")).href);
+  const { state } = modules.state;
+  const { render } = modules.shell;
+
+  state.user = { username: "admin", role: "admin" };
+  state.sites = [{ id: "default", name: "Default Site", is_default: 1 }];
+  state.site = "default";
+  state.page = "dashboard";
+  state.editing = null;
+
+  /** The language the header dropdown currently ticks. */
+  const tick = () => modules.state.app.innerHTML.match(/class="menu-item active"\s+data-ui-locale="([^"]+)"/)?.[1] ?? null;
+
+  routeTable.set("/api/v1/i18n/messages", { locale: "en", messages: { "core.nav.dashboard": "Dashboard" } });
+  await i18n.loadMessages();
+  await render();
+  check("the header ticks the dictionary's language to begin with", tick() === "en", `tick=${JSON.stringify(tick())}`);
+
+  // The write path the Languages screen's Save button now takes.
+  routeTable.set("/api/v1/i18n/messages", { locale: "zh-CN", messages: { "core.nav.dashboard": "仪表盘" } });
+  await i18n.setUiLocale("zh-CN");
+  await render();
+  check(
+    "saving a new interface language moves the header tick with no reload",
+    tick() === "zh-CN",
+    `tick=${JSON.stringify(tick())} after saving zh-CN — the two viewers disagree`
+  );
+  check("and the dictionary really switched with it", i18n.currentLocale() === "zh-CN", `locale=${JSON.stringify(i18n.currentLocale())}`);
+
+  // A refused switch must be loud and must change nothing. The server answers
+  // 400 for a locale with no pack; the messages route deliberately keeps
+  // serving the old locale, because that is what a refused preference means —
+  // the server's answer is unchanged, so nothing about this session should be.
+  routeTable.set("/api/v1/i18n/ui-locale", { __status: 400, error: 'no interface pack for "xx"', available: ["en", "zh-CN"] });
+  let refusal = null;
+  try { await i18n.setUiLocale("xx"); } catch (e) { refusal = e; }
+  check(
+    "a refused interface language rejects instead of reporting success",
+    refusal !== null && /no interface pack/.test(refusal.message),
+    refusal ? `message=${JSON.stringify(refusal.message)}` : "resolved with no error — the caller's error path is unreachable"
+  );
+  await render();
+  check("and leaves the interface language where it was", tick() === "zh-CN", `tick=${JSON.stringify(tick())}`);
+  routeTable.delete("/api/v1/i18n/ui-locale");
 }
 
 if (tmpDir) {

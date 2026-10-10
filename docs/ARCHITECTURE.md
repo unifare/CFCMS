@@ -266,6 +266,7 @@ plugin.{slug}.*   插件文案              plugin.seo.meta.title
 > - **可切换的界面语言列表是数据驱动的**：= 内置核心包（`CORE_PACKS`，保证完整）∪ 平台语言字典 enabled 项（`locales` 表，Languages 屏写入）∪ 覆盖层出现过的 locale。唯一定义在 `packs.ts` 的 `availableUiLocaleEntries()`，同时充当切换列表（`i18n/messages` 的 `ui_locales`）与 `ui-locale` 的校验集（`availableUiLocales`）。**添加一门界面语言是 Languages 屏上的数据操作，不改任何代码**——没有翻译的 key 由 SPA `t()` 的英文 fallback 兜底，翻译随后通过覆盖层（`i18n/overrides`）补齐。SPA 只从 `ui_locales` 派生（`i18n.js setUiLanguages()`，en 恒第一），任何一侧都不硬编码语言清单（AGENTS.md 规则 40）。
 > - **站点语言的可选项也必须包含内置包**：`i18n/locales` 响应里的 `core_entries`（= `CORE_PACK_LOCALES` 的行视图，`core-pack.ts`）是 Languages 屏「Platform dictionary — not enabled here」面板的第二来源。该面板原本只列平台字典（`locales` 表），而全新安装只种了 `en` 一行——于是**每次新部署这个面板都是空的**，管理员只能把 `zh-CN` 手打进对话框，而平台其实一直带着完整的简体中文包。同文件的 `core_locales`（纯代码）长期**无人消费**，正是「声明先于运行时」的形状；`i18n` 套件现在同时钉住两个视图的集合相等。
 > - **SPA 侧**只有一个叶子模块 `public/admin/js/i18n.js`：`t(key, fallback)`（字典值 → 英文 fallback → key 本身，**永不空白**）、`loadMessages()`（`GET /api/v1/i18n/messages`，一次拿全合并字典）、`setUiLocale(loc)`（`POST /api/v1/i18n/ui-locale` 持久化到 `site_users.ui_lang` + 重新拉字典）。字典缓存在 localStorage，**登录屏**在能发认证请求之前就用上次的语言渲染。
+> - ⚠️ **`setUiLocale()` 是界面语言偏好的唯一写者，而且字典重载写在它内部**（规则 67）。这个事实有**两个前端读者、两条刷新路径**：后台顶部语言下拉的勾选读 `currentLocale()`（`i18n.js` 的模块级状态，只由 `setMessages()` 设置），而 Languages 屏每次挂载都重新读 `GET i18n/ui-locale`。Languages 屏的 Save 曾经**自己** POST 偏好再 `render()`，不重载字典——于是面板显示新语言、顶部下拉还勾着旧语言，**直到整页刷新**。服务端两个端点都由同一个 `resolveUiLocale` 解析、返回同一个值，所以这个分歧**只能在浏览器里看见**（`_i18n-browser.cjs` §8）。
 > - **`ui_locale_follow_site` 开关（规则 52–55，默认关）可以反转上面那条解耦**：打开后，界面语言菜单只列**本站启用的语言**。它必须实现在 `packs.ts availableUiLocaleEntries()` 里，**不能放在 SPA**——同一个数组既是切换列表又是 `ui-locale` 的校验集，在服务端过滤才保得住"菜单给的 = 服务器收的"这条不变式；放前端会留下"服务器仍接受菜单不再展示的语言"。站点一门语言都没有时（pre-0011 库）回落到完整列表，绝不返回空菜单。
 > - **界面语言按用户持久化**（`site_users.ui_lang`，批次 2 的列），所以**换浏览器也保持**——这也是浏览器验收脚本必须在登录后显式重置语言的原因（见 HANDOVER 坑位 23）。
 > - **菜单标签的翻译消费点在服务端**：`GET /api/v1/admin-menus` 用 `resolveUiLocale` + `loadUiPacks` + `mergePacks` 解析字典，行的 `label_key` 命中字典就替换 `label`，未命中保留原文；响应带 `ui_locale`。SPA 切语言 = `setUiLocale → loadContext() → render()`，**不做任何前端二次翻译**——同一个答案只有一处定义。`label_key` 的前缀校验见 §3.5 与 AGENTS.md 规则 13d。
@@ -2153,6 +2154,22 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
       守卫读 `BUNDLED_THEMES`，不许抄一份名单）
    反向验证：`_skeleton-inject.mjs`（删兜底 / 两棵树漂移 → 对应断言必须变红）；
    行为验证：`theme-integration.test.mjs` §10（空 R2 仍渲染 `home`，非 `__fallback__`）
+
+【界面语言偏好：一个写者、两个读者】（AGENTS.md 规则 67）
+67. 界面语言偏好（`site_users.ui_lang`）的**唯一写者**是 `public/admin/js/i18n.js` 的
+    `setUiLocale()`；**任何屏幕都不得自己 POST `i18n/ui-locale`**
+   a) 字典重载（`await loadMessages()`）**写在 `setUiLocale()` 内部**，调用方不得依赖
+      自己记得重载——这个偏好有**两个前端读者**：顶部下拉的勾选读 `currentLocale()`
+      （模块状态，只由 `setMessages()` 写），Languages 屏每次挂载读 `GET i18n/ui-locale`
+   b) 被拒绝的切换（400：没有对应语言包）**必须抛出**：两个调用点各自处理
+      （`shell.js` 弹 toast、Languages 屏弹对话框）。`catch {}` 会让这两处变成死代码，
+      而"保存成功"的提示会盖在一个没变的语言上
+   c) 注入/反向验证时必须注入**历史真实形状**：旧代码是「自己 POST + `toast()` +
+      `render()`」，**不是**「自己 POST + `afterLanguageChange()`」——后者默认就会重载字典，
+      于是注入会**假绿**（实测踩到）
+   守卫：`admin-spa.test.mjs`（单写者扫描 + 写者必须重载 + 运行时"保存后勾选跟着走、
+   不需要刷新" + "被拒绝时不改语言"）；注入场景 `_skeleton-inject.mjs`（3 个）；
+   真浏览器 `_i18n-browser.cjs` §8（Node 守卫只能证代码形状，**证不了两个读者在浏览器里一致**）
 ```
 
 ---

@@ -18,7 +18,7 @@
  */
 import { api, loadContext, state } from "../state.js";
 import { pageHead, render } from "../shell.js";
-import { loadMessages } from "../i18n.js";
+import { loadMessages, setUiLocale } from "../i18n.js";
 import { icon } from "../../icons.js";
 import { alertDialog, attr, confirmDialog, emptyRow, esc, openDialog, toast } from "../../ui.js";
 
@@ -30,13 +30,20 @@ import { alertDialog, attr, confirmDialog, emptyRow, esc, openDialog, toast } fr
  * refreshing it left the editor believing the site was still monolingual: the
  * bar simply never appeared, and nothing on screen explained why. The switch is
  * admin-wide state, so every mutation of it has to go through here.
+ *
+ * Also the refresh path for the *interface* language, which is why
+ * `reloadDictionary` exists: `setUiLocale()` already reloads the dictionary for
+ * the new locale, so that caller passes `false` rather than fetching it twice.
+ * What neither can skip is `loadContext()` — menu labels are translated
+ * server-side, so the sidebar keeps the old language until the context is
+ * re-read.
  */
-async function afterLanguageChange() {
+async function afterLanguageChange({ reloadDictionary = true } = {}) {
   await loadContext();
   // The UI-language switcher list is data-driven (AGENTS.md rule 40): a newly
   // added language must reach `UI_LANGUAGES` immediately, not after the next
   // full page load.
-  await loadMessages();
+  if (reloadDictionary) await loadMessages();
   render();
 }
 
@@ -125,7 +132,10 @@ export default async function languages(c) {
     <div class="card-title">Your interface language</div>
     <p class="muted text-sm" style="margin:.35rem 0 .75rem">
       Applies to the admin only, and only to you. It is deliberately not tied to the
-      site's languages — managing an English-only site in Chinese is fine.
+      site's languages — managing an English-only site in Chinese is fine, so this menu
+      is the admin's own list and not the table above. To offer <b>only this site's
+      languages</b> here instead, turn on <code>ui_locale_follow_site</code> under
+      Tools → Features.
     </p>
     <div class="row" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
       <select id="ui-locale-select" class="input" style="max-width:14rem">${uiOptions}</select>
@@ -260,13 +270,16 @@ document.addEventListener("click", async (e) => {
     const locale = sel ? sel.value : "";
     if (!locale) return;
     try {
-      await api("i18n/ui-locale", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale }),
-      });
+      // ⚠️ `setUiLocale()` is the **only** writer of this preference, and this
+      // used to POST here directly instead. That left `i18n.js`'s module-level
+      // locale on the *old* value, and the header switcher renders its tick
+      // from it (`nav.js` → `currentLocale()`), so the two disagreed: this
+      // panel re-read the server and showed the new language, while the top
+      // dropdown kept ticking the old one until a full page reload. Same write,
+      // two refresh paths, one of them missing.
+      await setUiLocale(locale);
+      await afterLanguageChange({ reloadDictionary: false });
       toast("Interface language saved");
-      render();
     } catch (err) {
       await alertDialog({ title: "Could not save", description: err.message });
     }
