@@ -442,10 +442,14 @@ export async function buildScope(
   // The language switcher. Locale parsing goes through `resolveLocale` (rule
   // 56 — one definition), and the entries are built only from the locales this
   // site declares (rule 59 — no site-blind fallback).
+  //
+  // ⚠️ Read `post.alternates` *here*, while its URLs are still relative: the
+  // hreflang block below replaces the property with origin-prefixed copies, so
+  // reading it after that would put absolute URLs into the theme's nav.
   const langNavRows = langNav(ls as any[], o.locale, resolveLocale(o.path, {
     codes: ((ls as any[]) ?? []).map((l) => String(l?.code ?? "")).filter(Boolean),
     defaultLocale: siteDefault,
-  }).rest);
+  }).rest, (o.post as any)?.alternates);
   // One entry is not a switcher — a monolingual site gets no `lang_nav` at all
   // rather than a control that points at the page it is already on.
   const navItems = (items as any[]).map((i) => ({

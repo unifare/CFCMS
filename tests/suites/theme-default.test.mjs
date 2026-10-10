@@ -108,6 +108,15 @@ async function main() {
   check("validateManifest does not throw", error, null);
   check("every declared template is shipped", themeManifestProblems(root).filter((p) => p.includes(`/${THEME}`)), []);
   check("language packs are namespaced", langPackProblems(root).filter((p) => p.includes(`/themes/${THEME}/`)), []);
+  // `locales: ["zh-CN","en"]` is what makes this a Chinese theme, and until now
+  // nothing read it: a declared locale with no `langs/{code}.json` renders every
+  // `{{default(theme.strings.x, "English literal")}}` as the literal, so the
+  // "Chinese version" would silently be the English one.
+  check(
+    "every locale the manifest declares ships a language pack",
+    themeManifestProblems(root).filter((p) => p.includes(`/${THEME}`) && p.includes("declares locale")),
+    []
+  );
   // The chips and the tag cloud read these two fields off each post. A theme
   // that renders a category label without declaring the field would show
   // "未分类" forever and nobody would know why.

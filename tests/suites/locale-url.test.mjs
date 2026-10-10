@@ -153,7 +153,7 @@ function buildThemeZip() {
     "theme.json": strToU8(JSON.stringify(manifest, null, 2)),
     "templates/index.html": tpl(`<h1>LOCURL-INDEX</h1><span id="langnav">{{#each lang_nav as l}}<a class="lnav{{#if l.current}} on{{/if}}" href="{{l.url}}">{{l.code}}</a>{{/each}}</span><span class="locale">{{locale}}</span>`),
     "templates/page.html": tpl(`<h1 class="page-title">{{page.title}}</h1>`),
-    "templates/single.html": tpl(`<h1 class="single-title">{{post.title}}</h1><span id="alts">{{#each post.alternates as alt}}<a class="alt" data-locale="{{alt.locale}}"{{#if alt.default}} data-default="1"{{/if}} href="{{alt.url}}">{{alt.locale}}</a>{{/each}}</span>`),
+    "templates/single.html": tpl(`<h1 class="single-title">{{post.title}}</h1><span id="alts">{{#each post.alternates as alt}}<a class="alt" data-locale="{{alt.locale}}"{{#if alt.default}} data-default="1"{{/if}} href="{{alt.url}}">{{alt.locale}}</a>{{/each}}</span><span id="single-langnav">{{#each lang_nav as l}}<a class="slnav{{#if l.current}} on{{/if}}" href="{{l.url}}">{{l.code}}</a>{{/each}}</span>`),
     "templates/archive.html": tpl(`<h1>LOCURL-ARCHIVE</h1>`),
     "templates/404.html": tpl(`<h1>LOCURL-404</h1>`),
     "langs/en.json": strToU8(JSON.stringify({ [`theme.${THEME}.title`]: "URLs" })),
@@ -270,6 +270,21 @@ async function main() {
     "switcher offers every enabled locale at the same path",
     lnav.map((l) => `${l.code}:${l.url.replace("http://localhost", "")}${l.on ? "*" : ""}`).sort(),
     [`en:/en*`, `zh-CN:/zh-CN`].sort()
+  );
+
+  // A listing has one path and several translations of it, so swapping the
+  // locale segment is right there. An *article* does not: migration 0016 made
+  // the slug per language, so `/en/blog/<zh-slug>` is a 404 and the switcher
+  // would offer a dead link on every translated piece. The page already knows
+  // each version's own URL (`post.alternates`, which is what hreflang prints),
+  // so the switcher has to read it rather than guess.
+  const zhPostHtml = await (await req(worker, env, `/zh-CN/blog/${PREFIX}ni-hao`)).text();
+  const slnav = [...zhPostHtml.matchAll(/<a class="slnav( on)?" href="([^"]+)">([^<]+)<\/a>/g)]
+    .map((m) => ({ code: m[3], url: m[2], on: Boolean(m[1]) }));
+  check(
+    "the switcher on an article points at each language's own slug",
+    slnav.map((l) => `${l.code}:${l.url.replace("http://localhost", "")}${l.on ? "*" : ""}`).sort(),
+    [`en:/en/blog/${PREFIX}hello`, `zh-CN:/zh-CN/blog/${PREFIX}ni-hao*`].sort()
   );
 
   // -- 4. sibling-row: the translations endpoint ---------------------------

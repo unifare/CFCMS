@@ -331,6 +331,15 @@ KV 镜像在免费计划上纯属写入放大器。这类能力一律走**开关
 feed/hreflang 把别的站点的语言列出去是同样的病。守卫在
 `tests/suites/architecture.test.mjs`（四道，具名），注入验证在 `tests/tools/_locale-url-inject.mjs`。
 
+**切换器在列表页和文章页不是同一件事（规则 58 的推论）**：列表页一个路径对多语言，
+所以「换掉 locale 段」是对的；文章页不是——slug 按语言，`/en/blog/<zh-slug>` 是 404。
+`langNav()`（`src/platform/frontend.ts`）因此接收 `post.alternates`：有该语言版本就用**它自己的 URL**，
+没有才退回换段（退回后的 404 是实话，因为那篇确实没有那个语言的版本）。
+⚠️ `buildScope` 必须在 `post.alternates` **还是相对路径时**读取它——
+hreflang 那一段会把该属性整体替换成带 origin 的副本，之后读就会把绝对 URL 塞进主题导航。
+具名断言「the switcher on an article points at each language's own slug」在
+`tests/suites/locale-url.test.mjs`，注入场景在 `tests/tools/_skeleton-inject.mjs`。
+
 **一键门禁**：`npm run gate` = 架构测试 + 清单校验 + schema 作用域 + locale-url 注入（全为可移植的
 node 直调）。它**不含** `tsc --noEmit`——因为 lib.dom 与 workers-types 的既有上游冲突会淹没退出码——
 所以推送前的完整纪律是 **`tsc --noEmit`（src/ 0 错误）+ `npm run gate`**；红灯的提交不许推。
@@ -894,6 +903,7 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 | 22 | `routes[].resolve` 必须**恰好**声明 `type` 或 `table` **之一**——两个都写抛错，一个都不写也抛错 |
 | 23 | `routes[].resolve.by` 只能是 `"slug"` 或 `"id"` |
 | 24 | `routes[].query.as` 必须是合法的**模板作用域名**（`SCOPE_NAME_RE` = `[A-Za-z_$][A-Za-z0-9_$]*`），**不能带连字符** |
+| 25 | `locales[]` 里声明的每种语言**必须**有 `content/themes/<name>/langs/<code>.json`（反向不强制：可以有语言包而没声明） |
 
 **理由**：清单是主题唯一能出错的地方，那就在这里出错。放行会变成渲染期的报错，
 而那个报错会指向渲染器，不指向清单——排查成本高一个数量级。
@@ -906,6 +916,18 @@ const closes = (src.match(/\{\{\/section\}\}/g) ?? []).length;   // 数的是原
 校验器认它、架构测试认它，前台却按 `kind` 猜模板、按 `postType` 猜内容，
 于是**页面返回 200 而内容是错的**——最贵的一类 bug。判据是：
 **一个字段被写进校验器还不够，必须找到它的消费点**；找不到就别加这个字段。
+
+**规则 25 是同一个家族的最后一条，而且它是被一句注释暴露的**：`scripts/make-theme.mjs`
+的清单里一直写着「Declares which languages this theme ships packs for. The architecture test
+checks it against `langs/` so "declared but not shipped" fails loudly.」——**那个检查从来没存在过**。
+`locales[]` 只被 `contract/validation.ts` 校验了 BCP-47 形状，`src/` 里**没有任何消费点**。
+后果是：一个主题可以声明自己有中文版却没有 `langs/zh-CN.json`，于是模板里每一条
+`{{default(theme.strings.x, "English literal")}}` 都渲染成英文——**"漏了翻译"和"根本没做翻译"
+在页面上、在其余所有测试里都长得一模一样**。
+教训与上一条同源但更尖锐：**写在注释里的规则不是规则**。注释说"架构测试会检查"，
+读的人就不再检查了——这比没有注释更糟。守卫在 `themeManifestProblems()`
+（`tests/fixtures/_extension-rules.mjs`），因此 `architecture`、`theme-default`、`theme-fixture`
+与 `scaffold` 四个套件同时看得见它。
 
 **规则 24 为什么不能用连字符**：`query.as` 会成为模板里的作用域变量名，而表达式分词器
 按 `[A-Za-z_$][A-Za-z0-9_$]*` 切标识符。`my-list` 是合法 JS 属性名，但在模板里

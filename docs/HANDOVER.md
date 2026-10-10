@@ -1,7 +1,8 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-10-10 (GMT+8) ｜ 交接基线：**批次 20 —— journal 主题从产品移除 + 测试夹具主题不再被发布到线上**
-> （批次 19 主题卸载：读错层级 + 不可能成功的按钮；批次 18 界面语言偏好：一个写者两个读者；
+> 更新时间：2026-10-10 (GMT+8) ｜ 交接基线：**批次 21 —— 默认主题的中文版与切换器、文章页切换器读翻译自己的 URL、中英双语演示内容、规则 25**
+> （批次 20 journal 主题从产品移除 + 测试夹具主题不再被发布到线上；
+> 批次 19 主题卸载：读错层级 + 不可能成功的按钮；批次 18 界面语言偏好：一个写者两个读者；
 > 批次 16 Track 0 + B1 + A3 + B3 媒体隔离 / 块 attrs 契约 / 统一媒体控件 / 编辑器界面翻译；
 > 批次 15 数据驱动后台；批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；
 > 批次 13 mobai 主题 + RSS；批次 12 写入路径修复 + journal 主题；批次 11 平台功能开关。
@@ -199,7 +200,68 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
 
-**批次 20（journal 从产品移除 + 测试夹具主题不再被发布）—— ✅ 本轮完成**
+**批次 21（中文版 / 切换器 / 中文内容）—— ✅ 本轮完成**
+
+起点是用户的一句话：**"默认主题要加入中文的版的和切换的地方。和中文的文章和页面"**。
+先量后动，量出来的结论是：**前两件已经在产品里了，第三件真的没有。**
+
+| 检查项 | 线上 | 本地（改动前） |
+|---|---|---|
+| 语言切换器 | **已有** `<nav class="lang-nav">en / zh-CN</nav>` | **不显示** |
+| 中文主题文案 | **已生效**（`首页`/`文章`/`专题`/`订阅`） | — |
+| `/zh-CN` | 200 | **404** |
+| 文章 / 页面 | **0 篇**（"还没有发布任何内容"） | 0 篇（只有测试套件残留） |
+
+语言包逐键比对：`en.json` 56 键 / `zh-CN.json` 56 键，无缺键、无多键，
+模板用到的 56 个键**全部命中**（唯一同值项 `footer.robots` = `robots.txt`，属正确）。
+**所以"中文的版"和"切换的地方"不缺代码，缺的是数据。**
+
+| 项 | 结论 |
+|---|---|
+| 切换器为什么不显示 | `siteLocales()` 的 SQL 是 `WHERE sl.site_id=? AND sl.enabled=1`。本地 `site_locales` 里 `zh-CN` 是 `enabled=0` → 平台只拿到 1 项 → **按设计不给 `lang_nav`**（一项不是切换器） |
+| 线上为什么有 | 线上两个语言都是 enabled，所以切换器一直是对的 |
+| **真正的缺口** | **没有任何内容**。`scripts/seed-demo-content.mjs` 只写 `locale:"en"` |
+| **切换器的真缺陷** | 它**只换 locale 段**。列表页对（一个路径多份翻译），**文章页错**——migration 0016 起 slug 按语言，`/en/blog/<zh-slug>` 是 404。`post.alternates` 早就算好了每个语言自己的 URL（hreflang 在用），切换器却没读 |
+
+**改了什么**
+
+1. `langNav()`（`src/platform/frontend.ts`）新增可选参数 `alternates`：有该语言版本就用**它自己的 URL**，
+   没有才退回换段。`buildScope` 传入 `post.alternates`，且**必须在 hreflang 那一段把该属性换成
+   带 origin 的副本之前**读——注释写在这里，因为顺序错了不会报错，只会把绝对 URL 塞进导航。
+2. `scripts/seed-demo-content.mjs` 重写为**双语播种**：5 篇文章 + 关于页，每篇写两次、
+   同一个 post id（共享行形态），中英各用自己的 slug，中英各自成篇（不是把英文正文抄一遍——
+   抄一遍能过所有结构断言却什么也证明不了）。
+3. 规则 25 落地：`locales[]` 声明的每种语言**必须**有 `langs/<code>.json`。
+   这条规则**是被一句注释暴露的**——`scripts/make-theme.mjs` 的清单里一直写着
+   "The architecture test checks it against `langs/` so 'declared but not shipped' fails loudly"，
+   而**那个检查从来没存在过**。`locales[]` 只被校验了 BCP-47 形状，`src/` 里没有任何消费点。
+4. 数据侧：本地启用 `zh-CN`（`POST i18n/locales`）、清掉套件残留的测试站点与内容、
+   重新激活 `default` 主题（`field_defs` 才会重新登记 `category`/`tags`）。
+
+**本轮学到的两条（都是"看起来对了"的形状）**
+
+- **写在注释里的规则不是规则，而且比没有注释更糟**：注释说"架构测试会检查"，
+  读的人就不再检查了。规则 25 就这样缺席了整整一批。
+- **`savePost` 会静默丢掉未声明的 meta**（`.catch(()=>{})` + `fieldExists` 判据）。
+  本地 `field_defs` 被套件清空后，播种照样 **12 次 200**，而 `post_meta` 一行没写、
+  页面分类标签全是"未分类"。**HTTP 200 再一次和"写进去了"无关。**
+
+**仍未修（本轮实测，未动）**
+
+- **列表页没有 `reading_time`**：`runThemeQuery` 给了 `date_display` 和 `cover`，
+  唯独没给 `reading_time`（单篇由 `findContent` 给）。首页/归档/索引模板里
+  `{{#if post.reading_time}}` 的位置因此**恒空**，中英一致。**没顺手改**是因为
+  列表最多 100 行，逐行 `renderBlocks` 去算时长会撞免费计划 **10ms CPU** 的天花板。
+- **`post_meta` 没有语言维度**（`PRIMARY KEY(post_id, meta_key)`）：分类/标签跨语言共享，
+  所以中文页的分类标签是英文的。本轮的取舍是**共享字段按站点默认语言写**
+  （否则默认语言那一侧反而坏了），并把这个限制写进播种脚本的头部注释。
+  真正的修法是给 `post_meta` 加 locale 维度（`docs/design/MEDIA-EDITOR-PLAN.md` 的 B5）。
+
+**新基线**：**25 套件 + `_schema-scope`，1427 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
+`_skeleton-inject` **57 场景 / 0 问题**（本轮新增 2 条，各配一个注入场景）；
+`_locale-url-inject` 4/4；`_config-parity` 7/7。
+
+**批次 20（journal 从产品移除 + 测试夹具主题不再被发布）—— ✅ 已完成**
 
 起点是用户的两句话：**"Journal 这个是什么。要删除。另外 fixture 是什么鬼"**。
 第一句是产品决定，第二句在查证时翻出一个**真的线上泄漏**。

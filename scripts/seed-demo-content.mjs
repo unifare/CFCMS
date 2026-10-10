@@ -7,16 +7,41 @@
  * leaves the old render in place and you end up staring at stale pages
  * wondering why your content edit had no effect.
  *
+ * Every piece is written **twice, against the same post id**: once as the
+ * default language and once as `zh-CN`. That is the shared-row storage shape —
+ * one `posts` row carrying several `post_translations` rows — which is what
+ * makes the two versions alternates of each other. It is what the language
+ * switcher and the `hreflang` block read, so seeding a second language any
+ * other way produces a site whose languages do not know about one another.
+ *
+ * ⚠️ Each language gets **its own slug** (migration 0016). The switcher on an
+ * article therefore cannot swap the locale segment — it reads each version's
+ * own URL out of `post.alternates`. Seeding the same slug for both languages
+ * would hide that behaviour rather than exercise it.
+ *
+ * ⚠️ `category` and `tags` are the exception, and they are written **once, in
+ * the default language**. `post_meta` is `PRIMARY KEY(post_id, meta_key)` with
+ * no locale column, so a value there is shared by every language of that post;
+ * translating it is not possible today. A field the platform stores once per
+ * post is written in the site's default language — otherwise the default
+ * language is the one that looks broken.
+ *
  * Local dev only. Usage: node scripts/seed-demo-content.mjs
+ * Against a deployment: CFP_BASE=https://your.workers.dev node scripts/seed-demo-content.mjs
  */
 const BASE = process.env.CFP_BASE || "http://127.0.0.1:47913";
 const USER = process.env.CFP_USER || "admin";
 const PASS = process.env.CFP_PASS || "change-me-now";
+const SITE = process.env.CFP_SITE || "default";
+/** The language this script seeds as the site default, and the second one. */
+const DEFAULT_LOCALE = "en";
+const SECOND_LOCALE = "zh-CN";
 
 const b = (type, text) => ({ type, attrs: { text } });
 // `core/image` is the one block whose attrs are not `{text}` — the renderer
 // reads `url`/`alt`. The theme derives a post's cover from the first image in
 // its body, so every post that should have a card image starts with one.
+// Both languages of a piece share the same photograph: it is the same article.
 const img = (url, alt) => ({ type: "core/image", attrs: { url, alt } });
 const body = (...items) => JSON.stringify(items);
 
@@ -28,6 +53,9 @@ const PHOTO = {
   type: "https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop",
 };
 
+// ---------------------------------------------------------------------------
+// en
+// ---------------------------------------------------------------------------
 const HELLO = body(
   img(PHOTO.reading, "安静图书馆里的一排书架与阅读桌"),
   b("core/paragraph",
@@ -77,7 +105,7 @@ const HELLO = body(
     "penalty for it."),
   b("core/code",
     "// A theme is a folder, not an application.\n" +
-    "themes/fixture/\n" +
+    "themes/default/\n" +
     "  theme.json\n" +
     "  templates/\n" +
     "    index.html    // the home page\n" +
@@ -130,7 +158,7 @@ const ABOUT = body(
     "run code."),
   b("core/heading", "About this theme"),
   b("core/paragraph",
-    "Journal is a reading-first theme. A single centred column, a serif body " +
+    "MOBAI is a reading-first theme. A single centred column, a serif body " +
     "against a sans-serif chrome, and light and dark palettes that were designed " +
     "separately rather than inverted from each other. There is no build step, no " +
     "external font request, and no JavaScript beyond the theme toggle."),
@@ -201,53 +229,246 @@ const I18N = body(
     "waiting to happen at three in the morning."),
 );
 
+// ---------------------------------------------------------------------------
+// zh-CN — the same six pieces, written as Chinese rather than transliterated.
+// A real translation is the only thing that makes the switcher, the per-locale
+// feed and the sitemap meaningful; a copy of the English body would pass every
+// structural check while proving nothing.
+// ---------------------------------------------------------------------------
+const HELLO_ZH = body(
+  img(PHOTO.reading, "安静图书馆里的一排书架与阅读桌"),
+  b("core/paragraph",
+    "当一套架构不再和你较劲，项目里会沉淀出一种特别的安静。这个站点曾经跑在一套栈上，" +
+    "每一次有意义的改动，都要先和一个对「页面应该如何诞生」有自己主张的框架谈条件。" +
+    "两年之后我决定不再谈下去——你现在读到的这个发布平台，就是那次决定的结果。" +
+    "它在边缘、在一次渲染里、在几十毫秒内把页面交出去，除了文字，它不向你索取任何东西。"),
+  b("core/heading", "为什么「边缘」改变了 CMS 的形状"),
+  b("core/paragraph",
+    "传统内容管理系统默认有一台保持温热的机器。请求到达，进程醒来，模板从磁盘加载，" +
+    "数据库连接从池里借出，结果放进内存留给下一位访客。整套设计都押在同一个假设上：" +
+    "服务器本来就在那里等着。"),
+  b("core/paragraph",
+    "边缘运行时把这个假设翻了过来。没有常驻进程，也没有可以借用的连接。每个请求都是冷启动，" +
+    "它必须自己拼装出一个世界、给出答案，然后消失。这个约束听起来充满敌意，" +
+    "直到你注意到它换来了什么：答案在读者所在的城市生成，并且没有任何一台机器能挟持整个站点。"),
+  b("core/quote", "最快的请求，是那个从来不需要唤醒服务器就能回答的请求。"),
+  b("core/heading", "塑造这台引擎的三条约束"),
+  b("core/paragraph",
+    "模板语言里的一切都从三条规则推导而来。一旦接受它们，设计就变得几乎别无选择。"),
+  b("core/list",
+    "不执行用户提供的代码。运行时禁止它，所以模板被解析成语法树后被解释，而从不被执行。\n" +
+    "不隐藏 I/O。模板不能伸手去够网络，因此它需要的每一份数据都必须在渲染开始前放进作用域。\n" +
+    "不共享可变状态。一次渲染只触碰交给它的东西，所以两个请求永远不会互相干扰。"),
+  b("core/paragraph",
+    "代价是模板的表达能力不如 JavaScript；收益是模板永远不可能把站点搞垮。" +
+    "对于一个全部职责就是「稳定可用」的东西来说，这笔交易值得做。"),
+  b("core/heading", "这对写作者意味着什么"),
+  b("core/paragraph",
+    "最有趣的后果并不是技术上的。当渲染变得便宜且可预测，写作的形状会随之改变。" +
+    "你不再把页面当成一份需要被优化的资源，而开始把它当成一件要被阅读的东西。" +
+    "长文回来了，因为写长文不再有惩罚。"),
+  b("core/code",
+    "// 主题是一个文件夹，不是一个应用。\n" +
+    "themes/default/\n" +
+    "  theme.json\n" +
+    "  templates/\n" +
+    "    index.html    // 首页\n" +
+    "    single.html   // 一篇文章\n" +
+    "    archive.html  // 一串文章"),
+  b("core/paragraph",
+    "那个文件夹就是全部契约。放进去、激活它，站点就换了形状——不需要发布流水线，" +
+    "不需要构建步骤，也不需要任何人去维护一行 JavaScript。剩下的由平台负责。"),
+  b("core/heading", "接下来会往哪里走"),
+  b("core/paragraph",
+    "能自我编译的主题。可以调用沙箱化 worker 去实现真正动态行为的模板。" +
+    "一个让第三方扩展引擎、却永远不必索取信任的插件面。这些都不是空想，" +
+    "每一块都只是从代码现在所在的位置迈出的一小步。"),
+  b("core/paragraph",
+    "但地基比路线图更重要。一个发布平台的立身之本，是在该快的地方快、" +
+    "在该可预测的地方可预测、在其余一切地方保持安静。除此之外都是装饰。"),
+);
+
+const SECOND_ZH = body(
+  img(PHOTO.notebook, "书桌上的钢笔与方格纸"),
+  b("core/paragraph",
+    "一篇更短的笔记，放在这里主要是为了让归档页和「相关文章」那一条有不止一条真实记录可用。" +
+    "引擎对待它的方式和对待长文完全一样——而这正是要点。"),
+  b("core/heading", "小的篇章，同一套机器"),
+  b("core/paragraph",
+    "短文没有单独的代码路径。同一个模板、同一个作用域、同一遍渲染。" +
+    "主题对长文做的每一件事，它也对短文做；如果哪天不再是这样，那就是主题有 bug。"),
+  b("core/quote", "机制统一，产出多样。"),
+);
+
+const ABOUT_ZH = body(
+  b("core/paragraph",
+    "本站演示了一个完全构建在 Cloudflare Workers、D1 和 R2 之上的发布平台。" +
+    "请求路径上没有任何源站服务器，也没有任何容器：页面在边缘组装，用的就是放在它旁边的数据。"),
+  b("core/heading", "这里跑着什么"),
+  b("core/list",
+    "一个声明式模板引擎，它解释主题，而不是执行主题。\n" +
+    "一份按站点划分的内容模型，自定义内容类型与字段由主题自己声明。\n" +
+    "一个沙箱化运行时，供那些确实需要跑代码的主题使用。"),
+  b("core/heading", "关于这个主题"),
+  b("core/paragraph",
+    "墨白是一份阅读优先的主题。单栏居中，衬线正文配无衬线框架，明暗两套配色是分别设计的，" +
+    "而不是互相反相得来。没有构建步骤，没有外部字体请求，" +
+    "除了那个明暗切换按钮之外没有多余的 JavaScript。"),
+);
+
+const EDGE_ZH = body(
+  img(PHOTO.server, "机房里的一排服务器"),
+  b("core/paragraph",
+    "一个页面请求会到达一个数据中心，它距离读者可能有一百公里，也可能是十公里。" +
+    "答案就在那里生成，一遍完成，请求之间不留任何温热的东西。" +
+    "正是这唯一一条约束——没有可复用的进程，没有可倚仗的热缓存——决定了这套系统其余部分的模样。"),
+  b("core/heading", "你放弃了什么"),
+  b("core/list",
+    "一条由你掌控的长连接数据库。\n" +
+    "想跑后台任务时随时就跑的自由。\n" +
+    "「下一个请求还会由同一台机器应答」这个假设。"),
+  b("core/heading", "你换回了什么"),
+  b("core/paragraph",
+    "一种不取决于读者站在哪里的延迟，以及一次原子上传就完成的发布，而不是滚动重启。" +
+    "这笔交易是真实的，也值得被说清楚：你交出的是「把状态留在内存里」的能力，" +
+    "换来的是「每个请求都从同一个已知位置开始」的保证。"),
+  b("core/quote",
+    "这份代码里的每一个设计决定，都能追溯到那个「请求之间会把你忘掉」的运行时。"),
+);
+
+const TEMPLATES_ZH = body(
+  img(PHOTO.type, "排版中的铅字与手稿"),
+  b("core/paragraph",
+    "这个模板语言没有算术，没有你自己能构造的循环，也没有任何向外调用的方式。" +
+    "它被刻意做得小到不成为一种编程语言——因为一旦它成了编程语言，" +
+    "每个主题都会变成需要维护的应用。"),
+  b("core/heading", "十个 helper，就是全部词汇"),
+  b("core/code",
+    "len  default  lower  upper  truncate\n" +
+    "join  number  date  contains"),
+  b("core/paragraph",
+    "任何需要计算的东西都在服务器上完成，在模板拿到值之前。阅读时长、格式化日期、" +
+    "解析后的 URL——它们到达时就已经可以直接打印。模板唯一的职责是决定什么放在哪里。"),
+  b("core/heading", "为什么这是一项特性"),
+  b("core/paragraph",
+    "一个能计算的主题，就是一个能以没人看得见的方式出错的主题。" +
+    "一个只能摆放值的主题，只可能以一种方式出错，而那种方式在你第一次渲染它的时候就会露出来。"),
+);
+
+const I18N_ZH = body(
+  img(PHOTO.desk, "书桌上的钢笔与手稿纸"),
+  b("core/paragraph",
+    "内容按语言各存一份，和它写作时所用的语言并排放在一起。增加第二种语言不是一次迁移：" +
+    "它需要的列早就存在，只是此刻还装着默认语言的文本，等着被替换。"),
+  b("core/heading", "让这件事保持诚实的规则"),
+  b("core/list",
+    "翻译表永不被删除，也永不被清空。\n" +
+    "主表只会增加列，从不失去列。\n" +
+    "装散文的字段可翻译；装数字的字段不可翻译。"),
+  b("core/paragraph",
+    "最后一条争议最大，也最重要。价格不是一句话。翻译它不是什么特性，" +
+    "而是一个凌晨三点等着爆发的 bug。"),
+);
+
+// ---------------------------------------------------------------------------
+// The content, keyed by post id. `en` and `zh-CN` are two translations of one
+// row; `meta` is per post, not per language (see the header note).
+// ---------------------------------------------------------------------------
 const CONTENTS = {
   "post_Qps_LsNapf22VhSW9bFxTA": {
     kind: "posts",
-    slug: "hello-world",
-    title: "Hello World",
-    excerpt: "A publishing platform built to end the negotiation with its own framework.",
-    content: HELLO,
     meta: { category: "Design", tags: "long read,design systems,typography" },
+    en: {
+      slug: "hello-world",
+      title: "Hello World",
+      excerpt: "A publishing platform built to end the negotiation with its own framework.",
+      content: HELLO,
+    },
+    "zh-CN": {
+      slug: "ni-hao-shi-jie",
+      title: "你好，世界",
+      excerpt: "一个为了终结与自身框架的谈判而建成的发布平台。",
+      content: HELLO_ZH,
+    },
   },
   "post_4E_VfYU_rSAnepUdteAqew": {
     kind: "posts",
-    slug: "second-post",
-    title: "Second Post",
-    excerpt: "A shorter note about uniformity of mechanism and variety of output.",
-    content: SECOND,
     meta: { category: "Life", tags: "notebooks,workflow" },
+    en: {
+      slug: "second-post",
+      title: "Second Post",
+      excerpt: "A shorter note about uniformity of mechanism and variety of output.",
+      content: SECOND,
+    },
+    "zh-CN": {
+      slug: "di-er-pian",
+      title: "第二篇",
+      excerpt: "一篇更短的笔记：机制统一，产出多样。",
+      content: SECOND_ZH,
+    },
   },
   "post_EDGE01aaaaaaaaaaaaaaaa": {
     kind: "posts",
-    slug: "rendering-at-the-edge",
-    title: "Rendering at the edge, one pass at a time",
-    excerpt: "A runtime that forgets you between requests is not a limitation to work around. It is the design.",
-    content: EDGE,
     meta: { category: "Technology", tags: "edge,architecture,long read" },
+    en: {
+      slug: "rendering-at-the-edge",
+      title: "Rendering at the edge, one pass at a time",
+      excerpt: "A runtime that forgets you between requests is not a limitation to work around. It is the design.",
+      content: EDGE,
+    },
+    "zh-CN": {
+      slug: "zai-bian-yuan-xuan-ran",
+      title: "在边缘一次渲染",
+      excerpt: "一个在请求之间把你忘掉的运行时，不是需要绕开的限制，它就是设计本身。",
+      content: EDGE_ZH,
+    },
   },
   "post_TMPL02bbbbbbbbbbbbbbbb": {
     kind: "posts",
-    slug: "a-template-language-small-enough-to-reason-about",
-    title: "A template language small enough to reason about",
-    excerpt: "Ten helpers, no arithmetic, and no way to call out. That is the whole vocabulary, on purpose.",
-    content: TEMPLATES,
     meta: { category: "Technology", tags: "templates,constraints" },
+    en: {
+      slug: "a-template-language-small-enough-to-reason-about",
+      title: "A template language small enough to reason about",
+      excerpt: "Ten helpers, no arithmetic, and no way to call out. That is the whole vocabulary, on purpose.",
+      content: TEMPLATES,
+    },
+    "zh-CN": {
+      slug: "ke-yi-tui-qiao-de-mo-ban-yu-yan",
+      title: "小到可以推敲的模板语言",
+      excerpt: "十个 helper，没有算术，也无法向外调用。这就是全部词汇，而且是刻意的。",
+      content: TEMPLATES_ZH,
+    },
   },
   "post_I18N03cccccccccccccccc": {
     kind: "posts",
-    slug: "two-languages-one-row",
-    title: "Two languages, one row",
-    excerpt: "Adding a language should not be a migration, and a price should never be translated.",
-    content: I18N,
     meta: { category: "Design", tags: "i18n,data modelling" },
+    en: {
+      slug: "two-languages-one-row",
+      title: "Two languages, one row",
+      excerpt: "Adding a language should not be a migration, and a price should never be translated.",
+      content: I18N,
+    },
+    "zh-CN": {
+      slug: "liang-zhong-yu-yan-tong-yi-xing",
+      title: "两种语言，同一行",
+      excerpt: "增加一种语言不该是一次迁移，而价格永远不该被翻译。",
+      content: I18N_ZH,
+    },
   },
   "page_JJEanMucBzmj-l6Lmju3VQ": {
     kind: "pages",
-    slug: "about",
-    title: "About",
-    excerpt: "What this site is, and what it is running on.",
-    content: ABOUT,
+    en: {
+      slug: "about",
+      title: "About",
+      excerpt: "What this site is, and what it is running on.",
+      content: ABOUT,
+    },
+    "zh-CN": {
+      slug: "guan-yu",
+      title: "关于",
+      excerpt: "本站是什么，以及它跑在什么之上。",
+      content: ABOUT_ZH,
+    },
   },
 };
 
@@ -265,6 +486,8 @@ async function api(path, init = {}) {
   return { status: res.status, json };
 }
 
+const site = `?site=${encodeURIComponent(SITE)}`;
+
 const login = await api("auth/login", {
   method: "POST",
   body: JSON.stringify({ username: USER, password: PASS }),
@@ -273,25 +496,53 @@ if (login.status >= 400) {
   console.error("login failed", login.status, login.json);
   process.exit(1);
 }
-console.log("login ok");
+console.log(`login ok  (${BASE}, site=${SITE})`);
 
-for (const [id, c] of Object.entries(CONTENTS)) {
-  const r = await api(`${c.kind}/${id}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      locale: "en",
-      // `slug` must be sent explicitly: omitting it makes savePost fall back to
-      // the post id, which silently breaks every existing permalink.
-      slug: c.slug,
-      title: c.title,
-      excerpt: c.excerpt,
-      content: c.content,
-      status: "published",
-      // Theme-declared fields (`category`, `tags`) land in `post_meta` and are
-      // what the default theme's chips and tag cloud are built from.
-      meta: c.meta,
-    }),
-  });
-  const okFlag = r.status < 400;
-  console.log(`${okFlag ? "ok  " : "FAIL"} ${id} (${c.title}) -> ${r.status} ${okFlag ? "" : JSON.stringify(r.json)}`);
+// A bilingual seed needs both languages *served*: `siteLocales()` filters on
+// `enabled = 1`, so a disabled `zh-CN` row means the theme is handed a
+// one-entry list and renders no switcher at all. The endpoint is idempotent
+// (enable, not toggle), and `is_default: false` keeps the site default alone.
+const enabled = await api(`i18n/locales${site}`, {
+  method: "POST",
+  body: JSON.stringify({
+    code: SECOND_LOCALE,
+    name: "Simplified Chinese",
+    native_name: "简体中文",
+    is_default: false,
+  }),
+});
+if (enabled.status >= 400) {
+  console.error("could not enable", SECOND_LOCALE, enabled.status, enabled.json);
+  process.exit(1);
 }
+console.log(`locale ${SECOND_LOCALE} enabled  (${enabled.status})`);
+
+let failures = 0;
+for (const [id, c] of Object.entries(CONTENTS)) {
+  for (const locale of [DEFAULT_LOCALE, SECOND_LOCALE]) {
+    const v = c[locale];
+    if (!v) continue;
+    const r = await api(`${c.kind}/${id}${site}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        locale,
+        // `slug` must be sent explicitly: omitting it makes savePost fall back to
+        // the post id, which silently breaks every existing permalink.
+        slug: v.slug,
+        title: v.title,
+        excerpt: v.excerpt,
+        content: v.content,
+        status: "published",
+        // Only on the primary save: `post_meta` has no locale column, so writing
+        // it twice would just overwrite the same shared row with the same value.
+        ...(locale === DEFAULT_LOCALE && c.meta ? { meta: c.meta } : {}),
+      }),
+    });
+    const okFlag = r.status < 400;
+    if (!okFlag) failures++;
+    console.log(`${okFlag ? "ok  " : "FAIL"} ${locale.padEnd(5)} ${id} (${v.title}) -> ${r.status}${okFlag ? "" : " " + JSON.stringify(r.json)}`);
+  }
+}
+
+console.log(`\n${Object.keys(CONTENTS).length} pieces × 2 languages seeded, ${failures} failure(s).`);
+if (failures) process.exit(1);

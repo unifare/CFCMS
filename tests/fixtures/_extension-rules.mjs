@@ -136,6 +136,22 @@ export function themeManifestProblems(root) {
       }
     }
 
+    // A declared locale must have a pack. `manifest.locales[]` is otherwise a
+    // claim nothing reads: `contract/validation.ts` checks only that each code
+    // is BCP-47-shaped, and no runtime consumer exists, so a theme can advertise
+    // a Chinese version it does not ship and every
+    // `{{default(theme.strings.x, "English literal")}}` in it renders the
+    // literal. A missing translation and an absent one then look identical —
+    // on the site and in every other test.
+    //
+    // The scaffold's manifest comment has always promised this check; it did not
+    // exist until now, which is why the comment read as coverage.
+    for (const code of Array.isArray(manifest.locales) ? manifest.locales : []) {
+      if (!existsSync(join(dir, "langs", `${String(code)}.json`))) {
+        problems.push(`content/themes/${name}: declares locale "${code}" but ships no langs/${code}.json`);
+      }
+    }
+
     // A route resolving against a table must declare that table.
     for (const r of Array.isArray(manifest.routes) ? manifest.routes : []) {
       const tbl = r?.resolve?.table;

@@ -88,6 +88,9 @@ const WRANGLER = join(ROOT, "wrangler.jsonc");
 // which put the test fixture theme on the public internet.
 const SYNC_THEMES = join(ROOT, "scripts/sync-bundled-themes.mjs");
 const FIXTURE_LEAK = join(ROOT, "public/themes/fixture/theme.json");
+// The shipped theme's manifest. Its `locales[]` is a claim about what the theme
+// ships, and the only thing that can check the claim is the pack directory.
+const THEME_MANIFEST = join(ROOT, "content/themes/default/theme.json");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -711,6 +714,36 @@ const SCENARIOS = [
     after: [""],
     runs: [["tests/suites/admin-contract.test.mjs", "the payload marks the themes that ship with the product"]],
   },
+  // --- the language switcher, and what "a Chinese version" has to mean ------
+  {
+    // The switcher swaps the locale segment. That is right for a *listing* —
+    // one path, several translations of it — and wrong for an *article*:
+    // migration 0016 made the slug per language, so `/en/blog/<zh-slug>` is a
+    // 404 and the switcher offered a dead link on exactly the pages a reader is
+    // most likely to switch on. `post.alternates` already carried each version's
+    // own URL (it is what hreflang prints); the guard is that the switcher reads
+    // it instead of guessing.
+    label: "the language switcher ignores each translation's own slug",
+    file: FRONTEND,
+    before: ['    url:own.get(String(l.code))??`/${l.code}${rest?"/"+rest:""}`,'],
+    after: ['    url:`/${l.code}${rest?"/"+rest:""}`,'],
+    runs: [["tests/suites/locale-url.test.mjs", "the switcher on an article points at each language's own slug"]],
+  },
+  {
+    // `manifest.locales[]` was checked for BCP-47 shape and read by nothing, so
+    // a theme could advertise a Chinese version it did not ship: every
+    // `{{default(theme.strings.x, "English literal")}}` then rendered the
+    // literal, and a missing translation became indistinguishable from an
+    // absent one — on the site and in every other test. The scaffold's manifest
+    // comment had promised this check since it was written; the rule itself did
+    // not exist. Adding a language without its pack is exactly how a developer
+    // trips it.
+    label: "a theme declares a locale it ships no language pack for",
+    file: THEME_MANIFEST,
+    before: ['    "en"\n  ],'],
+    after: ['    "en",\n    "ja"\n  ],'],
+    runs: [["tests/suites/theme-default.test.mjs", "every locale the manifest declares ships a language pack"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -723,6 +756,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   FIXTURE_LEAK,
   join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
   join(ROOT, "public/themes/default/templates/home.html"),
+  THEME_MANIFEST,
   join(ROOT, "src/api.ts"),
   join(ROOT, "src/extensions/contract/hooks.ts"),
   join(ROOT, "AGENTS.md"),

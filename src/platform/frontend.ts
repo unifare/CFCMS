@@ -151,14 +151,29 @@ export async function contentAlternates(env:Env,siteId:string,postId:string,type
  * a switcher that offers a language the site has not enabled 404s on click
  * (§10 rule 6: no site-blind fallbacks). `restPath` is the page path with any
  * locale prefix already removed (`resolveLocale(...).rest`).
+ *
+ * `alternates` is `contentAlternates`' output for the object being rendered,
+ * and it is what makes the switcher correct on an *article*. Swapping the
+ * locale segment is right for a listing — one path, several translations of
+ * it — but migration 0016 made the slug per language, so on a translated piece
+ * `/en/blog/<zh-slug>` is a 404 and a path-swapping switcher offers a dead
+ * link on exactly the pages a reader is most likely to switch on. Where a
+ * translation exists its own URL is the only honest target; where it does not,
+ * the locale-swapped path stays the fallback and 404s, which is the truth
+ * about that piece in that language.
  */
-export function langNav(rows:unknown[],currentLocale:string,restPath:string){
+export function langNav(rows:unknown[],currentLocale:string,restPath:string,alternates?:unknown[]){
   const rest=String(restPath??"").replace(/^\/+|\/+$/g,"");
+  const own=new Map<string,string>();
+  for(const a of (alternates as any[])??[]){
+    const code=String(a?.locale??"");const url=String(a?.url??"");
+    if(code&&url)own.set(code,url);
+  }
   return (rows as any[]).map((l)=>({
     code:String(l.code),
     name:String(l.name??l.code),
     current:String(l.code)===currentLocale,
-    url:`/${l.code}${rest?"/"+rest:""}`,
+    url:own.get(String(l.code))??`/${l.code}${rest?"/"+rest:""}`,
   }));
 }
 // `latestPosts` used to live here and returned only slug/title/excerpt. The

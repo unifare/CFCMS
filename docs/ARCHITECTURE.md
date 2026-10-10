@@ -445,6 +445,21 @@ await host.table('product').save({ slug, price: 299, name, description }, locale
 
 这个区分在 CFCMS 现有实现（`src/index.ts:234-243`）里已经做对了，写进规范固化下来。
 
+**切换器：列表页换段，文章页必须用翻译自己的 URL（规则 58 的推论）**
+
+`lang_nav`（`langNav()`，`src/platform/frontend.ts`）给每个站点语言一项。
+「换掉 locale 段」只对**列表页**成立——一个路径，多份翻译。**文章页不成立**：
+migration 0016 起 slug 按语言，`/en/blog/<zh-slug>` 是 404，
+于是切换器会在读者最想切换的那类页面上给出死链。
+
+判据是 `post.alternates`（hreflang 已经在用的同一份数据）：
+有该语言版本就用**它自己的 URL**；没有才退回换段（退回后的 404 是实话，
+因为那篇确实没有那个语言的版本）。
+
+⚠️ `buildScope`（`runtime-declarative.ts`）必须在 `post.alternates` **还是相对路径时**读取它：
+下面 hreflang 那一段会把该属性整体替换成带 origin 的副本，
+之后读就会把绝对 URL 塞进主题导航。具名断言在 `tests/suites/locale-url.test.mjs`。
+
 ### 2.7 实施清单
 
 批次 2 已全部落地（2026-09-28）。下表是**完成状态 + 实际落点**，与最初规划的差异都记在
@@ -508,8 +523,10 @@ CFCMS 已经明确支持两种运行时，规范里正式定名：
   "screenshot": "screenshot.png",
   "runtime": "declarative",           // "declarative" | "worker"
 
-  // ---- 平台要求的语言开关（关键）----
-  // 主题声明自己"支持"哪些语言。平台据此判断某语言下能否激活本主题。
+  // ---- 主题自带语言包的语言（规则 25）----
+  // ⚠️ 这是**声明**，不是开关：运行时**没有任何消费点**（激活与否只看
+  // site_locales，与本字段无关）。所以它必须由一个守卫来赋予意义——
+  // 声明的每种语言**必须**有 langs/{code}.json，否则安装不上。
   // 声明式主题的实际文案在 langs/{locale}.json（运行时从 R2 读）。
   "locales": ["zh-CN", "en", "ja"],
 
