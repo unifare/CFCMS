@@ -199,26 +199,67 @@ async function main() {
   const worker = (await compileWorker()).default;
   const env = makeEnv(sqlite);
 
-  // Idempotent cleanup.
-  for (const sql of [
-    "DELETE FROM post_meta WHERE post_id LIKE 'ms_%'",
-    "DELETE FROM post_translations WHERE post_id LIKE 'ms_%'",
-    "DELETE FROM posts WHERE id LIKE 'ms_%'",
-    "DELETE FROM post_types WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
-    "DELETE FROM taxonomies WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
-    "DELETE FROM field_defs WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
-    "DELETE FROM theme_routes WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
-    "DELETE FROM theme_blocks WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
-    "DELETE FROM theme_installs WHERE name IN ('shoptheme','detheme')",
-    "DELETE FROM extension_versions WHERE extension_name IN ('shoptheme','detheme')",
-    "DELETE FROM menus WHERE site_id IN ('shop','de')",
-    "DELETE FROM menu_items WHERE site_id IN ('shop','de')",
-    "DELETE FROM settings WHERE site_id IN ('shop','de')",
-    "DELETE FROM content_cache_versions WHERE id IN ('content_version_shop','content_version_de')",
-    "DELETE FROM sites WHERE id IN ('shop','de','tmp')",
-  ]) {
-    try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
-  }
+  // Idempotent teardown of this suite's fixtures, run at BOTH ends: up front so
+  // a crashed previous run cannot change what this one observes, and again at
+  // the end so the shared local D1 — the file `wrangler dev` serves — keeps no
+  // phantom rows on the Sites/Themes screens. Sweeping only up front is what
+  // left `shoptheme`/`detheme` and the `shop`/`de` sites behind.
+  //
+  // Activating `detheme` on the *default* site rewrites the site-wide
+  // `theme.active`, `theme_routes` and `admin_menu_registry` rows
+  // clear-then-insert, so snapshot them and put them back — otherwise the
+  // operator's own front-end routes and admin menu vanish after a test run.
+  const insertRows = (table, rows) => {
+    for (const r of rows) {
+      const keys = Object.keys(r);
+      sqlite.prepare(`INSERT INTO ${table} (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map((k) => r[k]));
+    }
+  };
+  const prevActive = sqlite.prepare("SELECT value FROM settings WHERE site_id='default' AND key='theme.active'").get()?.value ?? null;
+  const prevRoutes = sqlite.prepare("SELECT * FROM theme_routes WHERE site_id='default'").all();
+  const prevAdminMenus = sqlite.prepare("SELECT * FROM admin_menu_registry WHERE site_id IN ('default','*')").all();
+  const sweep = () => {
+    for (const sql of [
+      "DELETE FROM post_meta WHERE post_id LIKE 'ms_%'",
+      "DELETE FROM post_revisions WHERE post_id LIKE 'ms_%'",
+      "DELETE FROM post_translations WHERE post_id LIKE 'ms_%'",
+      "DELETE FROM posts WHERE id LIKE 'ms_%'",
+      "DELETE FROM post_types WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
+      "DELETE FROM taxonomies WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
+      "DELETE FROM field_defs WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
+      "DELETE FROM theme_routes WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
+      "DELETE FROM theme_blocks WHERE declared_by_theme IN ('shoptheme','detheme','realestate')",
+      "DELETE FROM admin_menu_registry WHERE owner_name IN ('shoptheme','detheme')",
+      "DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name IN ('shoptheme','detheme')",
+      "DELETE FROM theme_settings WHERE theme_name IN ('shoptheme','detheme')",
+      "DELETE FROM theme_setting_defs WHERE theme_name IN ('shoptheme','detheme')",
+      "DELETE FROM theme_installs WHERE name IN ('shoptheme','detheme')",
+      "DELETE FROM extension_capabilities WHERE extension_name IN ('shoptheme','detheme')",
+      "DELETE FROM extension_versions WHERE extension_name IN ('shoptheme','detheme')",
+      "DELETE FROM menus WHERE site_id IN ('shop','de')",
+      "DELETE FROM menu_items WHERE site_id IN ('shop','de')",
+      "DELETE FROM widget_instances WHERE site_id IN ('shop','de')",
+      "DELETE FROM site_locales WHERE site_id IN ('shop','de')",
+      "DELETE FROM settings WHERE site_id IN ('shop','de')",
+      "DELETE FROM content_cache_versions WHERE id IN ('content_version_shop','content_version_de')",
+      "DELETE FROM sites WHERE id IN ('shop','de','tmp')",
+      // Restore what activating a fixture on `default` overwrote.
+      "DELETE FROM theme_routes WHERE site_id='default'",
+      "DELETE FROM admin_menu_registry WHERE site_id IN ('default','*')",
+    ]) {
+      try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
+    }
+    try {
+      insertRows("theme_routes", prevRoutes);
+      insertRows("admin_menu_registry", prevAdminMenus);
+      if (prevActive !== null) {
+        sqlite.prepare("INSERT INTO settings(id,site_id,key,value,autoload) VALUES('setting-theme-active','default','theme.active',?,1) ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value").run(prevActive);
+      } else {
+        sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key='theme.active'");
+      }
+    } catch { /* table may not exist yet */ }
+  };
+  sweep();
 
   // -- 0. auth -------------------------------------------------------------
   console.log("0. Admin bootstrap & auth");
@@ -615,6 +656,9 @@ async function main() {
   const afterUpd = await (await req(worker, env, "/api/v1/sites", { headers: auth })).json();
   check("site rename persisted", afterUpd.items.find((s) => s.id === "shop").name, "Shop Renamed");
   check("host preserved on partial update", afterUpd.items.find((s) => s.id === "shop").host, "shop.example.com");
+
+  // Leave the shared local D1 as we found it (see `sweep` above).
+  sweep();
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

@@ -194,18 +194,41 @@ async function main() {
   const dbf = readdirSync(dbDir).find((x) => x.endsWith(".sqlite"));
   const sqlite = new DatabaseSync(join(dbDir, dbf));
 
-  // Idempotent cleanup up front: a previous failed run must not change what
-  // this one observes.
-  for (const sql of [
-    `DELETE FROM admin_menu_registry WHERE owner_name='${THEME}'`,
-    `DELETE FROM admin_menu_registry WHERE owner_type='plugin'`,
-    "UPDATE plugin_installs SET enabled=0 WHERE name='notify'",
-    `DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`,
-    `DELETE FROM post_types WHERE declared_by_theme='${THEME}'`,
-    `DELETE FROM theme_installs WHERE name='${THEME}'`,
-    "DELETE FROM sites WHERE id='menusite2'",
-    "DELETE FROM settings WHERE site_id='menusite2'",
-  ]) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } }
+  // Idempotent teardown of this suite's fixtures, run at BOTH ends: up front so
+  // a failed previous run cannot change what this one observes, and again at the
+  // end so the shared local D1 — the file `wrangler dev` serves — keeps no
+  // phantom rows. This suite *uploads* `notify` (the reference plugin in
+  // `content/plugins/`), so the plugin is its own fixture and comes back out
+  // here; a suite that swept only up front left a disabled Notify and the
+  // `menusdemo` theme table sitting in the operator's admin.
+  const sweep = () => {
+    for (const sql of [
+      `DELETE FROM admin_menu_registry WHERE owner_name='${THEME}'`,
+      `DELETE FROM admin_menu_registry WHERE owner_type='plugin'`,
+      `DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`,
+      `DELETE FROM post_types WHERE declared_by_theme='${THEME}'`,
+      `DELETE FROM field_defs WHERE declared_by_theme='${THEME}'`,
+      `DELETE FROM theme_routes WHERE declared_by_theme='${THEME}'`,
+      `DELETE FROM extension_capabilities WHERE extension_name='${THEME}'`,
+      `DELETE FROM extension_versions WHERE extension_name='${THEME}'`,
+      `DROP TABLE IF EXISTS theme_${THEME}_product_i18n`,
+      `DROP TABLE IF EXISTS theme_${THEME}_product`,
+      `DELETE FROM theme_installs WHERE name='${THEME}'`,
+      "DELETE FROM sites WHERE id='menusite2'",
+      "DELETE FROM settings WHERE site_id='menusite2'",
+      "DELETE FROM site_locales WHERE site_id='menusite2'",
+      // `notify` is installed by this suite through the upload API.
+      "DELETE FROM plugin_settings WHERE plugin_id IN (SELECT id FROM plugin_installs WHERE name='notify')",
+      "DELETE FROM plugin_setting_defs WHERE plugin_name='notify'",
+      "DELETE FROM extension_capabilities WHERE extension_type='plugin' AND extension_name='notify'",
+      "DELETE FROM extension_versions WHERE extension_name='notify'",
+      "DELETE FROM theme_table_defs WHERE owner_type='plugin' AND owner_name='notify'",
+      "DROP TABLE IF EXISTS plugin_notify_log_i18n",
+      "DROP TABLE IF EXISTS plugin_notify_log",
+      "DELETE FROM plugin_installs WHERE name='notify'",
+    ]) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } }
+  };
+  sweep();
 
   const worker = (await compileWorker()).default;
   const menus = await compileMenus();
@@ -434,15 +457,10 @@ async function main() {
   );
 
   // -- cleanup -------------------------------------------------------------
-  for (const sql of [
-    `DELETE FROM admin_menu_registry WHERE owner_name='${THEME}'`,
-    `DELETE FROM admin_menu_registry WHERE owner_type='plugin'`,
-    "UPDATE plugin_installs SET enabled=0 WHERE name='notify'",
-    `DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`,
-    `DELETE FROM theme_installs WHERE name='${THEME}'`,
-    "DELETE FROM sites WHERE id='menusite2'",
-    "DELETE FROM settings WHERE site_id='menusite2'",
-  ]) { try { sqlite.exec(sql); } catch { /* best effort */ } }
+  // Leave the shared local D1 as we found it (see `sweep` above), then put the
+  // bundled default theme back on the default site: the suite activated a
+  // fixture there, and the front end must not keep rendering it.
+  sweep();
   await req(worker, env, "/api/v1/extensions/themes/default/activate?site=default", { method: "POST", headers: auth });
 
   sqlite.close();

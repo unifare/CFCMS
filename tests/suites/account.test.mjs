@@ -150,18 +150,37 @@ async function main() {
   const env = makeEnv(sqlite);
 
   // -- idempotent cleanup of OUR OWN rows only -----------------------------
-  for (const sql of [
-    "DELETE FROM admin_sessions WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'acct-test%')",
-    "DELETE FROM admin_activity WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'acct-test%')",
-    "DELETE FROM site_users WHERE username LIKE 'acct-test%'",
-    "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='accttheme'",
-    "DELETE FROM post_types WHERE declared_by_theme='accttheme'",
-    "DELETE FROM theme_installs WHERE name='accttheme'",
-    "DELETE FROM extension_versions WHERE extension_name='accttheme'",
-    "DELETE FROM settings WHERE site_id='acct'",
-    "DELETE FROM theme_settings WHERE theme_name='accttheme' AND 1=0",
-    "DELETE FROM sites WHERE id='acct'",
-  ]) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } }
+  // Runs at BOTH ends. Up front so a crashed previous run cannot change what
+  // this one observes; again at the end so the shared local D1 — the very
+  // sqlite file `wrangler dev` serves (see AGENTS.md) — is left exactly as this
+  // suite found it. A suite that sweeps only up front leaves its theme and site
+  // in the operator's admin UI until the *next* run happens to remove them,
+  // which is what put phantom entries on the Themes and Sites screens.
+  const sweep = () => {
+    for (const sql of [
+      "DELETE FROM admin_sessions WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'acct-test%')",
+      "DELETE FROM admin_activity WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'acct-test%')",
+      "DELETE FROM site_users WHERE username LIKE 'acct-test%'",
+      "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='accttheme'",
+      "DELETE FROM post_types WHERE declared_by_theme='accttheme'",
+      "DELETE FROM field_defs WHERE declared_by_theme='accttheme'",
+      "DELETE FROM theme_routes WHERE declared_by_theme='accttheme'",
+      "DELETE FROM theme_blocks WHERE declared_by_theme='accttheme'",
+      "DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='accttheme'",
+      "DELETE FROM theme_settings WHERE theme_name='accttheme'",
+      "DELETE FROM theme_setting_defs WHERE theme_name='accttheme'",
+      "DELETE FROM theme_installs WHERE name='accttheme'",
+      "DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name='accttheme'",
+      "DELETE FROM extension_versions WHERE extension_name='accttheme'",
+      "DELETE FROM menu_items WHERE site_id='acct'",
+      "DELETE FROM menus WHERE site_id='acct'",
+      "DELETE FROM widget_instances WHERE site_id='acct'",
+      "DELETE FROM site_locales WHERE site_id='acct'",
+      "DELETE FROM settings WHERE site_id='acct'",
+      "DELETE FROM sites WHERE id='acct'",
+    ]) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } }
+  };
+  sweep();
 
   const login = async (username, password) => {
     const r = await req(worker, env, "/api/v1/auth/login", {
@@ -296,12 +315,7 @@ async function main() {
   check("fallback: literal label survives untranslated keys", plainAdmin?.label, "Plain");
 
   console.log("\ncleanup");
-  try {
-    sqlite.exec("DELETE FROM admin_sessions WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'acct-test%')");
-    sqlite.exec("DELETE FROM admin_activity WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'acct-test%')");
-    sqlite.exec("DELETE FROM site_users WHERE username LIKE 'acct-test%'");
-    console.log("  test users removed");
-  } catch (e) { console.log(`  cleanup warning: ${e.message}`); }
+  sweep();
 
   summary();
   process.exit(fail ? 1 : 0);

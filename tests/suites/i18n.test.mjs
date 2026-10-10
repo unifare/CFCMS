@@ -272,6 +272,12 @@ async function main() {
   // asserting against a menu narrowed by the previous one — a clean failure
   // translated into a confusing one (AGENTS.md, the third false-green note).
   sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key LIKE 'cfpress.features%'");
+  // Content created below through the editor API gets a random id and a
+  // title-derived slug, so the `slug LIKE 'i18n-%'` sweeps above cannot see it.
+  // Snapshot the surviving ids here; the teardown at the end deletes the
+  // complement, which is what stops this suite leaving stray posts/pages on the
+  // shared dev database (they showed up on the operator's content list).
+  const postsBefore = sqlite.prepare("SELECT id FROM posts").all().map((r) => r.id);
 
   console.log("\n0. Admin bootstrap & auth");
   const loginRes = await req(worker, env, "/api/v1/auth/login", {
@@ -654,6 +660,39 @@ async function main() {
     insMenu.run(m.id, m.site_id, m.owner_type, m.owner_name, m.menu_id, m.label, m.icon ?? null,
       m.screen, m.args_json ?? "{}", m.capability ?? null, m.sort_order ?? 0, m.enabled ?? 1,
       m.created_at, m.updated_at, m.label_key ?? null);
+  }
+
+  // -- teardown: leave the shared dev D1 as we found it ---------------------
+  // The start block above only removes the *previous* run's copy of the test
+  // theme; without this second pass the theme, its generated tables and every
+  // post created below stay behind — a phantom theme on the Themes screen and
+  // stray entries on the content list until the next run happens to sweep them.
+  sqlite.exec(`DROP TABLE IF EXISTS ${I18N_TABLE}`);
+  sqlite.exec(`DROP TABLE IF EXISTS ${MAIN_TABLE}`);
+  sqlite.exec(`DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM theme_settings WHERE theme_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM theme_setting_defs WHERE theme_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM theme_installs WHERE name='${THEME}'`);
+  sqlite.exec(`DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM extension_versions WHERE extension_name='${THEME}'`);
+  {
+    // Delete the posts this run created, by id-complement against the snapshot
+    // (children first, so nothing is orphaned). The empty-snapshot case needs its
+    // own branch: `WHERE id NOT IN (NULL)` is UNKNOWN in SQL, not TRUE, so it
+    // deletes *nothing* — a silent no-op that looks exactly like a working sweep.
+    const children = ["post_meta", "post_revisions", "post_translations"];
+    if (postsBefore.length) {
+      const ph = postsBefore.map(() => "?").join(",");
+      const survivors = `SELECT id FROM posts WHERE id IN (${ph})`;
+      for (const child of children) {
+        sqlite.prepare(`DELETE FROM ${child} WHERE post_id NOT IN (${survivors})`).run(...postsBefore);
+      }
+      sqlite.prepare(`DELETE FROM posts WHERE id NOT IN (${ph})`).run(...postsBefore);
+    } else {
+      for (const child of children) sqlite.exec(`DELETE FROM ${child}`);
+      sqlite.exec("DELETE FROM posts");
+    }
+    sqlite.exec("DELETE FROM scheduled_posts WHERE post_id NOT IN (SELECT id FROM posts)");
   }
 
   console.log(`\n${"=".repeat(64)}`);

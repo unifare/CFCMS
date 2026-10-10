@@ -183,6 +183,7 @@ async function main() {
   const previousRoutes = sqlite.prepare("SELECT * FROM theme_routes WHERE site_id='default'").all();
   const previousMenus = sqlite.prepare("SELECT * FROM admin_menu_registry WHERE site_id IN ('default','*')").all();
   const previousSiteLocales = sqlite.prepare("SELECT * FROM site_locales WHERE site_id='default'").all();
+  const previousLocales = sqlite.prepare("SELECT * FROM locales").all();
   sqlite.exec(`DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`);
   sqlite.exec(`DELETE FROM theme_installs WHERE name='${THEME}'`);
   sqlite.exec(`DELETE FROM extension_versions WHERE extension_name='${THEME}'`);
@@ -406,6 +407,20 @@ async function main() {
     sqlite.prepare("INSERT INTO settings (id,site_id,key,value,autoload) VALUES ('setting-theme-active','default','theme.active',?,1) ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value").run(previousActive);
   } else {
     sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key='theme.active'");
+  }
+  // Drop this suite's test theme from the registry. The start block only removes
+  // the *previous* run's copy, so without this second pass the theme and its
+  // capability rows stay behind and show up on the operator's Themes screen.
+  sqlite.exec(`DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM theme_settings WHERE theme_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM theme_setting_defs WHERE theme_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM theme_installs WHERE name='${THEME}'`);
+  sqlite.exec(`DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name='${THEME}'`);
+  sqlite.exec(`DELETE FROM extension_versions WHERE extension_name='${THEME}'`);
+  // The suite adds a language through the API; restore the exact set it found.
+  sqlite.exec("DELETE FROM locales");
+  for (const r of previousLocales) {
+    sqlite.prepare(`INSERT INTO locales (${Object.keys(r).join(",")}) VALUES (${Object.keys(r).map(() => "?").join(",")})`).run(...Object.values(r));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

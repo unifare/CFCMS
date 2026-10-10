@@ -324,8 +324,13 @@ async function main() {
   const worker = (await compileWorker()).default;
   const env = makeEnv(sqlite);
 
-  // Make the run idempotent: clear anything a previous run left behind.
-  for (const sql of [
+  // Idempotent teardown of this suite's fixtures, run at BOTH ends: up front so
+  // a crashed previous run cannot change what this one observes, and again at
+  // the end so the shared local D1 — the file `wrangler dev` serves — keeps no
+  // phantom rows. Sweeping only up front is what left `realestate`, `prop_1` and
+  // the generated `theme_realestate_listing` table behind, i.e. a phantom theme
+  // on the operator's Themes screen.
+  const CLEANUP = [
     "DELETE FROM post_meta WHERE post_id='prop_1'",
     "DELETE FROM post_translations WHERE post_id='prop_1'",
     "DELETE FROM posts WHERE id='prop_1'",
@@ -391,9 +396,9 @@ async function main() {
     // The §12 cross-site leak probe plants one marker widget on `default`;
     // an aborted run must not leave it in the user's real sidebar.
     "DELETE FROM widget_instances WHERE title='wtest_default_leak'",
-  ]) {
-    try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
-  }
+  ];
+  const sweep = () => { for (const sql of CLEANUP) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } } };
+  sweep();
 
   // -- 1. bootstrap + login ------------------------------------------------
   console.log("1. Admin bootstrap & auth");
@@ -974,18 +979,8 @@ async function main() {
   for (const w of (leakList.items || []).filter((x) => x.title === "wtest_default_leak")) {
     await req(worker, env, `/api/v1/widgets/${w.id}?site=default`, { method: "DELETE", headers: authHeaders });
   }
-  for (const sql of [
-    "DELETE FROM widget_instances WHERE site_id='widgetest'",
-    "DELETE FROM menu_items WHERE site_id='widgetest'",
-    "DELETE FROM menus WHERE site_id='widgetest'",
-    "DELETE FROM post_meta WHERE post_id='wtest_post'",
-    "DELETE FROM post_translations WHERE post_id='wtest_post'",
-    "DELETE FROM posts WHERE id='wtest_post'",
-    "DELETE FROM theme_routes WHERE site_id='widgetest'",
-    "DELETE FROM site_locales WHERE site_id='widgetest'",
-    "DELETE FROM settings WHERE site_id='widgetest'",
-    "DELETE FROM posts WHERE site_id='widgetest'",
-  ]) { try { sqlite.exec(sql); } catch { /* table may not exist */ } }
+  // Leave the shared local D1 as we found it (see `sweep` above).
+  sweep();
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

@@ -140,12 +140,19 @@ async function main() {
   const env = makeEnv(sqlite);
 
   // -- idempotent cleanup of OUR OWN rows only -----------------------------
-  for (const sql of [
-    "DELETE FROM admin_sessions WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'mtest-%')",
-    "DELETE FROM admin_activity WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'mtest-%')",
-    "DELETE FROM site_users WHERE username LIKE 'mtest-%'",
-    "DELETE FROM settings WHERE key='admin.menu.custom' AND site_id IN ('default','mtest-other')",
-  ]) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } }
+  // Runs at BOTH ends (see the sibling suites): up front so a crashed previous
+  // run cannot change what this one observes, and again at the end so the
+  // shared local D1 — the file `wrangler dev` serves — keeps no phantom user
+  // rows. Sweeping only up front left the `mtest-author` account behind.
+  const sweep = () => {
+    for (const sql of [
+      "DELETE FROM admin_sessions WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'mtest-%')",
+      "DELETE FROM admin_activity WHERE user_id IN (SELECT id FROM site_users WHERE username LIKE 'mtest-%')",
+      "DELETE FROM site_users WHERE username LIKE 'mtest-%'",
+      "DELETE FROM settings WHERE key='admin.menu.custom' AND site_id IN ('default','mtest-other')",
+    ]) { try { sqlite.exec(sql); } catch { /* table may not exist yet */ } }
+  };
+  sweep();
 
   const login = async (username, password) => {
     const r = await req(worker, env, "/api/v1/auth/login", {
@@ -232,6 +239,9 @@ async function main() {
 
   console.log("\n8. applyMenuCustom — the pure function (imported for real)");
   await testApplyMenuCustom();
+
+  // Leave the shared local D1 as we found it (see `sweep` above).
+  sweep();
 
   summary();
 }

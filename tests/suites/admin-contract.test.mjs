@@ -140,21 +140,38 @@ async function main() {
   const worker = (await compileWorker()).default;
   const env = makeEnv(sqlite);
 
-  for (const sql of [
-    "DELETE FROM post_meta WHERE post_id LIKE 'adm_%' OR post_id LIKE 'widget_%'",
-    "DELETE FROM post_translations WHERE post_id LIKE 'adm_%' OR post_id LIKE 'widget_%'",
-    "DELETE FROM posts WHERE id LIKE 'adm_%' OR id LIKE 'widget_%'",
-    "DELETE FROM post_types WHERE declared_by_theme='admtheme'",
-    "DELETE FROM field_defs WHERE declared_by_theme='admtheme'",
-    "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='admtheme'",
-    "DELETE FROM theme_setting_defs WHERE theme_name='admtheme'",
-    "DELETE FROM theme_settings WHERE theme_name='admtheme'",
-    "DELETE FROM theme_installs WHERE name='admtheme'",
-    "DELETE FROM extension_versions WHERE extension_name='admtheme'",
-    "DELETE FROM sites WHERE id='adm'",
-    "DELETE FROM settings WHERE site_id='adm'",
-    "DELETE FROM menus WHERE site_id='adm'",
-  ]) { try { sqlite.exec(sql); } catch { /* ok */ } }
+  // Idempotent teardown of this suite's fixtures, run at BOTH ends: up front so
+  // a crashed previous run cannot change what this one observes, and again at
+  // the end so the shared local D1 (the file `wrangler dev` serves) is left as
+  // the suite found it. Sweeping only up front leaves the `adm` site and the
+  // `admtheme` theme sitting in the operator's Sites/Themes screens until the
+  // next run happens to remove them.
+  const sweep = () => {
+    for (const sql of [
+      "DELETE FROM post_meta WHERE post_id LIKE 'adm_%' OR post_id LIKE 'widget_%'",
+      "DELETE FROM post_translations WHERE post_id LIKE 'adm_%' OR post_id LIKE 'widget_%'",
+      "DELETE FROM post_revisions WHERE post_id LIKE 'adm_%' OR post_id LIKE 'widget_%'",
+      "DELETE FROM posts WHERE id LIKE 'adm_%' OR id LIKE 'widget_%'",
+      "DELETE FROM post_types WHERE declared_by_theme='admtheme'",
+      "DELETE FROM field_defs WHERE declared_by_theme='admtheme'",
+      "DELETE FROM theme_routes WHERE declared_by_theme='admtheme'",
+      "DELETE FROM theme_blocks WHERE declared_by_theme='admtheme'",
+      "DELETE FROM admin_menu_registry WHERE owner_type='theme' AND owner_name='admtheme'",
+      "DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='admtheme'",
+      "DELETE FROM theme_setting_defs WHERE theme_name='admtheme'",
+      "DELETE FROM theme_settings WHERE theme_name='admtheme'",
+      "DELETE FROM theme_installs WHERE name='admtheme'",
+      "DELETE FROM extension_capabilities WHERE extension_type='theme' AND extension_name='admtheme'",
+      "DELETE FROM extension_versions WHERE extension_name='admtheme'",
+      "DELETE FROM menu_items WHERE site_id='adm'",
+      "DELETE FROM menus WHERE site_id='adm'",
+      "DELETE FROM widget_instances WHERE site_id='adm'",
+      "DELETE FROM site_locales WHERE site_id='adm'",
+      "DELETE FROM sites WHERE id='adm'",
+      "DELETE FROM settings WHERE site_id='adm'",
+    ]) { try { sqlite.exec(sql); } catch { /* ok */ } }
+  };
+  sweep();
 
   console.log("0. auth");
   await req(worker, env, "/api/v1/health");
@@ -461,6 +478,9 @@ async function main() {
   check("widget delete answers 200", delW.status, 200);
   const w1gone = (await (await req(worker, env, "/api/v1/widgets?site=adm", { headers: auth })).json()).items.some((x) => x.id === w1.id);
   check("and the widget is really gone", w1gone, false);
+
+  // Leave the shared local D1 as we found it (see `sweep` above).
+  sweep();
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

@@ -276,6 +276,11 @@ async function main() {
   // disabled (that is the design — switching hides data, it never destroys it),
   // so a previous failed run would otherwise leave a def whose physical table
   // the next run's DDL hits with `IF NOT EXISTS` and never learns.
+  //
+  // The same list runs again in the `finally` below, so the shared local D1 —
+  // the file `wrangler dev` serves — is left as the suite found it. The
+  // throwaway site `pagesite2` is what used to survive and show up on the
+  // operator's Sites screen.
   const CLEANUP = [
     `DELETE FROM admin_menu_registry WHERE owner_type='plugin' AND owner_name='${PLUGIN}'`,
     `DELETE FROM theme_table_defs WHERE owner_type='plugin' AND owner_name='${PLUGIN}'`,
@@ -285,6 +290,14 @@ async function main() {
     `DELETE FROM plugin_setting_defs WHERE plugin_name='${PLUGIN}'`,
     `DELETE FROM plugin_settings WHERE plugin_id IN (SELECT id FROM plugin_installs WHERE name='${PLUGIN}')`,
     `DELETE FROM plugin_installs WHERE name='${PLUGIN}'`,
+    "DELETE FROM menu_items WHERE site_id='pagesite2'",
+    "DELETE FROM menus WHERE site_id='pagesite2'",
+    "DELETE FROM widget_instances WHERE site_id='pagesite2'",
+    "DELETE FROM theme_table_defs WHERE site_id='pagesite2'",
+    "DELETE FROM site_locales WHERE site_id='pagesite2'",
+    "DELETE FROM settings WHERE site_id='pagesite2'",
+    "DELETE FROM posts WHERE site_id='pagesite2'",
+    "DELETE FROM sites WHERE id='pagesite2'",
   ];
   for (const sql of CLEANUP) { try { sqlite.exec(sql); } catch { /* ok */ } }
 
