@@ -778,6 +778,42 @@ check(
   undeclaredVars.map((v) => `${v} is not declared in src/shared/types.ts`).join("\n       ")
 );
 
+// ...and the *same* name must exist in `wrangler.jsonc` `vars`, because that is
+// the deploy-time layer an operator actually edits. Declaring the var on `Env`
+// only makes it *readable*; a switch whose var is absent from the config has no
+// deploy-time fallback at all, and the failure is invisible — `undefined` and
+// `"false"` both resolve to off, so the deploy looks correct until someone sets
+// a var and nothing happens. Checked in both directions: a name in the config
+// that no switch declares is a leftover from a rename, and it silently becomes
+// a var nothing reads.
+//
+// ⚠️ `wrangler.local.jsonc` (the real-ids copy used for every command, and the
+// one whose `vars` block actually ships) is gitignored and cannot be asserted
+// from here; its structural parity with this file is enforced by
+// `tests/tools/_config-parity.mjs` instead.
+const wranglerSrc = read(join(ROOT, "wrangler.jsonc"))
+  .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+let declaredVars = null;
+try { declaredVars = JSON.parse(wranglerSrc).vars ?? null; } catch { declaredVars = null; }
+const varKeys = declaredVars && typeof declaredVars === "object" ? Object.keys(declaredVars) : [];
+check(
+  "wrangler.jsonc declares a vars block",
+  declaredVars !== null && varKeys.length > 0,
+  declaredVars === null ? "unparseable or missing" : `vars has ${varKeys.length} key(s)`
+);
+const varsMissingFromConfig = varNames.filter((v) => !varKeys.includes(v));
+check(
+  "every switch varName is declared in wrangler.jsonc vars",
+  varsMissingFromConfig.length === 0,
+  varsMissingFromConfig.map((v) => `${v} is declared on Env but absent from wrangler.jsonc vars`).join("\n       ")
+);
+const configVarsWithoutSwitch = varKeys.filter((v) => !varNames.includes(v));
+check(
+  "wrangler.jsonc declares no var that no switch reads",
+  configVarsWithoutSwitch.length === 0,
+  configVarsWithoutSwitch.map((v) => `${v} is in wrangler.jsonc vars but no switch declares it`).join("\n       ")
+);
+
 const TABLE_SCREENS = ["table-list", "table-edit"];
 const menuProblems = [];
 for (const [kind, dir] of [["theme", "content/themes"], ["plugin", "content/plugins"]]) {

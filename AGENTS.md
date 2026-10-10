@@ -264,7 +264,7 @@ KV 镜像在免费计划上纯属写入放大器。这类能力一律走**开关
 
 **为什么"每个开关都必须显式声明默认值"是硬规则**：`defaultOn` 漏写时 `undefined` 是假值，
 行为上"看起来是对的"，于是没人会发现这个开关**在文档里被描述成可配置、实际却永远关着**。
-`architecture.test.mjs` 因此断言 `typeof s.defaultOn === "boolean"`，并单独断言两个开关都是 `false`。
+`architecture.test.mjs` 因此断言 `typeof s.defaultOn === "boolean"`，并单独断言每个开关都是 `false`。
 
 **为什么调用点不能自己读 `env`**：`wrangler.jsonc` 的 `vars`、站点 `settings` 行、默认值三层里，
 任何一层被跳过都会得到一个"配了但没生效"的开关——这正是本仓库已修过五次的
@@ -286,6 +286,16 @@ KV 镜像在免费计划上纯属写入放大器。这类能力一律走**开关
 > ⚠️ **开关的"关"方向必须有断言**。`theme-worker.test.mjs` §1–9 全部在开关**开**的前提下跑
 > （那是它们的主体），所以"出厂默认关"这件事**只有 §10 在守**。删掉 §10，套件照样全绿，
 > 而默认关这件事就再也没人验证了——这是本仓库第十三种假绿的形状。
+
+> ⚠️ **`varName` 三处必须同时存在**：`FEATURE_SWITCHES` 里声明、`src/shared/types.ts` 的
+> `Env` 上可读、`wrangler.jsonc` 的 `vars` 里有键。前两条由 `architecture.test.mjs` 断言；
+> 第三条同样由它断言（**双向**：配置里有、没有开关读它的键也算红，那是改名后的残留）。
+> 这不是形式主义：批次 11 把 `vars` 块**只加进了 `wrangler.jsonc`**，而所有命令跑的是
+> `wrangler.local.jsonc`（gitignore，带真 id）——于是线上根本没有 `vars`。**漏一个 var 和写
+> `"false"` 的解析结果都是"关"**，所以这个差异在两个批次里完全隐形，只有"设一个 var → deploy
+> → 发现开关没动"才会暴露。两份配置的结构一致性由 `tests/tools/_config-parity.mjs` 守
+> （进了 `npm run gate`；本地文件不存在时它明确报 **n/a 而不是 pass**，因为"文件不在所以跳过"
+> 正是本仓库最忌讳的假绿）。
 
 ## 多语言与 URL（规则 56–59）
 

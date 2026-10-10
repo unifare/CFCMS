@@ -30,9 +30,10 @@
   // Platform feature switches — the deploy-time fallback layer.
   //
   // Precedence is: per-site `settings` row (editable in the admin, at
-  // Tools -> Features) > these vars > the switch's declared default. Both
-  // switches default to off, so a deploy that sets nothing here writes nothing
-  // to KV and declines `runtime: "worker"` themes.
+  // Tools -> Features) > these vars > the switch's declared default. Every
+  // switch defaults to off, so a deploy that sets nothing here writes nothing
+  // to KV, declines `runtime: "worker"` themes, and keeps the admin's
+  // interface-language menu decoupled from the site's languages (§2.4).
   //
   // Setting a var is how you turn a capability on for *every* site at once
   // without touching the database. Leaving it out is not the same as setting

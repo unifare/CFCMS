@@ -11,7 +11,7 @@
     "db:migrate": "wrangler d1 migrations apply cfpress --remote",
     "db:migrate:local": "wrangler d1 migrations apply cfpress --local",
     "typecheck": "tsc --noEmit",
-    "gate": "node tests/suites/architecture.test.mjs && node tests/suites/manifest-validation.test.mjs && node tests/tools/_schema-scope.mjs && node tests/tools/_locale-url-inject.mjs",
+    "gate": "node tests/suites/architecture.test.mjs && node tests/suites/manifest-validation.test.mjs && node tests/tools/_schema-scope.mjs && node tests/tools/_locale-url-inject.mjs && node tests/tools/_config-parity.mjs",
     "test:engine": "node tests/suites/template-engine.test.mjs",
     "test:architecture": "node tests/suites/architecture.test.mjs",
     "test:integration": "node tests/suites/theme-integration.test.mjs",

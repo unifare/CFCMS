@@ -66,6 +66,10 @@ const CORE_PACK = join(ROOT, "src/platform/i18n/core-pack.ts");
 const PACKS = join(ROOT, "src/platform/i18n/packs.ts");
 const EDITOR_SCREEN = join(ROOT, "public/admin/js/screens/editor.js");
 const API = join(ROOT, "src/api.ts");
+// The deploy-time layer of the feature switches. Editing it is what an operator
+// does to turn a capability on for every site at once, so it is the half of the
+// switch definition that no source-level guard would otherwise see.
+const WRANGLER = join(ROOT, "wrangler.jsonc");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -232,6 +236,60 @@ const SCENARIOS = [
     before: ['    varName: "CFPRESS_CACHE_MIRROR_KV",\n    defaultOn: false,'],
     after: ['    varName: "CFPRESS_CACHE_MIRROR_KV",'],
     runs: [["tests/suites/architecture.test.mjs", "every declared feature switch states its default explicitly"]],
+  },
+  {
+    // A switch whose var is absent from `wrangler.jsonc` has no deploy-time
+    // fallback, and the symptom is indistinguishable from a correct deploy:
+    // `undefined` and `"false"` both resolve to off. It only surfaces when an
+    // operator sets the var, deploys, and finds the switch unchanged — at which
+    // point the config that "obviously" has the var is the last place they look.
+    // The named assertion is the only observer, so it has to be pinned.
+    label: "a switch loses its var from the deploy config",
+    file: WRANGLER,
+    before: ['    "CFPRESS_THEME_RUNTIME_WORKER": "false",\n    "CFPRESS_UI_LOCALE_FOLLOW_SITE": "false"\n'],
+    after: ['    "CFPRESS_THEME_RUNTIME_WORKER": "false"\n'],
+    runs: [["tests/suites/architecture.test.mjs", "every switch varName is declared in wrangler.jsonc vars"]],
+  },
+  {
+    // The mirror image: a var left behind by a rename. Nothing reads it, so the
+    // operator edits it, deploys, and watches a switch that no longer exists
+    // change nothing at all.
+    label: "the deploy config keeps a var no switch reads",
+    file: WRANGLER,
+    before: ['    "CFPRESS_UI_LOCALE_FOLLOW_SITE": "false"\n'],
+    after: ['    "CFPRESS_UI_LOCALE_FOLLOW_SITE": "false",\n    "CFPRESS_UI_LOCALE_FROM_SITE": "false"\n'],
+    runs: [["tests/suites/architecture.test.mjs", "wrangler.jsonc declares no var that no switch reads"]],
+  },
+  {
+    // The drift that actually happened, reproduced: a field added to the
+    // committed config and not to the real-ids copy every command runs against.
+    // It survived two batches because an omitted var and `"false"` both resolve
+    // to off. Pinned against the parity tool rather than the architecture suite
+    // because the architecture suite only ever reads the committed file — it
+    // cannot see the copy that ships.
+    //
+    // ⚠️ The injection lands in `wrangler.jsonc`, not `wrangler.local.jsonc`,
+    // even though the historical drift was the other way round. The local file
+    // is gitignored, so a scenario that wrote to it would depend on a file that
+    // does not exist on a fresh clone, and — worse — a failed restore there
+    // would take this account's real ids with it and go unreported, because
+    // `assertPristine` only covers watched files. Diverging the committed side
+    // trips the identical assertion with none of that risk.
+    label: "the committed config and the local config drift apart",
+    file: WRANGLER,
+    before: ['  "triggers": {"crons": ["*/5 * * * *"]},\n'],
+    after: [''],
+    runs: [["tests/tools/_config-parity.mjs", "the two configs declare the same top-level keys"]],
+  },
+  {
+    // The same divergence, one level down: a `vars` block present on both sides
+    // but holding a different set of switches. Top-level parity would stay green
+    // for this, which is why the parity tool splits the two checks.
+    label: "the two configs disagree about which switches exist",
+    file: WRANGLER,
+    before: ['    "CFPRESS_CACHE_MIRROR_KV": "false",\n'],
+    after: [''],
+    runs: [["tests/tools/_config-parity.mjs", "the two configs declare the same vars keys"]],
   },
   {
     // A switch that defaults to on is a feature nobody asked for, shipping to
@@ -549,7 +607,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
-  BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK, API])];
+  BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK, API, WRANGLER])];
 
 function hashAll() {
   const out = {};

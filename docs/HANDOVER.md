@@ -95,6 +95,13 @@ a81e5e0  Re-key tenant audit verdicts after the mobai batch
 语言；默认关=维持 §2.4 的解耦）。后台 Tools → Features 屏 + `GET/POST /api/v1/features`。
 规则 52–55。
 
+> ⚠️ **批次 11 留了一个两批次没被发现的漂移（`eb5f70b` 修）**：`vars` 块只加进了
+> `wrangler.jsonc`，而**所有命令跑的是 `wrangler.local.jsonc`**——于是线上 Worker 根本没有
+> `vars`，三层优先级只剩两层。隐形的原因是**漏一个 var 和写 `"false"` 解析结果都是"关"**。
+> 现在 `architecture.test.mjs` 双向断言 `varName` ↔ `wrangler.jsonc` 的 `vars` 键，
+> `tests/tools/_config-parity.mjs`（进 `npm run gate`）守两份配置的同构，反向验证各一条。
+> 详见 §11.7。
+
 **批次 12（写入路径修复 + journal 主题）**：三个「200 + 内容错」真缺陷——
 ①`savePost` 对带 id 的 PUT 只 UPDATE（SQLite 零行更新不报错→孤儿翻译行，**判据必须是
 查询结果不是入参形状**）；②`deletePost` 不校验站点归属（A 站可删 B 站文章）；③dashboard
@@ -670,7 +677,13 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 ```bash
 node tests/tools/_schema-scope.mjs           # 迁移流 → 临时 SQLite，逐表核对声明与真实列
 node tests/tools/_tenant-query-audit.mjs     # 列出所有「碰租户表但不带 site_id」的语句；每条需书面裁决
+node tests/tools/_config-parity.mjs          # wrangler.jsonc ↔ wrangler.local.jsonc 结构一致（进 npm run gate）
 ```
+
+⚠️ `_config-parity.mjs` 的**第一条真实命中就是它自己**：写完立刻红了，因为
+`wrangler.local.jsonc` 的**注释里**有一句解释占位符机制的 `REPLACE_WITH_*`——守卫
+原本扫的是**原始文本**，分不清"文档提到占位符"和"占位符没被替换"。改成只扫**解析后的
+值**。写守卫时先问：**我扫的是配置，还是关于配置的散文？**
 
 ⚠️ `_tenant-query-audit.mjs` 的 `REVIEWED` 表**键是 `file:line`**——任何在上方的编辑都会
 把一条已裁决的语句挤成 `NEW`。本轮 `api.ts` 新增若干行后，`theme_installs` 那条从 `:1154`
