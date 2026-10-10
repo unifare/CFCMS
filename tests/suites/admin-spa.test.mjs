@@ -661,6 +661,71 @@ if (modules && !bootError) {
     mediaHtml.includes('id="media-q"') && mediaHtml.includes('id="media-type"'), mediaHtml.slice(0, 200));
   check("a drop zone and an upload control", mediaHtml.includes('id="media-drop"') && mediaHtml.includes('id="upload"'));
   check("and says the library is empty", mediaHtml.includes('class="empty"'));
+
+  // -------------------------------------------------------------------------
+  section("The themes screen reports which sites actually use a theme");
+  // -------------------------------------------------------------------------
+  //
+  // `GET extensions/themes` reports usage as a **response-level** map
+  // (`active_by_site`), not as a field on each item. The screen read
+  // `x.active_by_site` — always `undefined` — so every theme that was not
+  // active *here* claimed "Not in use", and its Uninstall button carried an
+  // empty site list. The pre-emptive "still active on X" dialog was therefore
+  // dead code, and the click went straight to the endpoint's 409: the operator
+  // was told `still active on: acct` by a screen that had just said the theme
+  // was unused. The payload carried the fact the whole time — the consumer
+  // looked for it in the wrong place, which no other check here can see.
+
+  state.user = { username: "admin", role: "admin" };
+  state.sites = [{ id: "default", name: "Default Site", is_default: 1 }, { id: "acct", name: "Acct Test" }];
+  state.site = "default";
+  state.page = "appearance";
+  state.editing = null;
+
+  routeTable.set("/api/v1/extensions/themes", {
+    items: [
+      { name: "accttheme", title: "Acct Theme", version: "1.0.0", active: 0, bundled: 0 },
+      { name: "journal", title: "Journal", version: "1.0.0", active: 0, bundled: 1 },
+      { name: "default", title: "MOBAI", version: "1.0.0", active: 1, bundled: 1 },
+    ],
+    active: "default",
+    active_by_site: { default: "default", acct: "accttheme" },
+    site: "default",
+  });
+  // The active theme's capability summary reads four endpoints; empty lists are
+  // the shape every one of them already handles.
+  for (const p of ["post-types", "routes", "fields", "blocks"]) routeTable.set(`/api/v1/theme/${p}`, { items: [] });
+
+  contentEl.innerHTML = "";
+  await render();
+  const themeHtml = contentEl.innerHTML;
+  check(
+    "the themes screen rendered the installed themes",
+    themeHtml.includes("Acct Theme") && themeHtml.includes("MOBAI") && themeHtml.includes("Journal"),
+    themeHtml.slice(0, 200)
+  );
+  check(
+    "a theme another site uses names that site",
+    themeHtml.includes("Also used by: acct"),
+    themeHtml.match(/Also used by[^<]*/)?.[0] ?? "the card claims no other site uses it"
+  );
+  check(
+    "and its uninstall button carries the site, so the click can explain itself",
+    themeHtml.includes('data-theme-del-sites="acct"'),
+    themeHtml.match(/data-theme-del-sites="[^"]*"/)?.[0] ?? "no uninstall button rendered"
+  );
+  check(
+    "the theme active on this site offers no uninstall at all",
+    !/data-theme-del="default"/.test(themeHtml),
+    "the active theme rendered an uninstall button"
+  );
+  // A bundled theme has no package to remove: the route answers 400 for every
+  // attempt, so the button must not be there in the first place.
+  check(
+    "a bundled theme says so instead of offering an uninstall",
+    themeHtml.includes("Ships with CFPress") && !/data-theme-del="journal"/.test(themeHtml),
+    themeHtml.match(/data-theme-del="[^"]*"/g)?.join(", ") ?? "no uninstall buttons at all"
+  );
 }
 
 // ---------------------------------------------------------------------------

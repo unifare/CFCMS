@@ -197,6 +197,27 @@ async function main() {
   const thDefault = await (await req(worker, env, "/api/v1/extensions/themes", { headers: auth })).json();
   check("admtheme not active on default site", thDefault.items.find((x) => x.name === "admtheme").active, 0);
 
+  // Which themes ship with the product. The uninstall route refuses a bundled
+  // theme with a 400 ("ships with the product"), so the payload has to carry the
+  // fact — without it the Themes screen offers an Uninstall button whose only
+  // possible answer is that refusal, and the operator's sole feedback is an
+  // error message. One fact, two readers: assert they agree rather than that
+  // each is individually plausible.
+  await req(worker, env, "/api/v1/extensions/bootstrap", { method: "POST", headers: auth });
+  const thBundled = await (await req(worker, env, "/api/v1/extensions/themes", { headers: auth })).json();
+  const claimedBundled = thBundled.items.filter((x) => Number(x.bundled) === 1).map((x) => x.name).sort();
+  checkTruthy("the payload marks the themes that ship with the product", claimedBundled.length > 0);
+  const refused = {};
+  for (const n of claimedBundled) {
+    refused[n] = (await req(worker, env, `/api/v1/extensions/themes/${n}`, { method: "DELETE", headers: auth })).status;
+  }
+  check(
+    "every theme the payload calls bundled is refused by uninstall",
+    refused,
+    Object.fromEntries(claimedBundled.map((n) => [n, 400]))
+  );
+  check("an uploaded theme is not reported as bundled", Number(thBundled.items.find((x) => x.name === "admtheme").bundled), 0);
+
   console.log("\n4. CPT CRUD via /content/{type} (what the editor calls)");
   const created = await (await req(worker, env, "/api/v1/content/widget?site=adm", {
     method: "POST", headers: json,

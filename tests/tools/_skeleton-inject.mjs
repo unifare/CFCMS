@@ -73,6 +73,11 @@ const API = join(ROOT, "src/api.ts");
 // defect that made the two disagree on screen.
 const ADMIN_I18N = join(ROOT, "public/admin/js/i18n.js");
 const LANGUAGES_SCREEN = join(ROOT, "public/admin/js/screens/languages.js");
+// The themes screen reads per-site theme usage out of the themes payload. The
+// map lives at the response level, not on each item — reading it off the item
+// is silently `undefined`, so every card claims "Not in use" and the uninstall
+// click lands on the endpoint's 409 naming a site the UI just called unused.
+const THEMES_SCREEN = join(ROOT, "public/admin/js/screens/themes.js");
 // The deploy-time layer of the feature switches. Editing it is what an operator
 // does to turn a capability on for every site at once, so it is the half of the
 // switch definition that no source-level guard would otherwise see.
@@ -640,6 +645,38 @@ const SCENARIOS = [
     after: ["  if (false) {"],
     runs: [["tests/suites/admin-spa.test.mjs", "a refused interface language rejects instead of reporting success"]],
   },
+  // --- the themes screen reads usage from the wrong level -------------------
+  {
+    // The bug the operator reported as "the UI says it is not in use, then the
+    // server refuses": `active_by_site` is on the *response*, and reading it off
+    // each item is always `undefined`. The card renders "Not in use", the
+    // uninstall button carries no site list, the pre-emptive dialog never fires,
+    // and the 409 names a site that was never on screen. Nothing else can see
+    // it — the screen renders, the payload is correct, the endpoint is right.
+    label: "the themes screen looks for per-site usage on the wrong level",
+    file: THEMES_SCREEN,
+    before: ["const others = activeSitesFor(x.name, bySite).filter((s) => s !== state.site);"],
+    after: ["const others = activeSitesFor(x.name, x.active_by_site).filter((s) => s !== state.site);"],
+    runs: [["tests/suites/admin-spa.test.mjs", "a theme another site uses names that site"]],
+  },
+  {
+    // The other half of the same screen: a bundled theme has no package to
+    // remove, so the uninstall route answers 400 for every attempt. Dropping the
+    // flag puts the button back, and the operator's only feedback becomes the
+    // refusal — an action offered with exactly one possible answer.
+    //
+    // ⚠️ The observer is `admin-contract`, not `admin-spa`. The SPA suite renders
+    // the screen from its own stubbed payload, so removing a field from the
+    // endpoint is invisible to it — the first version of this scenario pinned the
+    // SPA assertion and reported "did NOT go red". **The guard has to be one that
+    // can see the defect**: an endpoint change needs a test that calls the
+    // endpoint.
+    label: "the themes payload stops saying which themes ship with the product",
+    file: API,
+    before: ["        bundled:(BUNDLED_THEMES as readonly string[]).includes(String(r.name))?1:0,\n"],
+    after: [""],
+    runs: [["tests/suites/admin-contract.test.mjs", "the payload marks the themes that ship with the product"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -658,7 +695,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
-  ADMIN_I18N, LANGUAGES_SCREEN,
+  ADMIN_I18N, LANGUAGES_SCREEN, THEMES_SCREEN,
   BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK, API, WRANGLER])];
 
 function hashAll() {

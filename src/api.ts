@@ -1678,7 +1678,16 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     // unset row must report empty rather than borrowed.
     const activeForSite=bySite[siteId] ?? "";
     return ok({
-      items:((rows.results as any[])??[]).map(r=>({...r,active:r.name===activeForSite?1:0})),
+      items:((rows.results as any[])??[]).map(r=>({
+        ...r,
+        active:r.name===activeForSite?1:0,
+        // A bundled theme's files live in the Worker's own assets, so there is
+        // no package to remove and the uninstall route answers 400. Reporting
+        // it lets the screen stop offering a button whose only possible answer
+        // is a refusal — the same reason the per-site map above is reported
+        // instead of leaving the client to guess.
+        bundled:(BUNDLED_THEMES as readonly string[]).includes(String(r.name))?1:0,
+      })),
       active:activeForSite,
       active_by_site:bySite,
       site:siteId,

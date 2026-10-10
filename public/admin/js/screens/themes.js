@@ -18,8 +18,21 @@ export default async function themes(c) {
   const site = state.sites.find((s) => s.id === state.site);
   const items = d.items || [];
 
+  // ⚠️ `active_by_site` is the **response-level** map (site id → theme name);
+  // it is NOT a field on each item. This read `x.active_by_site`, which is
+  // always `undefined`, so `others` was always empty: every theme that is not
+  // active *here* claimed "Not in use", and its Uninstall button carried an
+  // empty site list. That made the pre-emptive dialog below unreachable and
+  // sent the click straight into the endpoint's 409 — "still active on: acct",
+  // naming a site the screen had just told the operator was not using it.
+  //
+  // The payload carried the fact all along; the consumer looked for it in the
+  // wrong place. `admin-spa.test.mjs` renders this screen from a payload whose
+  // map is at the response level, so reading it from anywhere else goes red.
+  const bySite = d.active_by_site || {};
+
   const cards = items.map((x) => {
-    const others = activeSitesFor(x.name, x.active_by_site).filter((s) => s !== state.site);
+    const others = activeSitesFor(x.name, bySite).filter((s) => s !== state.site);
     return `<div class="card">
       <div class="card-head">
         <div><div class="card-title" style="font-size:1rem">${esc(x.title)}</div><div class="card-desc">v${esc(x.version)}</div></div>
@@ -32,7 +45,13 @@ export default async function themes(c) {
         ? `<div class="muted text-sm">${esc(t("core.themes.activeHere", "Active on this site"))}</div>`
         : `<div class="muted text-sm">${others.length ? esc(t("core.themes.alsoUsed", "Also used by: {sites}", { sites: others.join(", ") })) : esc(t("core.themes.notInUse", "Not in use"))}</div>
            <button class="btn primary sm" style="margin-top:.75rem" data-theme-activate="${attr(x.name)}">${icon("check")}${esc(t("core.themes.activateHere", "Activate here"))}</button>
-           <button class="btn outline danger sm" style="margin-top:.5rem" data-theme-del="${attr(x.name)}" data-theme-del-sites="${attr(others.join(","))}">${icon("trash")}${esc(t("core.themes.uninstall", "Uninstall"))}</button>`}
+           ${x.bundled
+             // `default` and `journal` ship inside the Worker's assets. Offering
+             // Uninstall here meant every click on them ended in a 400 ("ships
+             // with the product") — an action with exactly one possible answer,
+             // which is a refusal. Say why instead of offering it.
+             ? `<div class="muted text-sm" style="margin-top:.5rem">${esc(t("core.themes.bundled", "Ships with CFPress — cannot be uninstalled"))}</div>`
+             : `<button class="btn outline danger sm" style="margin-top:.5rem" data-theme-del="${attr(x.name)}" data-theme-del-sites="${attr(others.join(","))}">${icon("trash")}${esc(t("core.themes.uninstall", "Uninstall"))}</button>`}`}
     </div>`;
   }).join("");
 

@@ -226,6 +226,13 @@ async function main() {
   // through the Languages screen. Snapshot, normalize, restore.
   const previousSiteLocales = sqlite.prepare("SELECT * FROM site_locales WHERE site_id='default'").all();
   const previousLocales = sqlite.prepare("SELECT * FROM locales").all();
+  // The admin's *own* interface-language preference is a person's setting, not
+  // suite state. Normalizing it below is unavoidable (the assertions read
+  // English), but leaving it NULL means whoever was using this shared dev
+  // database opens their admin in English afterwards and has no idea why — the
+  // same side effect the browser acceptance script used to have. Snapshot it
+  // with the rest of the state this suite touches and put it back at the end.
+  const previousUiLangs = sqlite.prepare("SELECT id, ui_lang FROM site_users").all();
   sqlite.exec(`DROP TABLE IF EXISTS ${I18N_TABLE}`);
   sqlite.exec(`DROP TABLE IF EXISTS ${MAIN_TABLE}`);
   sqlite.exec(`DELETE FROM theme_table_defs WHERE owner_type='theme' AND owner_name='${THEME}'`);
@@ -619,6 +626,10 @@ async function main() {
     insLocale.run(l.code, l.name, l.is_default ?? 0, l.native_name ?? null, l.direction ?? "ltr", l.enabled ?? 1, l.sort_order ?? 0);
   }
   sqlite.exec("DELETE FROM i18n_overrides WHERE site_id='default' AND key='core.action.save'");
+  // Put the operator's interface language back. Only rows that existed at the
+  // start are touched — a user created during the run keeps whatever it has.
+  const setUiLang = sqlite.prepare("UPDATE site_users SET ui_lang=? WHERE id=?");
+  for (const u of previousUiLangs) setUiLang.run(u.ui_lang ?? null, u.id);
   if (previousActive) {
     sqlite.prepare("INSERT INTO settings(id,site_id,key,value,autoload) VALUES(?,?,?,?,1) ON CONFLICT(site_id,key) DO UPDATE SET value=excluded.value")
       .run("setting-theme-active", "default", "theme.active", previousActive);

@@ -71,6 +71,15 @@ function check(name, cond, detail = "") {
   // that left the interface in another language would make every English
   // assertion below read the wrong text — the feature is fine, the state was not
   // reset. Normalise before asserting anything.
+  //
+  // Remember what we found, though: the assertions need `en`, but the operator's
+  // own preference is not this script's to overwrite. It used to force `en` and
+  // leave it there, which silently rewrites a setting that belongs to the person
+  // using the browser — the fix for "why did my admin go back to English".
+  const originalUiLang = await page.evaluate(async () => {
+    const d = await (await fetch("/api/v1/i18n/ui-locale")).json();
+    return d.user_preference || d.locale || "en";
+  });
   const setUiLocale = (locale) =>
     page.evaluate(async (l) => {
       await fetch("/api/v1/i18n/ui-locale", {
@@ -305,6 +314,12 @@ function check(name, cond, detail = "") {
   check("and switching back moves the tick back", (await readTick()) === "en", `tick=${JSON.stringify(await readTick())}`);
   check("with the dictionary back in English",
     /Posts|Dashboard/.test(await page.locator(".sidebar").innerText()));
+
+  // Leave the operator's own interface language as we found it. This script
+  // forces `en` so its assertions can read English; it must not make that a
+  // permanent change to someone's admin.
+  await setUiLocale(originalUiLang);
+  console.log(`\n(interface language restored to "${originalUiLang}")`);
 
   console.log("\n6. Console / network health");
   const real = problems.filter((p) => !/401/.test(p));

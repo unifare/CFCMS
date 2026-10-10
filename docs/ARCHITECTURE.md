@@ -2170,6 +2170,19 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    守卫：`admin-spa.test.mjs`（单写者扫描 + 写者必须重载 + 运行时"保存后勾选跟着走、
    不需要刷新" + "被拒绝时不改语言"）；注入场景 `_skeleton-inject.mjs`（3 个）；
    真浏览器 `_i18n-browser.cjs` §8（Node 守卫只能证代码形状，**证不了两个读者在浏览器里一致**）
+
+【后台屏幕与 payload 契约】（AGENTS.md 规则 68）
+68. 屏幕从**服务端实际放置的层级**读字段；不得提供一个只有"被拒绝"这一种可能结果的按钮
+   a) `GET extensions/themes` 的 `active_by_site` 在**响应根**上，不在每个 item 上。
+      读错层级恒为 `undefined`：不报错、不抛异常、不发失败请求，屏幕只是**说错话**
+      （每个主题都写"未使用"，卸载按钮不带站点，预防性对话框永不可达，
+      运营者点下去只拿到 409 `still active on: X`，而屏幕上刚说 X 没在用）
+   b) 端点知道的事实必须随 payload 下发：捆绑主题的卸载**只会** 400，
+      所以 `items[].bundled` 必须下发，屏幕据此改成一句说明而不是一个必然失败的按钮
+   c) **守卫必须能看见缺陷**：改端点的缺陷要由"真的调端点"的套件观察
+      （`admin-contract`），SPA 套件用的是自造 payload，看不见端点改动
+   守卫：`admin-spa.test.mjs`（真 payload 形状渲染屏幕）、`admin-contract.test.mjs`
+   （`bundled` 与端点的拒绝逐条一致）；注入场景 `_skeleton-inject.mjs`（2 个）
 ```
 
 ---

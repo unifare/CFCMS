@@ -197,7 +197,50 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
 
-**批次 18（界面语言偏好：一个写者、两个读者）—— ✅ 本轮完成**
+**批次 19（主题卸载：两条报错，一个是设计，一个是屏幕在说谎）—— ✅ 本轮完成**
+
+起点是用户的两条报错：`"journal" ships with the product and cannot be uninstalled` 与
+`still active on: acct`，以及"现在的主题也不是他们"。
+
+| 项 | 结论 |
+|---|---|
+| `journal` 卸不掉 | **设计如此**：`BUNDLED_THEMES = default / journal` 的模板经 Worker assets 分发（规则 66），没有 R2 包可删、下次 deploy 又回来，所以端点一律 400 |
+| `still active on: acct` | **守卫是对的**：`settings` 里 `site_id='acct'` 的 `theme.active` 就是那个主题。判据**逐站点**（`theme_installs.active` 是全局标志，不可信） |
+| `acct` 是什么 | **测试残留**：套件共享本地 D1，留下 4 个测试站点（`acct`/`adm`/`shop`/`de`）+ 4 个测试主题（`accttheme`/`admtheme`/`shoptheme`/`detheme`），每个都把自己的主题激活在自己站点上 |
+| ⚠️ **屏幕在说谎（真缺陷）** | 主题卡对**所有**不在本站激活的主题都写"未使用"，卸载按钮不带站点 → 那句"仍被以下站点激活：X"的**预防性对话框永远不可达** → 点下去必然拿到 409，而屏幕上刚说没人用它 |
+
+**根因（规则 68a）**：`GET extensions/themes` 的按站点占用表 `active_by_site` 在**响应根**上，
+而 `themes.js` 读的是 `x.active_by_site`（每个 item 上）——**恒为 `undefined`**。
+`undefined` 不报错、不抛异常、不发失败请求，屏幕只是**说错话**。payload 一直带着这个事实。
+
+| 修法 | 状态 |
+|---|---|
+| `themes.js` 从响应根读 `d.active_by_site`（`others` 现在真的算出 `["acct"]`） | ✅ |
+| 端点补 `items[].bundled`（规则 68b），屏幕对捆绑主题改显示"随 CFPress 一起提供，无法卸载"，**不再给一个必然失败的按钮** | ✅ |
+| `admin-spa` +5（51→**56**）：用**真 payload 形状**渲染主题屏，断言卡片点名站点 + 按钮带站点 + 本站激活的主题没有卸载按钮 + 捆绑主题没有卸载按钮 | ✅ |
+| `admin-contract` +3（51→**54**）：`bundled` 必须与端点的拒绝**逐条一致**（一个事实两个读者，断言它们一致） | ✅ |
+| 注入场景 +2（→**53**） | ✅ |
+| 真浏览器实测：卡片显示"亦被使用于：acct"；点卸载弹"仍被以下站点激活：acct，请先在那里停用"，**不发任何 DELETE 请求**；`journal` 卡片没有卸载按钮 | ✅ |
+
+**顺带修掉两个"测试改写了运营者设置"的副作用**（都是同一形状：套件把一个人的偏好当成自己的状态）：
+
+- `_i18n-browser.cjs` 为了断言英文，会把界面语言强制成 `en` **并留在那里**。现在开头记住
+  `user_preference`，结尾原样放回（`(interface language restored to "zh-CN")`）。
+- `i18n.test.mjs` 的幂等清理把非 `en` 的 `ui_lang` 置 `NULL`（为了断言确定性），
+  于是跑一次套件，运营者的后台就变回英文。现在**快照 + 原样放回**（与该套件已有的
+  `theme_routes`/`admin_menu_registry`/`site_locales`/`locales`/`theme.active` 五样同一纪律）。
+
+**这一批的教训**：
+
+1. **读错层级的字段是"静默错话"**，它和"声明先于运行时"是**镜像**：那边是字段没人读，
+   这边是读了不存在的地方。两者都不报错，都只能靠**拿真 payload 渲染**来发现。
+2. ⚠️ **守卫必须能看见缺陷**。捆绑标记那条断言第一次钉在 `admin-spa` 上，注入删掉端点字段后
+   **没红**——SPA 套件用的是**自造 payload**，看不见端点改动。改端点的缺陷要由真的调端点的
+   套件观察。注入工具把它报成 `scenario INVALID`，**这是它在干活**。
+3. **一个只有唯一可能结果（被拒）的按钮，是错误制造机**。端点在同一个响应里知道答案，
+   就下发它；让屏幕去解释，而不是让运营者去撞。
+
+### 批次 18（界面语言偏好：一个写者、两个读者）—— ✅ 本轮完成
 
 起点是用户的一句报告：**"Your interface language 是 en，但是下拉的还是勾选的 zh"**，
 以及"停用 zh-CN 后语言下拉里还是有中文"。两件事、两个答案。
@@ -705,7 +748,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：25 套件 / 1425 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 26 项 / 1451 条）
+## 6. 测试与验证（当前全绿：25 套件 / 1433 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 26 项 / 1459 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -718,7 +761,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | _schema-scope | 26 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
-| admin-spa | 51 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次、**内容编辑器真渲染（新条目 / 已存在条目）：排期往返 + `#locale` 只读 + 自动保存定时器起停**、**媒体屏：查询串形状与编码 + 分页算术（空 payload 不产出 NaN）+ 瓦片走共享 URL + 垃圾行不产出瓦片 + 工具栏/投放区/上传控件**、**规则 67 界面语言偏好：单写者扫描（只有 `js/i18n.js` 能写）+ 写者自己重载字典 + 运行时"保存后顶部勾选跟着走、不需要刷新" + "被拒绝时不改语言"** |
+| admin-spa | 56 | 后台模块图无环/无孤儿、`window.*` 契约、每个屏幕真渲染一次、**内容编辑器真渲染（新条目 / 已存在条目）：排期往返 + `#locale` 只读 + 自动保存定时器起停**、**媒体屏：查询串形状与编码 + 分页算术（空 payload 不产出 NaN）+ 瓦片走共享 URL + 垃圾行不产出瓦片 + 工具栏/投放区/上传控件**、**规则 67 界面语言偏好：单写者扫描（只有 `js/i18n.js` 能写）+ 写者自己重载字典 + 运行时"保存后顶部勾选跟着走、不需要刷新" + "被拒绝时不改语言"** |
 | template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
 | scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
 | theme-integration | 101 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
@@ -728,7 +771,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | theme-default | 52 | default 主题（墨白 MOBAI）：模板真渲染 + head 的 SEO 契约（canonical/og/hreflang/feed）+ 语言包键完整性 |
 | multisite | 94 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |
 | i18n | 75 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
-| admin-contract | 51 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、**调色板下发的 attrs 契约（类型/必填/翻译标签/`itemKeys`/容器标记）**、dashboard cards 数组、设置 options 往返） |
+| admin-contract | 54 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、**调色板下发的 attrs 契约（类型/必填/翻译标签/`itemKeys`/容器标记）**、dashboard cards 数组、设置 options 往返） |
 | **media-picker** | **31** | **统一媒体控件（批次 16 Track A3 新增）**：`mediaUrl()` 的形状与**能被读取路径解回同一个 key** / `mediaItem()` 归一化（`media_files` 行与已存值两种输入、垃圾输入拒绝）/ 坏 payload 不炸对话框 / 控件的单值与多值两种形态 + 调用方寻址透传 + 转义 / **闭环：选择器给的 URL，真实渲染器画得出图片与画廊** / 三个消费点都走共享控件 |
 | **editor-blocks** | **40** | **块 attrs 契约的往返（批次 16 Track B1 新增）**：契约良构（类型闭集合/标签/`itemKeys`）+ **契约 → 控件 → 写入的属性键 → 真实渲染器 markup** 的往返 + `required` 的语义（无 url 的图片渲染空）+ 嵌套寻址（子块按路径写入、父块不被穿透）+ **§8 反向对照**（按旧编辑器形状构造的图片/画廊/HTML 块必须渲染为空） |
 | **media** | **69** | **媒体访问（批次 16 Track 0 新增）**：租户闸门（跨站 key → 404）/ 会话闸门 / **owner 硬隔离（含管理员）** / legacy `uploaded_by IS NULL` 的祖父条款 / 上传写归属 + 站点必须真实存在 / 列表按 owner 收窄 + `q`/`type`/分页/`total` / dashboard 媒体卡与列表 total 一致 / PATCH alt·title（非 owner 403、无 `media.write` 403、别站 id 404）/ **DELETE 先删 R2 对象再删行** / 脏策略行 fail-closed / **站点列表 memo 的 per-request 复位**（§1：先发前台请求 → 再建站点 → 再请求它） |
@@ -968,7 +1011,7 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
 
 全部集中在入口的 `WINDOW_HANDLERS` 映射里，一眼可见。
 
-### 配套测试 `tests/suites/admin-spa.test.mjs`（51 条）
+### 配套测试 `tests/suites/admin-spa.test.mjs`（56 条）
 
 1. 相对 import 全部可解析；模块图无环（DFS，报出完整环路径）；无孤儿模块
 2. `window.*`：入口有 `WINDOW_HANDLERS` 映射；17 个一个不少；markup 里调用的名字全部登记过
@@ -1237,6 +1280,22 @@ markup 用内联 `onclick="name(...)"`，浏览器解析在 `window` 上、不�
     `if (typeof condition !== "boolean") throw` 立刻抛了 `TypeError`——
     **守卫抓到了写守卫的人**。这是把词法模式换成运行时类型检查的回报：
     模式只能禁"想到的拼法"，类型检查覆盖整类。
+52. **主题卸不掉：先查 `settings` 里 `theme.active` 是哪个站点占着（批次 19）**。
+    两条报错含义完全不同：`"X" ships with the product` = 捆绑主题（`default`/`journal`），
+    **设计上就不可卸载**（文件在 Worker assets 里，下次 deploy 又回来）；
+    `still active on: acct` = 有个站点把它设成了当前主题，**判据逐站点**、
+    由 `SELECT site_id FROM settings WHERE key='theme.active' AND value=?` 得出
+    （`theme_installs.active` 是全局重算标志，**不可信**）。卸载前必须先去那些站点换主题，
+    或者删掉那些站点（`deleteSite` 会清 `theme.active`）。
+    ⚠️ **本地 dev 库常年被套件污染**：实测残留 4 个测试站点（`acct`/`adm`/`shop`/`de`）
+    + 4 个测试主题（`accttheme`/`admtheme`/`shoptheme`/`detheme`），每个都激活在自己站点上——
+    所以"我没在用这个主题"经常只是**没在看那个站点**。
+53. **测试不得改写运营者自己的设置（批次 19）**。共享 dev 库上出现两次同形状的副作用：
+    ① `_i18n-browser.cjs` 为了断言英文，把界面语言强制成 `en` **并留在那里**；
+    ② `i18n.test.mjs` 的幂等清理把非 `en` 的 `ui_lang` 置 `NULL`（为了确定性）。
+    两者都让"跑过一次测试"= "我的后台变回英文了"。正解与套件处理
+    `theme_routes`/`site_locales`/`theme.active` 同一纪律：**开头快照、结尾原样放回**。
+    **判据：这不是套件的状态，是一个人的偏好。**
 
 ## 9. 权威文档索引
 
