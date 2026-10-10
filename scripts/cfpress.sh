@@ -332,7 +332,13 @@ act_audit() {
   head1 "query-level tenant audit (report-only)"
   node tests/tools/_tenant-query-audit.mjs
   b=$?
-  [ "$a" -eq 0 ] && [ "$b" -eq 0 ]
+  head1 "settings keys are declared (two-level settings)"
+  node tests/tools/_setting-keys.mjs
+  c=$?
+  head1 "no behaviour pinned to one language"
+  node tests/tools/_locale-literal.mjs
+  d=$?
+  [ "$a" -eq 0 ] && [ "$b" -eq 0 ] && [ "$c" -eq 0 ] && [ "$d" -eq 0 ]
 }
 
 act_make() {

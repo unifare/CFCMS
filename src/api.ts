@@ -8,6 +8,7 @@ import { unzipSync } from "fflate";
 import { validateManifest } from "./extensions/contract/validation";
 import { CAPABILITIES } from "./extensions/contract/capabilities";
 import { PURGE_ON_SITE_DELETE } from "./extensions/contract/schema";
+import { SETTING_DEFS, getSetting, setSetting, platformSetting, setPlatformSetting, isDeclaredSetting, settingDef } from "./platform/settings";
 import { safeZipPath, sha256 } from "./extensions/security";
 import { createRevision, autosave } from "./platform/revisions";
 import { requirePermission, can } from "./platform/permissions";
@@ -702,16 +703,57 @@ async function saveFeature(env: Env, userId: string, body: any, siteId: string) 
 async function saveSetting(env: Env, userId: string, body: any, siteId: string) {
   const key = String(body.key ?? "");
   if (!key) return ok({ error: "key required" }, 400);
-  const value = String(body.value ?? "");
-  const existing = await env.DB.prepare("SELECT id FROM settings WHERE site_id=? AND key=?").bind(siteId, key).first<any>();
-  if (existing) {
-    await env.DB.prepare("UPDATE settings SET value=? WHERE id=?").bind(value, existing.id).run();
-  } else {
-    await env.DB.prepare("INSERT INTO settings (id, site_id, key, value, autoload) VALUES (?, ?, ?, ?, 1)")
-      .bind(await randomId(), siteId, key, value).run();
+  if (!isDeclaredSetting(key)) return ok({ error: `undeclared setting key: ${key}` }, 400);
+  if (settingDef(key)!.scope !== "site") {
+    return ok({ error: `setting ${key} is not site-scoped (use the platform settings endpoint)` }, 400);
   }
+  const value = String(body.value ?? "");
+  await setSetting(env, siteId, key, value);
   await activity(env, userId, "update", "setting", key, { siteId });
   return ok({ ok: true });
+}
+
+/**
+ * Platform-scoped settings: one row for the whole install, readable and
+ * writable only with `platform.manage`.
+ *
+ * These are the keys that mean the same thing for every site — where the admin
+ * lives, whether registration is open — and they live in their own table
+ * (`platform_settings`) rather than in `settings(site_id='*')`, because
+ * `settings` is site-scoped and `deleteSite()` purges it per site.
+ */
+async function platformSettingsList(env: Env) {
+  const read = [];
+  for (const d of SETTING_DEFS.filter((x) => x.scope === "platform")) {
+    const value = await platformSetting(env, d.key);
+    read.push({ key: d.key, value, default: d.default as string | null, type: d.type });
+  }
+  return ok({ items: read, install: "platform" });
+}
+
+async function savePlatformSetting(env: Env, userId: string, body: any) {
+  const key = String(body.key ?? "");
+  if (!key) return ok({ error: "key required" }, 400);
+  if (!isDeclaredSetting(key)) return ok({ error: `undeclared setting key: ${key}` }, 400);
+  if (settingDef(key)!.scope !== "platform") {
+    return ok({ error: `setting ${key} is not platform-scoped (use the site settings endpoint)` }, 400);
+  }
+  // `admin.path` is the one platform key that is also a *route*, so it has to
+  // stay a shape the router and the SPA can both use: it must start with `/`,
+  // must not end with one (the SPA appends its own segments), and must be
+  // nothing but lowercase letters, digits, `-`, `_` and `/`. Rejecting here is
+  // what stops an operator from typing themselves out of their own admin.
+  if (key === "admin.path") {
+    const value = String(body.value ?? "");
+    if (!/^\/[a-z0-9/_-]*$/.test(value) || value.endsWith("/")) {
+      return ok({ error: "admin.path must start with '/' and use only lowercase letters, digits, '-', '_' or '/'" }, 400);
+    }
+    if (value === "/") return ok({ error: "admin.path cannot be the site root" }, 400);
+  }
+  const value = body.value === null || body.value === undefined ? null : String(body.value);
+  await setPlatformSetting(env, key, value);
+  await activity(env, userId, "update", "platform-setting", key, { value });
+  return ok({ ok: true, key, value });
 }
 
 /**
@@ -1667,6 +1709,14 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
   if (mediaItem && method === "DELETE") { if(!(await requirePermission(env,user,"media.write"))) return ok({error:"Forbidden"},403); return mediaDelete(env, user.id, decodeURIComponent(mediaItem[1]), siteId); }
   if (path === "settings" && method === "GET") return settings(env, siteId);
   if (path === "settings" && method === "POST") { if(!(await requirePermission(env,user,"settings.manage"))) return ok({error:"Forbidden"},403); return saveSetting(env, user.id, await jsonBody(request), siteId); }
+  if (path === "platform-settings" && method === "GET") {
+    if(!(await requirePermission(env,user,"platform.manage"))) return ok({error:"Forbidden"},403);
+    return platformSettingsList(env);
+  }
+  if (path === "platform-settings" && method === "POST") {
+    if(!(await requirePermission(env,user,"platform.manage"))) return ok({error:"Forbidden"},403);
+    return savePlatformSetting(env, user.id, await jsonBody(request));
+  }
 
   // Platform feature switches. GET needs no extra permission beyond being
   // logged in (the same call `settings` makes); POST needs `settings.manage`,

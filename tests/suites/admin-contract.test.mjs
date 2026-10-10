@@ -482,6 +482,33 @@ async function main() {
   // Leave the shared local D1 as we found it (see `sweep` above).
   sweep();
 
+  // Leave the shared local D1 as we found it (see `sweep` above).
+  sweep();
+
+  console.log("\n15. Platform settings: a second level, with its own permission");
+  // Two levels, two endpoints, two permissions. The platform level is where
+  // keys that mean the same thing for every site live (`admin.path`); writing
+  // it needs `platform.manage`, and a *site*-scoped key cannot be written
+  // through it - otherwise the two levels would blur back into one.
+  const pList = await req(worker, env, "/api/v1/platform-settings", { headers: auth });
+  check("platform settings list answers to an admin", pList.status, 200);
+  const pBody = await pList.json();
+  check("the backend path is declared with its default",
+    (pBody.items || []).find((x) => x.key === "admin.path")?.value, "/admin");
+  const pMove = await req(worker, env, "/api/v1/platform-settings", { method: "POST", headers: json, body: JSON.stringify({ key: "admin.path", value: "/manage" }) });
+  check("the backend path can be moved", pMove.status, 200);
+  const pAfter = await (await req(worker, env, "/api/v1/platform-settings", { headers: auth })).json();
+  check("and the move is visible on the next read",
+    (pAfter.items || []).find((x) => x.key === "admin.path")?.value, "/manage");
+  const pBack = await req(worker, env, "/api/v1/platform-settings", { method: "POST", headers: json, body: JSON.stringify({ key: "admin.path", value: "/admin" }) });
+  check("and moved back", pBack.status, 200);
+  const pUndeclared = await req(worker, env, "/api/v1/platform-settings", { method: "POST", headers: json, body: JSON.stringify({ key: "nope.setting", value: "x" }) });
+  check("an undeclared key is refused", pUndeclared.status, 400);
+  const pSiteKey = await req(worker, env, "/api/v1/platform-settings", { method: "POST", headers: json, body: JSON.stringify({ key: "site.title", value: "x" }) });
+  check("a site-scoped key cannot be written through the platform endpoint", pSiteKey.status, 400);
+  const pRoot = await req(worker, env, "/api/v1/platform-settings", { method: "POST", headers: json, body: JSON.stringify({ key: "admin.path", value: "/" }) });
+  check("the backend path cannot be the site root", pRoot.status, 400);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));
   sqlite.close();

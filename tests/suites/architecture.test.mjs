@@ -2410,6 +2410,25 @@ section("The schema declaration covers the real database (§10 rules 41–44)");
   // declared platform table would make `scopeOf()` ambiguous.
   const runtimeBlock = schemaSrc.match(/export const RUNTIME_TABLES\s*=\s*\[([\s\S]*?)\]\s*as const/);
   const runtimeNames = runtimeBlock ? [...runtimeBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+
+  // Settings are two-level (platform | site) and every key has to say which.
+  // The declaration is a leaf module (`setting-defs.ts`) so tools can read it
+  // without importing the Worker types; the *ladder* is allowed to exist in
+  // exactly one module, because a second `getSetting` is a second answer to
+  // "which level decided this value" — the same defect rule 70 closed for
+  // `post_meta`.
+  const defsPath = "src/platform/setting-defs.ts";
+  const defsSrc = read(join(ROOT, defsPath));
+  const scopeValues = [...defsSrc.matchAll(/scope:\s*"(platform|site)"/g)].map((m) => m[1]);
+  check("the settings declaration was actually parsed (non-vacuity)", scopeValues.length > 0, `${scopeValues.length} declared key(s)`);
+  check("every settings key declares a scope (platform | site)",
+    scopeValues.length === [...defsSrc.matchAll(/key:\s*"/g)].length,
+    `${scopeValues.length} scope(s) for ${[...defsSrc.matchAll(/key:\s*"/g)].length} key(s)`);
+  const ladderDefs = [];
+  for (const f of ["src/platform/settings.ts", "src/platform/frontend.ts", "src/api.ts"]) {
+    if (new RegExp(`export (?:async )?function getSetting\\b`).test(read(join(ROOT, f)))) ladderDefs.push(f);
+  }
+  checkEmpty("the settings read ladder is defined in exactly one module", ladderDefs.filter((f) => f !== "src/platform/settings.ts"));
   check(
     "the runtime table list was parsed (non-vacuity)",
     runtimeNames.length > 0,

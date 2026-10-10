@@ -15,6 +15,7 @@
 export const CAPABILITIES = [
   "content.read", "content.write", "settings.read", "settings.write",
   "media.read", "media.write", "routes.register", "admin.register",
+  "platform.manage",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

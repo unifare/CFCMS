@@ -435,7 +435,13 @@ function Invoke-Audit {
     Write-Head 'query-level tenant audit (report-only)'
     & node tests/tools/_tenant-query-audit.mjs
     $b = $LASTEXITCODE
-    if ($a -eq 0 -and $b -eq 0) { return 0 } else { return 1 }
+    Write-Head 'settings keys are declared (two-level settings)'
+    & node tests/tools/_setting-keys.mjs
+    $c = $LASTEXITCODE
+    Write-Head 'no behaviour pinned to one language'
+    & node tests/tools/_locale-literal.mjs
+    $d = $LASTEXITCODE
+    if ($a -eq 0 -and $b -eq 0 -and $c -eq 0 -and $d -eq 0) { return 0 } else { return 1 }
 }
 
 function Invoke-Make {
