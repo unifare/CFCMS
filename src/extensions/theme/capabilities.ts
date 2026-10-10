@@ -10,6 +10,8 @@ import { Env } from "../../shared/types";
 import { now } from "../../shared/repo";
 import { randomId } from "../../shared/crypto";
 import { syncOwnerTables } from "./tables";
+import { activeTheme } from "./runtime-declarative";
+import { listSites } from "../../platform/sites";
 import { registerOwnerMenus, clearOwnerMenus, listOwnerMenus } from "../../platform/admin-menus";
 import type {
   ThemeManifest,
@@ -249,6 +251,93 @@ export async function clearThemeCapabilities(
   await clearOwnerMenus(env, siteId, "theme", themeName);
   // Settings are per-theme; keep definitions but they simply stop being used.
   void ts;
+}
+
+/**
+ * Install a theme's declared capabilities wherever it is the theme that
+ * renders, when they are not installed yet.
+ *
+ * **Why a registry row is not an install.** `seedBundledExtensions`
+ * (`extensions/plugin/runtime.ts`) upserts the `theme_installs` row for every
+ * bundled theme, and that alone is enough to make one *render*: `activeTheme()`
+ * falls back to `ORDER BY active DESC, installed_at ASC` and probes for a
+ * loadable `index.html`. It is not enough to make one *own* anything.
+ * Activation is a user action and a fresh install has none in it, so a
+ * brand-new deployment served the bundled theme while the theme owned nothing:
+ * `GET theme/fields` answered `{"items":[]}`, the editor therefore offered no
+ * custom fields, and `savePost`'s `fieldExists` gate dropped every `meta` value
+ * on the way in — HTTP 200, no error, nothing written. Measured on a fresh
+ * production install: the demo content's `category`/`tags` came back `{}` and
+ * every home page read "Uncategorised" in both languages.
+ *
+ * **Why it is chained from `index.ts` rather than done in the seeder.** Rule 4
+ * forbids `plugin/` from importing `theme/`, so the seeding path cannot call
+ * this itself. `index.ts` is the one module allowed to know both layers, and
+ * it already owns the boot sequence.
+ *
+ * **Why the predicate is "owns nothing" and not a version stamp.** A stamp
+ * records "theme X at version V was installed here", so it has to be
+ * invalidated by *anything* that deletes capability rows. The test suites
+ * delete exactly those rows on purpose (they share one local D1), and a stamp
+ * would therefore refuse to repair the one state it exists to repair. Counting
+ * rows costs a single query and self-heals.
+ *
+ * Runs on boot inside `ctx.waitUntil`, so the common case is written to be
+ * free: one `listSites`, one `activeTheme`, one count per site.
+ *
+ * Known and accepted: a theme whose manifest declares *only* `settings[]` or
+ * `tables[]` has nothing in the counted tables, so it re-runs this on every
+ * boot. Every statement in `applyThemeCapabilities` is an upsert or a
+ * `DELETE ... WHERE declared_by_theme=?`, so the repeat is idempotent; it is
+ * noted here rather than hidden.
+ */
+export async function ensureThemeCapabilities(env: Env): Promise<number> {
+  let installed = 0;
+  for (const site of await listSites(env)) {
+    try {
+      const theme = await activeTheme(env, site.id);
+      // A theme that declares none of the countable kinds owns nothing *by
+      // design*, so asking whether it owns anything would be a question with
+      // no wrong answer — and answering "no" every boot would re-install it
+      // forever.
+      const m = theme.manifest;
+      const declares =
+        (m.postTypes?.length ?? 0) +
+        (m.taxonomies?.length ?? 0) +
+        (m.fields?.length ?? 0) +
+        (m.routes?.length ?? 0) +
+        (m.blocks?.length ?? 0) +
+        (m.adminMenus?.length ?? 0);
+      if (!declares) continue;
+
+      // One query, six sources — the five tables `clearThemeCapabilities`
+      // deletes from, plus the menu registry it clears through its own API.
+      // The predicate has to mirror the clear, or "installed" and "not
+      // installed" would disagree about the same theme.
+      const row = await env.DB.prepare(
+        `SELECT (
+           (SELECT COUNT(*) FROM post_types   WHERE site_id=? AND declared_by_theme=?) +
+           (SELECT COUNT(*) FROM taxonomies   WHERE site_id=? AND declared_by_theme=?) +
+           (SELECT COUNT(*) FROM field_defs   WHERE site_id=? AND declared_by_theme=?) +
+           (SELECT COUNT(*) FROM theme_routes WHERE site_id=? AND declared_by_theme=?) +
+           (SELECT COUNT(*) FROM theme_blocks WHERE site_id=? AND declared_by_theme=?) +
+           (SELECT COUNT(*) FROM admin_menu_registry
+              WHERE site_id=? AND owner_type='theme' AND owner_name=?)
+         ) AS owned`
+      )
+        .bind(site.id, theme.name, site.id, theme.name, site.id, theme.name, site.id, theme.name, site.id, theme.name, site.id, theme.name)
+        .first<any>();
+      if (Number(row?.owned ?? 0) > 0) continue;
+
+      await applyThemeCapabilities(env, theme.name, theme.manifest, site.id);
+      installed++;
+    } catch {
+      // Boot must never be the thing that breaks a request. A repair that
+      // cannot run leaves the install exactly as it was before this function
+      // existed, which is a state the site already renders from.
+    }
+  }
+  return installed;
 }
 
 // ---------------------------------------------------------------------------

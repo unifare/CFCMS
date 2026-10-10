@@ -1966,6 +1966,85 @@ section("Bundled themes ship through Worker assets (rule 66)");
 }
 
 // ---------------------------------------------------------------------------
+section("A registry row is not an install (rule 69)");
+// ---------------------------------------------------------------------------
+
+/**
+ * Rule 66 gave bundled themes a distribution channel, and
+ * `seedBundledExtensions` writes the `theme_installs` row that makes one
+ * renderable. It does not make the theme *own* anything. Activation is a user
+ * action, and a fresh install has no user action in it.
+ *
+ * Measured on a fresh production install, before the fix: the bundled theme
+ * served every page, `/zh-CN` and the language switcher included, while
+ * `GET theme/fields` answered `{"items":[]}`. With no declared fields the
+ * editor offered none, and `savePost`'s `fieldExists` gate dropped every
+ * `meta` value on the way in — HTTP 200, no error, nothing written. The demo
+ * content's `category`/`tags` came back `{}` and both home pages read
+ * "Uncategorised". The visible symptom looked like a content problem; the
+ * cause was that the theme had never been installed.
+ *
+ * Rule 4 forbids `plugin/` from importing `theme/`, so the seeder cannot
+ * repair this itself. `index.ts` — the one module allowed to know both layers
+ * — is where the two halves are chained, and this section pins that chain.
+ * The behavioural half is the local probe recorded in HANDOVER: delete
+ * `field_defs` for the site, restart the dev server so the isolate boots
+ * fresh, and the fields come back with no activation call anywhere.
+ *
+ * Reverse validation: `tests/tools/_skeleton-inject.mjs` drops the second call
+ * out of the boot chain, and separately replaces the row count with a version
+ * stamp; the named assertions below must go red on each defect.
+ */
+{
+  const bootSrc = blankComments(read(join(ROOT, "src/index.ts")));
+  const capSrc = blankComments(read(join(ROOT, "src/extensions/theme/capabilities.ts")));
+
+  const seeds = /await seedBundledExtensions\(env\)/.test(bootSrc);
+  const installs = /await ensureThemeCapabilities\(env\)/.test(bootSrc);
+  check(
+    "the boot sequence installs what it registers",
+    seeds && installs,
+    `seed=${seeds} install=${installs}`
+  );
+
+  // Order is the assertion, not a detail: `ensureThemeCapabilities` resolves
+  // the active theme out of `theme_installs`, which is the row the seeding
+  // call is what creates. Reversed, it would read an empty registry on the
+  // very boot it exists to repair.
+  const seedAt = bootSrc.indexOf("await seedBundledExtensions(env)");
+  const installAt = bootSrc.indexOf("await ensureThemeCapabilities(env)");
+  check(
+    "and it registers before it installs (rule 69a)",
+    seedAt >= 0 && installAt > seedAt,
+    `seed@${seedAt} install@${installAt}`
+  );
+
+  check(
+    "the installer is a real function, not just a declaration (rule 69b)",
+    /export async function ensureThemeCapabilities\(/.test(capSrc)
+  );
+
+  // The predicate has to be a *measurement*. A version stamp records "theme X
+  // at version V was installed here", so it must be invalidated by anything
+  // that deletes capability rows — and the suites delete exactly those rows on
+  // purpose. A stamp would therefore refuse to repair the one state it exists
+  // to repair, which is the defect it was introduced to fix.
+  check(
+    "the installed/not-installed predicate counts rows (rule 69c)",
+    /SELECT COUNT\(\*\) FROM field_defs\s+WHERE site_id=\? AND declared_by_theme=\?/.test(capSrc)
+  );
+
+  // And it has to mirror the clear, or "installed" and "not installed" would
+  // disagree about the same theme: `clearThemeCapabilities` deletes from five
+  // tables plus the menu registry, so the count has to ask about all of them.
+  const cleared = ["post_types", "taxonomies", "field_defs", "theme_routes", "theme_blocks"];
+  const missingFromCount = cleared.filter(
+    (t) => !new RegExp(`SELECT COUNT\\(\\*\\) FROM ${t}\\s`).test(capSrc)
+  );
+  checkEmpty("the predicate mirrors the clear (rule 69d)", missingFromCount);
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

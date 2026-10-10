@@ -1,7 +1,8 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-10-10 (GMT+8) ｜ 交接基线：**批次 21 —— 默认主题的中文版与切换器、文章页切换器读翻译自己的 URL、中英双语演示内容、规则 25**
-> （批次 20 journal 主题从产品移除 + 测试夹具主题不再被发布到线上；
+> 更新时间：2026-10-10 (GMT+8) ｜ 交接基线：**批次 22 —— 双语内容上线、注册行不等于安装（规则 69）、启动链自动安装主题声明**
+> （批次 21 默认主题的中文版与切换器、文章页切换器读翻译自己的 URL、中英双语演示内容、规则 25；
+> 批次 20 journal 主题从产品移除 + 测试夹具主题不再被发布到线上；
 > 批次 19 主题卸载：读错层级 + 不可能成功的按钮；批次 18 界面语言偏好：一个写者两个读者；
 > 批次 16 Track 0 + B1 + A3 + B3 媒体隔离 / 块 attrs 契约 / 统一媒体控件 / 编辑器界面翻译；
 > 批次 15 数据驱动后台；批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；
@@ -200,7 +201,87 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
 
-**批次 21（中文版 / 切换器 / 中文内容）—— ✅ 本轮完成**
+**批次 22（双语内容上线 + 注册行不等于安装）—— ✅ 本轮完成**
+
+批次 21 的收尾是用户的第三个选择：**"本地 + 线上都做"**。本地那一半已完成并验证，
+这一轮补线上，**而线上立刻暴露了一个真缺陷**。
+
+| 检查项 | 线上（播种前） | 线上（播种后） |
+|---|---|---|
+| `/` 与 `/zh-CN` | 200，但都是"还没有发布任何内容" | 200，**各 5 篇**，标题各按语言 |
+| 切换器 | 已有（`en / zh-CN`） | 已有，且**文章页指向译文自己的 slug** |
+| 中文主题文案 | 已生效 | 已生效 |
+| `/zh-CN/feed.xml` | 空 | **5 条**，中文标题 + 中文 slug |
+| `/sitemap.xml` | 只有 2 条语言首页 | **14 条**（7 en + 7 zh-CN，各自 slug） |
+| hreflang / canonical | 首页级 | 文章级三件套（en / x-default / zh-CN）+ 按语言 canonical |
+| 分类 / 标签 | — | **未分类**（播种 12 次 200，`post_meta` 一行没写） |
+
+**真缺陷：一行 `theme_installs` 让主题能渲染，不让它拥有任何东西。**
+
+`GET theme/fields` 线上返回 `{"items":[]}`，而主题正在服务每一个页面——包括中文页、
+切换器、feed、sitemap。手工 `POST extensions/themes/default/activate` 立刻返回
+`"fields":2`，字段才登记上。根因：`seedBundledExtensions`（`extensions/plugin/runtime.ts`）
+只 upsert 注册行 + 清单，**从不调用 `applyThemeCapabilities`**。激活是**用户动作**，
+全新安装里没有这个动作；`activeTheme()` 又会 `ORDER BY active DESC, installed_at ASC`
+回退并探测可加载的 `index.html`，所以主题**照样渲染**，只是库里的声明面全空。
+
+后果不是"前台坏了"，是**前台全对、后台全哑**：没有声明字段 → 编辑器一个自定义字段都不显示，
+`savePost` 的 `fieldExists` 闸门把每个 `meta` 原样丢掉（HTTP 200、零报错、零写入）。
+**表象像内容问题，根因是主题从来没被安装过。**
+
+**修法（规则 69）**
+
+- `ensureThemeCapabilities`（`extensions/theme/capabilities.ts`）：逐站点解析活动主题，
+  声明了可计数的能力却**一行都不拥有**时才安装。
+- 接到 `index.ts` 的 boot 块：`await seedBundledExtensions(env)` **之后**跟
+  `await ensureThemeCapabilities(env)`。**顺序是断言不是细节**——后者经 `theme_installs`
+  解析活动主题，而那行正是前者创建的；反过来它会在自己本该修复的那次启动上读到空注册表。
+- 为什么不能放进 seeder：**规则 4 禁止 `plugin/` import `theme/`**。`index.ts` 是唯一允许
+  同时知道两层的模块，链就接在那里。
+- 判据是**数行**，不是版本戳：戳记「主题 X 版本 V 装过」必须被任何删除能力行的人作废，
+  而**套件共享同一个本地 D1、正是故意删这些行的** → 戳记会拒绝修复它唯一存在的理由。
+- 计数**镜像清理面**：`clearThemeCapabilities` 从五张表 DELETE + 经注册表 API 清菜单，
+  所以「已拥有」要问全这六处；漏一处 = 同一主题上"已装"与"未装"给出两个答案。
+- 已知并写在注释里：只声明 `settings[]`/`tables[]` 的主题在计数表里不占行 → 每次启动重跑
+  （全是幂等 upsert，可接受），**不是**隐藏行为。
+
+**行为验证（结构断言证不了这条）**
+
+套件本来就给本地留下了**正好是破损状态**：`theme.active='default'` 而
+`post_types`/`taxonomies`/`field_defs`/`theme_routes`/`theme_blocks`/`admin_menu_registry`
+**全为 0**。于是无需人为制造：重启 dev server 让 isolate 全新启动 → **不发任何激活请求** →
+`field_defs` 自己回来（`category` / `tags`，`declared_by_theme='default'`），
+`GET theme/fields` 返回 2 项。**这是修复成立与否的唯一判据。**
+
+**本轮学到的一条**
+
+- **"注册"和"安装"是两个动作，而其中一个没有触发者。** 规则 66 解决了分发渠道，
+  于是所有人都以为"主题装好了"——因为前台确实渲染了。**能渲染是最强的假绿**：
+  它让声明面为空这件事完全不可见，直到有人真的去写一个字段。
+
+**仍未修（与批次 21 相同，本轮实测确认）**
+
+- **列表页没有 `reading_time`**：`runThemeQuery` 给了 `date_display` 和 `cover`，唯独没给
+  `reading_time`（单篇由 `findContent` 给）→ 首页/归档/索引里 `{{#if post.reading_time}}`
+  恒空，中英一致。**没顺手改**是因为列表最多 100 行，逐行 `renderBlocks` 算时长会撞
+  免费计划 **10ms CPU** 天花板。
+- **`post_meta` 没有语言维度**（`PRIMARY KEY(post_id, meta_key)`）：分类/标签跨语言共享，
+  所以中文页的分类标签是英文的（本轮线上实测：`Design`/`Life`/`Technology` 在中英文首页
+  都出现）。本轮取舍是**共享字段按站点默认语言写**，限制写进播种脚本头部注释。
+  真正的修法是给 `post_meta` 加 locale 维度（`docs/design/MEDIA-EDITOR-PLAN.md` 的 B5）。
+
+**顺带修正**：§6 的套件表把批次 20 已删除的 `theme-journal` 还列着，且若干套件条数是
+批次 19 的数字。**已全部改为本轮实测值**（这条本身也是"文档比代码活得久"的又一次实例）。
+另外 `AGENTS.md` 功能开关一节原写"这是本仓库第十三种假绿的形状"——那个形状从未进过
+§12 的表，编号对不上；已改为不编号、直接指回那一族的判据。本轮把这次发现记为
+**§12 的第 14 条**（与第 12 条同层：观测面——"分发渠道的守卫看不见主题有没有安装"），
+`AGENTS.md` 与 `docs/ARCHITECTURE.md` §12 的计数同步为**十四种**。
+
+**新基线**：**24 套件 + `_schema-scope` = 1432 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
+`_skeleton-inject` **59 场景 / 0 问题**（本轮新增 2 条，各配一个注入场景）；
+`_locale-url-inject` 4/4；`_config-parity` 7/7。
+
+**批次 21（中文版 / 切换器 / 中文内容）—— ✅ 已完成**
 
 起点是用户的一句话：**"默认主题要加入中文的版的和切换的地方。和中文的文章和页面"**。
 先量后动，量出来的结论是：**前两件已经在产品里了，第三件真的没有。**
@@ -865,7 +946,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：25 套件 / 1433 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 26 项 / 1459 条）
+## 6. 测试与验证（当前全绿：24 套件 / 1406 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 25 项 / 1432 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -874,7 +955,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 114 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**规则 66 捆绑主题经 assets 分发：`BUNDLED_THEMES` ↔ `content/themes` 对齐、`public/themes` 逐文件逐字节同步、每个消费点都有兜底、上传/卸载守卫**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
+| architecture | 124 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**规则 66 捆绑主题经 assets 分发：`BUNDLED_THEMES` ↔ `content/themes` 对齐、`public/themes` 逐文件逐字节同步、每个消费点都有兜底、上传/卸载守卫**、**规则 69 注册行不等于安装：boot 链先注册后安装 + 判据数行而非戳记 + 判据镜像清理面**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
 | _schema-scope | 26 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
@@ -882,10 +963,9 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
 | scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
 | theme-integration | 101 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
-| locale-url | 29 | 按语言 slug 的路由/404/唯一性、hreflang、按语言 feed、切换器（规则 56–59） |
+| locale-url | 30 | 按语言 slug 的路由/404/唯一性、hreflang、按语言 feed、切换器（规则 56–59） |
 | theme-fixture | 47 | fixture 主题的声明与模板自洽 |
-| theme-journal | 39 | journal 主题：每个声明模板真渲染 + 边界作用域（无文章/无菜单/无描述） |
-| theme-default | 52 | default 主题（墨白 MOBAI）：模板真渲染 + head 的 SEO 契约（canonical/og/hreflang/feed）+ 语言包键完整性 |
+| theme-default | 53 | default 主题（墨白 MOBAI）：模板真渲染 + head 的 SEO 契约（canonical/og/hreflang/feed）+ 语言包键完整性 |
 | multisite | 94 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |
 | i18n | 75 | 多语言四层契约（§5.4① 八条）+ 翻译组 + 主题自有表 |
 | admin-contract | 54 | 后台 API 契约（含块面板形状/无漂移/en+zh 标签、**调色板下发的 attrs 契约（类型/必填/翻译标签/`itemKeys`/容器标记）**、dashboard cards 数组、设置 options 往返） |

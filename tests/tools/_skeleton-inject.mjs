@@ -91,6 +91,11 @@ const FIXTURE_LEAK = join(ROOT, "public/themes/fixture/theme.json");
 // The shipped theme's manifest. Its `locales[]` is a claim about what the theme
 // ships, and the only thing that can check the claim is the pack directory.
 const THEME_MANIFEST = join(ROOT, "content/themes/default/theme.json");
+// Rule 69's two halves: the boot chain that chains the seeder to the installer,
+// and the installer whose predicate decides whether a theme is already
+// installed.
+const INDEX = join(ROOT, "src/index.ts");
+const CAPABILITIES = join(ROOT, "src/extensions/theme/capabilities.ts");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -744,6 +749,36 @@ const SCENARIOS = [
     after: ['    "en",\n    "ja"\n  ],'],
     runs: [["tests/suites/theme-default.test.mjs", "every locale the manifest declares ships a language pack"]],
   },
+  {
+    // A registry row is not an install. `seedBundledExtensions` writes the
+    // `theme_installs` row that makes a bundled theme *render*, and it was
+    // mistaken for making the theme *own* its declarations. On a fresh
+    // production install the theme served every page — Chinese ones and the
+    // switcher included — while `GET theme/fields` answered `{"items":[]}`, so
+    // `savePost`'s `fieldExists` gate dropped every `meta` value with an HTTP
+    // 200. Dropping the second call is exactly that defect coming back.
+    label: "the boot sequence registers the bundled theme without installing it",
+    file: INDEX,
+    before: ["     await ensureThemeCapabilities(env);\n"],
+    after: [""],
+    runs: [["tests/suites/architecture.test.mjs", "the boot sequence installs what it registers"]],
+  },
+  {
+    // The other half: even with the call in place, a predicate that asks "did I
+    // stamp this?" instead of "does the theme own anything?" cannot repair the
+    // state it exists to repair. The suites delete capability rows on purpose
+    // (they share one local D1), and a stamp survives that deletion — so the
+    // installer would skip, and the fields would stay gone.
+    label: "the installer asks whether it stamped the theme instead of whether it owns anything",
+    file: CAPABILITIES,
+    before: [
+      "           (SELECT COUNT(*) FROM field_defs   WHERE site_id=? AND declared_by_theme=?) +",
+    ],
+    after: [
+      "           (SELECT COUNT(*) FROM settings WHERE site_id=? AND key='theme.installed') +",
+    ],
+    runs: [["tests/suites/architecture.test.mjs", "the installed/not-installed predicate counts rows (rule 69c)"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -757,6 +792,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
   join(ROOT, "public/themes/default/templates/home.html"),
   THEME_MANIFEST,
+  INDEX, CAPABILITIES,
   join(ROOT, "src/api.ts"),
   join(ROOT, "src/extensions/contract/hooks.ts"),
   join(ROOT, "AGENTS.md"),

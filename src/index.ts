@@ -2,6 +2,12 @@ import{Env}from "./shared/types";import{handleApi}from "./api";import{findConten
 // The media read path's three gates (tenant / session / owner) live in one
 // module so this route and the admin media API cannot answer differently.
 import{currentUser}from "./platform/auth";import{readMediaPolicy,mediaReadDecision}from "./platform/media-policy";import{listRoutes,findPostTypeBySlug,listPostTypes}from "./extensions/theme/capabilities";
+// Rule 4 forbids `plugin/` from importing `theme/`, so the bundled-theme
+// seeder cannot install what it registers. This module is the one place
+// allowed to know both layers, so the boot sequence chains them: register the
+// theme, then make it *own* what it declares. Without the second half a fresh
+// install renders the bundled theme while the theme owns nothing.
+import{ensureThemeCapabilities}from "./extensions/theme/capabilities";
 import{resolveLocale,langFromUrl,langFromCookie,langCookie}from "./platform/i18n/resolve";import{setPackProviders}from "./platform/i18n/packs";import{themePackProvider}from "./extensions/theme/packs";import{pluginPackProvider}from "./extensions/plugin/packs";
 // A theme-owned table is read through the same facade the admin screens use.
 // `resolveTableForSite` lives there precisely so that this route and the
@@ -127,7 +133,18 @@ export default{async fetch(request:Request,env:Env,ctx:ExecutionContext){
  // otherwise a site created in the admin never resolves on the front end until
  // the isolate recycles (see `resetSiteListMemo`).
  resetSiteListMemo(env);
- if(!booted){booted=true;ctx.waitUntil(seedBundledExtensions(env))}
+ if(!booted){booted=true;ctx.waitUntil((async()=>{
+   try{
+     // Register the bundled themes, *then* install their declarations. The
+     // order matters: `ensureThemeCapabilities` resolves the active theme
+     // through `theme_installs`, which the seeding call is what creates.
+     await seedBundledExtensions(env);
+     await ensureThemeCapabilities(env);
+   }catch{
+     // A failed seed leaves the install exactly as a fresh one was before
+     // these calls existed, which is a state the front end already renders.
+   }
+ })())}
  // Join the two halves of the extension layer.
  //
  // `index.ts` is the only module allowed to import both `theme/` and
