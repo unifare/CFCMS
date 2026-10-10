@@ -29,6 +29,11 @@ theme-previews/
 # clone does not publish account-scoped resource ids. Deploy with `-c`.
 wrangler.local.jsonc
 
+# The real ids themselves. `scripts/make-local-config.mjs` substitutes these
+# into wrangler.jsonc to produce wrangler.local.jsonc, so this is the only
+# hand-edited file in the chain and the only one that must stay off the remote.
+wrangler.ids.json
+
 # Editor / OS noise
 .vscode/
 .idea/

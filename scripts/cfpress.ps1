@@ -76,7 +76,23 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = (Resolve-Path (Join-Path $ScriptDir '..')).Path
 Set-Location $Root
 
-$ConfigFile = 'wrangler.jsonc'
+# The generated deploy config, and the two files it is derived from.
+#
+# `$ConfigFile` is what every wrangler command below is pointed at with `-c`. It
+# is NOT the committed file: `wrangler.jsonc` carries REPLACE_WITH_* placeholders
+# so a public clone never publishes account-scoped ids, and the real values live
+# in `wrangler.ids.json` (gitignored). `Invoke-EnsureConfig` below runs the
+# generator that joins them.
+#
+# WARNING: this used to be `'wrangler.jsonc'` with `wrangler deploy` given no
+# `-c` at all, and the refusal message told the operator to *edit the committed
+# template* with their real ids. That is a leak: `wrangler.jsonc` is tracked, so
+# the next `git commit -a` publishes the ids of a live database. The two files
+# were also free to drift, and did — batch 11 put the feature-switch `vars`
+# block in the template only, so the deployed Worker had no `vars` at all.
+$ConfigFile = 'wrangler.local.jsonc'
+$TemplateFile = 'wrangler.jsonc'
+$IdsFile = 'wrangler.ids.json'
 $DbName = 'cfpress'
 # Deliberately an uncommon port. 8787 is the default for `wrangler dev`, so it
 # collides with every other Wrangler project on the machine (and with the two
@@ -141,9 +157,13 @@ function Invoke-Npx {
     return $LASTEXITCODE
 }
 
-# --- wrangler.jsonc facts ----------------------------------------------------
-# The two placeholders are read from the real config rather than assumed, so a
-# future second placeholder cannot slip past the deploy guard unnoticed.
+# --- deploy config -----------------------------------------------------------
+# `$ConfigFile` is generated, so there are two ways for it to be wrong: the
+# generator cannot run (no ids file), or it ran and left placeholders behind (it
+# cannot, but the check is cheap and this is the file that ships).
+#
+# The placeholders are read from the config rather than assumed, so a future
+# third placeholder cannot slip past the deploy guard unnoticed.
 function Get-Placeholders {
     if (-not (Test-Path $ConfigFile)) { return @() }
     $matches = Select-String -Path $ConfigFile -Pattern 'REPLACE_WITH_[A-Z0-9_]*' -AllMatches -ErrorAction SilentlyContinue
@@ -152,6 +172,28 @@ function Get-Placeholders {
         foreach ($mm in $m.Matches) { $found += $mm.Value }
     }
     return $found | Sort-Object -Unique
+}
+
+function Test-ConfigOk {
+    return (Test-Path $ConfigFile) -and (Test-Path 'package.json')
+}
+
+# Regenerate `wrangler.local.jsonc` from the template + the local ids.
+#
+# Every wrangler action calls this first, so "the deploy config" has exactly one
+# definition and a stale copy cannot be used by accident. The generator is
+# idempotent: unchanged input means it does not rewrite the file, so this is
+# cheap enough to run before every action.
+function Invoke-EnsureConfig {
+    Assert-Node
+    if (-not (Test-Path $TemplateFile)) { Die "$TemplateFile missing — are you in the project root?" }
+    $rc = Invoke-Npx node scripts/make-local-config.mjs
+    if ($rc -ne 0) {
+        Write-Err2 "could not generate $ConfigFile (see the message above)"
+        return 3
+    }
+    if (-not (Test-Path $ConfigFile)) { Write-Err2 "$ConfigFile was not produced"; return 3 }
+    return 0
 }
 
 # --- actions -----------------------------------------------------------------
@@ -195,28 +237,34 @@ function Invoke-Types {
 
 function Invoke-MigrateLocal {
     Assert-Deps
+    $rc = Invoke-EnsureConfig
+    if ($rc -ne 0) { return $rc }
     Write-Head 'apply migrations to the LOCAL database'
-    $null = Invoke-Npx wrangler d1 migrations apply $DbName --local
+    $null = Invoke-Npx wrangler d1 migrations apply $DbName --local -c $ConfigFile
     return $LASTEXITCODE
 }
 
 function Invoke-MigrateRemote {
     Assert-Deps
+    $rc = Invoke-EnsureConfig
+    if ($rc -ne 0) { return $rc }
     Write-Head 'apply migrations to the REMOTE database'
     Write-Warn2 'this touches the production D1 database'
-    $null = Invoke-Npx wrangler d1 migrations apply $DbName --remote
+    $null = Invoke-Npx wrangler d1 migrations apply $DbName --remote -c $ConfigFile
     return $LASTEXITCODE
 }
 
 function Invoke-Dev {
     Assert-Deps
+    $rc = Invoke-EnsureConfig
+    if ($rc -ne 0) { return $rc }
     Write-Head "wrangler dev  ($DevUrl)"
     Write-Dim 'Ctrl-C to stop. First run: apply local migrations first (menu 2) or tables will be missing.'
     Write-Dim 'Bundled themes ship via Worker assets — syncing them into public/themes first.'
     & node scripts/sync-bundled-themes.mjs
     if ($LASTEXITCODE -ne 0) { return $LASTEXITCODE }
     Write-Line ''
-    $null = Invoke-Npx wrangler dev --port $DevPort --ip $DevHost
+    $null = Invoke-Npx wrangler dev --port $DevPort --ip $DevHost -c $ConfigFile
     return $LASTEXITCODE
 }
 
@@ -393,9 +441,16 @@ function Invoke-Make {
 # the config does not fail loudly — it produces a Worker whose DB binding points
 # nowhere, and the first symptom is a 500 on a URL you already announced. So the
 # placeholder check runs before deploy, not after.
+#
+# WARNING: the ids go in `$IdsFile`, never in `$TemplateFile`. An earlier version
+# of this message told the operator to edit the committed template, which is
+# tracked by git — following that advice published a live database id to a
+# public repository on the next commit.
 function Test-DeployPrecheck {
     Assert-Deps
-    if (-not (Test-Path $ConfigFile)) { Die "missing $ConfigFile — are you in the project root?" }
+    $rc = Invoke-EnsureConfig
+    if ($rc -ne 0) { return $false }
+    if (-not (Test-ConfigOk)) { Die "missing $ConfigFile or package.json — are you in the project root?" }
 
     $missing = @(Get-Placeholders)
     if ($missing.Count -gt 0) {
@@ -403,12 +458,13 @@ function Test-DeployPrecheck {
         Write-Line ''
         foreach ($m in $missing) { Write-Line "    $m" }
         Write-Line ''
-        Write-Line '  Create the real resources and paste the ids in:'
+        Write-Line "  This file is generated. Put the real ids in $IdsFile:"
         Write-Line ''
         Write-Line "    npx wrangler d1 create $DbName        # -> database_id"
         Write-Line '    npx wrangler kv namespace create CACHE # -> id'
         Write-Line ''
-        Write-Line "  Then edit $ConfigFile. To deploy anyway: .\scripts\cfpress.ps1 deploy --force"
+        Write-Line "  $IdsFile is gitignored; $TemplateFile is not, so never edit ids into it."
+        Write-Line '  Then re-run. To deploy anyway: .\scripts\cfpress.ps1 deploy --force'
         return $false
     }
     return $true
@@ -420,11 +476,13 @@ function Invoke-Deploy {
         if (-not (Test-DeployPrecheck)) { return 3 }
     }
     Assert-Deps
+    $rc = Invoke-EnsureConfig
+    if ($rc -ne 0) { return $rc }
     Write-Head 'sync bundled themes (content/themes -> public/themes assets)'
     & node scripts/sync-bundled-themes.mjs
     if ($LASTEXITCODE -ne 0) { return $LASTEXITCODE }
     Write-Head 'wrangler deploy'
-    $null = Invoke-Npx wrangler deploy
+    $null = Invoke-Npx wrangler deploy -c $ConfigFile
     return $LASTEXITCODE
 }
 
@@ -459,6 +517,15 @@ function Invoke-Doctor {
         } catch { Write-Line '  wrangler   (version unreadable)' }
     } else { Write-Warn2 'wrangler   not installed locally' }
 
+    # The config is derived, so report all three links in the chain: a missing
+    # ids file and a stale generated file look identical from the outside (both
+    # mean "the commands are not using what you think"), and only naming them
+    # apart tells you which one to fix.
+    if (Test-Path $TemplateFile) { Write-Line "  template   $TemplateFile (committed, placeholders)" }
+    else { Write-Warn2 "template   $TemplateFile MISSING" }
+    if (Test-Path $IdsFile) { Write-Line "  ids        $IdsFile present" }
+    else { Write-Warn2 "ids        $IdsFile MISSING — generate it before dev/deploy" }
+
     if (Test-Path $ConfigFile) {
         Write-Line "  config     $ConfigFile present"
         $ph = @(Get-Placeholders)
@@ -466,7 +533,11 @@ function Invoke-Doctor {
         else { Write-Line '  config     no REPLACE_WITH_ placeholders' }
     } else { Write-Warn2 "config     $ConfigFile MISSING" }
 
-    $n = @(Get-ChildItem 'site\migrations\*.sql' -ErrorAction SilentlyContinue).Count
+    # Was `site\migrations`, a directory that has not existed since the tree was
+    # reorganised — so this line reported "0 file(s)" next to the shell
+    # launcher's 18 and nothing compared the two. A doctor that under-reports
+    # is worse than no doctor: it reads as "nothing to migrate".
+    $n = @(Get-ChildItem 'content\migrations\*.sql' -ErrorAction SilentlyContinue).Count
     Write-Line "  migrations $n file(s)"
     $s = @(Get-ChildItem 'tests\suites\*.test.mjs' -ErrorAction SilentlyContinue).Count
     Write-Line "  suites     $s test suite(s)"
@@ -494,7 +565,7 @@ function Invoke-Version {
         $pv = (Get-Content 'package.json' -Raw | ConvertFrom-Json).version
         Write-Line "  project   $pv"
     } catch { Write-Line '  project   ?' }
-    Write-Line "  config    $ConfigFile"
+    Write-Line "  config    $ConfigFile  (generated from $TemplateFile + $IdsFile)"
     Write-Line "  dev url   $DevUrl"
     Write-Line "  root      $Root"
     if (Test-Command 'git') {
@@ -519,6 +590,7 @@ CFPress launcher  (repo root: $Root)
   ACTIONS / 动作
     dev                 start the local dev server / 启动本地服务 (menu 1)
     migrate:local       apply migrations to the local D1 / 本地迁移 (menu 2)
+    config              regenerate wrangler.local.jsonc / 生成部署配置
     theme [dir]         upload + activate a theme / 部署主题 (menu 3)
     seed                seed demo content / 灌演示数据
     test [suite]        run every suite, or one by name / 跑测试 (menu 4)
@@ -562,7 +634,7 @@ function Show-Menu {
     Write-Host '│  8) 部署+远程迁移   deploy:full'
     Write-Host '│  9) 诊断环境        doctor'
     Write-Host '└──────────────────────────────────────────────┘' -ForegroundColor DarkCyan
-    Write-Dim '  other:  t2 (name) 单套件 · mk (theme|plugin|table) (name) · v 版本 · h 帮助 · q 退出'
+    Write-Dim '  other:  t2 (name) 单套件 · mk (theme|plugin|table) (name) · cfg 生成部署配置 · v 版本 · h 帮助 · q 退出'
 }
 
 function Read-MenuInput {
@@ -619,6 +691,7 @@ function Start-MenuLoop {
                 else { Write-Warn2 'aborted.' }
             }
             '^9$' { $null = Invoke-Doctor }
+            '^cfg$|^config$' { $null = Invoke-EnsureConfig }
             '^v$' { $null = Invoke-Version }
             '^h$|^help$|^$|^\?$' { Write-Help }
             '^q$|^quit$|^exit$' { Write-Line 'bye.'; return 0 }
@@ -646,6 +719,7 @@ function Invoke-Action {
         '-v'          { return (Invoke-Version) }
         '--version'   { return (Invoke-Version) }
         'dev'         { return (Invoke-Dev) }
+        'config'      { return (Invoke-EnsureConfig) }
         'migrate:local'  { return (Invoke-MigrateLocal) }
         'migrate-local'  { return (Invoke-MigrateLocal) }
         'migrate:remote' { return (Invoke-MigrateRemote) }

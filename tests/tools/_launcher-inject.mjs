@@ -73,8 +73,15 @@ const SCENARIOS = [
     // the only surviving mentions are the definition itself. Removing just one
     // call site leaves the other satisfying the check — which is precisely what
     // the first version of this scenario exposed.
-    before: "    if (-not $Force) {\n        if (-not (Test-DeployPrecheck)) { return 3 }\n    }\n    Assert-Deps\n    Write-Head 'wrangler deploy'",
-    after: "    Assert-Deps\n    Write-Head 'wrangler deploy'",
+    //
+    // ⚠️ The anchor carries a tail (`Assert-Deps` + the config step) because the
+    // `if (-not $Force) { … }` block itself appears in both deploy functions and
+    // would otherwise match twice. When `Invoke-Deploy` gained the
+    // `Invoke-EnsureConfig` step, the old tail (`Write-Head 'wrangler deploy'`
+    // immediately after `Assert-Deps`) stopped existing and this scenario would
+    // have reported "anchor appears 0x" — a skipped scenario, not a failing one.
+    before: "    if (-not $Force) {\n        if (-not (Test-DeployPrecheck)) { return 3 }\n    }\n    Assert-Deps\n    $rc = Invoke-EnsureConfig\n    if ($rc -ne 0) { return $rc }\n    Write-Head 'sync bundled themes",
+    after: "    Assert-Deps\n    $rc = Invoke-EnsureConfig\n    if ($rc -ne 0) { return $rc }\n    Write-Head 'sync bundled themes",
     extra: (text) =>
       text.replace(
         "    if (-not $Force) {\n        if (-not (Test-DeployPrecheck)) { return 3 }\n    }\n    $rc = Invoke-MigrateRemote",
@@ -101,6 +108,26 @@ const SCENARIOS = [
     before: "FAILED (no summary line — suite aborted or crashed)",
     after: "skipped",
     expect: "the shell treats a missing summary as failure",
+  },
+  {
+    // The defect that was actually in the file: `wrangler deploy` with no `-c`,
+    // so menu 7 deployed the committed template — the one with REPLACE_WITH_*
+    // placeholders — instead of the generated config. It deploys "successfully"
+    // and binds the Worker to a database that does not exist.
+    label: "the shell deploys without pointing at the generated config",
+    file: SH,
+    before: 'npx --no-install wrangler deploy -c "$CONFIG"',
+    after: "npx --no-install wrangler deploy",
+    expect: "every wrangler command in .sh is pointed at the generated config",
+  },
+  {
+    // A stale generated config is used silently, which is the failure mode this
+    // whole design removes: the commands keep working, against last week's ids.
+    label: "the shell stops regenerating the config before dev",
+    file: SH,
+    before: '  ensure_config || return $?\n  head1 "wrangler dev',
+    after: '  head1 "wrangler dev',
+    expect: "the shell regenerates the config before every action that reads it",
   },
   {
     label: "a menu number removed from the powershell menu",

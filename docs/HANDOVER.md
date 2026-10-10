@@ -29,8 +29,10 @@
 - 仓库：`https://github.com/unifare/CFCMS`（public，分支 `main`，许可证 AGPL-3.0）
 - 版本：v0.7.0 → 目标 v0.8.0
 - **线上**：`https://cfpress.2aass.workers.dev`（免费计划，账号 `2aass@proton.me`）
-  ——所有 `wrangler` 命令必须带 `-c wrangler.local.jsonc`（真资源 id 在里面，已 gitignore；
-  仓库里的 `wrangler.jsonc` 是 `REPLACE_WITH_*` 占位符）
+  ——所有 `wrangler` 命令必须带 `-c wrangler.local.jsonc`。该文件是**生成物**：
+  `wrangler.jsonc`（提交，`REPLACE_WITH_*` 占位符）+ `wrangler.ids.json`（gitignore，真 id，
+  **唯一手写的那份**）→ `node scripts/make-local-config.mjs`。`npm run dev|deploy|db:migrate*`
+  与两个启动器都会先自动生成，所以日常路径不用记 flag。详见 §11.7 与「批次 17」。
 - **后台首登**：`admin` / `change-me-now`（bootstrap 自动建号；**公开站点，上生产前必须改密**）
 - dev 端口 **47913**（跨项目约定，env `CFP_PORT` 可覆盖）
 - ⚠️ 沙箱代理放行 `api.cloudflare.com` 但**拦截 `*.workers.dev`**——线上站点无法在沙箱内 HTTP
@@ -164,6 +166,33 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 3. **默认值本身是产品决定**。`require_session` 默认**开**（用户选定"站点校验 + 要求会话"）：
    未登录访客取不到媒体 ⇒ 前台 `<img>` 会 404。它被实现为站点设置而不是常量，
    就是为了让这个选择**可逆**，并且排障第一站就是它。`AGENTS.md` 规则 60e 明写了这一点。
+
+**批次 17（部署配置改为生成）—— ✅ 本轮完成**
+
+起点是上一批修 `vars` 漂移时留下的问题：`wrangler.local.jsonc` 是**手工维护**的 gitignore
+文件，所以"两份配置同构"这条不变式**只能在本地守**，而且启动器与它说的根本不是一回事。
+
+| 项 | 状态 |
+|---|---|
+| `wrangler.ids.json`（gitignore）：占位符名 → 真 id，**这条链上唯一手写的东西** | ✅ |
+| `scripts/make-local-config.mjs`：导出纯函数 `renderLocalConfig(模板文本, ids)`；**文本替换**而非 JSON 序列化（保住注释）；幂等（无变化不写）；`--check` / `--print` | ✅ |
+| `_config-parity.mjs` 重写：**重算再逐字节比对**（不再比键集），另加"模板无 id 形状值"泄漏守卫、ids ↔ 占位符双向对齐；缺文件时明确 **n/a 不是 pass** | ✅ |
+| `package.json`：`dev`/`deploy`/`db:migrate*` 全部 `-c wrangler.local.jsonc`；新增 `config`、`predev`、`predeploy` 先跑生成器 | ✅ |
+| 两个启动器：`CONFIG` 指向**生成物**，新增 `ensure_config`/`Invoke-EnsureConfig`（dev/deploy/migrate 前必跑），全部 `-c`；新增 `config` 动作与 `cfg` 菜单快捷键；`doctor`/`version` 报三份文件 | ✅ |
+| 顺带修掉的**泄漏**：启动器原本 `wrangler deploy` **不带 `-c`**（= 部署占位符那份），拒绝信息还叫运营者**编辑被 git 跟踪的 `wrangler.jsonc`** —— 照做下一次 commit 就公开在用的数据库 id | ✅ |
+| 顺带修掉的陈旧路径：ps1 `doctor` 读 `site\migrations`（该目录早已不存在）→ 恒报 `0 file(s)`，而 sh 报 18 | ✅ |
+| `launcher-parity` §8b（+5 条）：每条 wrangler 命令必须带 `-c`（**锚在调用 `npx`/`Invoke-Npx` 上**，否则拒绝信息与进度行会假红）+ 读配置前必须先重新生成 | ✅ |
+| `_launcher-inject.mjs` +2 场景（→18）；`_skeleton-inject.mjs` 两个配置场景改用新断言名（→48） | ✅ |
+
+**这一批的两个教训**：
+
+1. **"两份保持一致"守不住，要让它不可表达**。只断言"两份一致"仍然允许两份存在，也就允许
+   再次漂移；生成之后，"不一致"没有写法。守卫因此改成**重算再比对**——它连"手改本地文件"
+   都抓得住，而键集比较连值被改成 `"true"` 都看不见。
+2. **守卫要扫"调用"，不要扫"子命令"**。`launcher-parity` 的第一版匹配 `wrangler deploy`
+   子串，立刻在**拒绝信息**（`npx wrangler d1 create`，是建议）和**进度行**
+   （`head1 "wrangler deploy"`）上假红。两个启动器只经 `npx`/`Invoke-Npx` 调 wrangler，
+   锚在包装器上才是精确判据。**写守卫时先问：我匹配的是行为，还是提到这个行为的文本？**
 
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
@@ -677,7 +706,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 ```bash
 node tests/tools/_schema-scope.mjs           # 迁移流 → 临时 SQLite，逐表核对声明与真实列
 node tests/tools/_tenant-query-audit.mjs     # 列出所有「碰租户表但不带 site_id」的语句；每条需书面裁决
-node tests/tools/_config-parity.mjs          # wrangler.jsonc ↔ wrangler.local.jsonc 结构一致（进 npm run gate）
+node tests/tools/_config-parity.mjs          # 本地配置 = 从模板+ids 重新生成的字节（进 npm run gate）
 ```
 
 ⚠️ `_config-parity.mjs` 的**第一条真实命中就是它自己**：写完立刻红了，因为
@@ -785,7 +814,8 @@ fixture 的那一项**；修正方式是再加一个**同类型**的第二个 ow
 ⚠️ 沙箱内**无法**用 HTTP 验证线上（代理拦截 `*.workers.dev`），只能靠 `wrangler deploy` 输出
 + `deployments status` 证明；要真验证请开浏览器。
 
-- **部署顺序**：`wrangler d1 migrations apply cfpress --remote -c wrangler.local.jsonc`
+- **部署顺序**：先 `node scripts/make-local-config.mjs`（或直接 `npm run deploy`，`predeploy`
+  会跑）→ `wrangler d1 migrations apply cfpress --remote -c wrangler.local.jsonc`
   → `wrangler deploy -c wrangler.local.jsonc`（**捆绑主题文件经 Worker assets 自动带上**：
   `predeploy` 先跑 `scripts/sync-bundled-themes.mjs` 把 `content/themes/**` 同步进
   `public/themes/**`，`wrangler deploy` 上传 assets，运行时 `bundledThemeFile` 兜底读——

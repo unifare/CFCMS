@@ -275,21 +275,27 @@ const SCENARIOS = [
     // would take this account's real ids with it and go unreported, because
     // `assertPristine` only covers watched files. Diverging the committed side
     // trips the identical assertion with none of that risk.
-    label: "the committed config and the local config drift apart",
+    //
+    // The observer is the same one as the next scenario's, and deliberately so:
+    // the guard is "the derived file matches a fresh derivation", which every
+    // kind of template edit trips. Two scenarios, one observer, two defects —
+    // that is the honest shape, not a duplicated test.
+    label: "the committed config and the generated config drift apart",
     file: WRANGLER,
     before: ['  "triggers": {"crons": ["*/5 * * * *"]},\n'],
     after: [''],
-    runs: [["tests/tools/_config-parity.mjs", "the two configs declare the same top-level keys"]],
+    runs: [["tests/tools/_config-parity.mjs", "wrangler.local.jsonc is exactly what the generator produces"]],
   },
   {
-    // The same divergence, one level down: a `vars` block present on both sides
-    // but holding a different set of switches. Top-level parity would stay green
-    // for this, which is why the parity tool splits the two checks.
+    // The same divergence, one level down and much easier to miss: the `vars`
+    // block stays present on both sides but holds a different set of switches.
+    // A key-set comparison at the top level would stay green for this, which is
+    // why the guard compares the whole derived file rather than its keys.
     label: "the two configs disagree about which switches exist",
     file: WRANGLER,
     before: ['    "CFPRESS_CACHE_MIRROR_KV": "false",\n'],
     after: [''],
-    runs: [["tests/tools/_config-parity.mjs", "the two configs declare the same vars keys"]],
+    runs: [["tests/tools/_config-parity.mjs", "wrangler.local.jsonc is exactly what the generator produces"]],
   },
   {
     // A switch that defaults to on is a feature nobody asked for, shipping to

@@ -200,22 +200,47 @@ can be pointed elsewhere with `CFPRESS_BASE`.
 The committed `wrangler.jsonc` carries `REPLACE_WITH_...` placeholders for the
 D1 database id and the KV namespace id. That is deliberate: this is a public
 repo, and resource ids only mean anything inside one account. Create your own
-with `wrangler d1 create` / `wrangler kv namespace create`, then put the real
-values somewhere that is not committed — the convention here is a gitignored
-`wrangler.local.jsonc` sitting next to `wrangler.jsonc` with the same structure.
+with `wrangler d1 create` / `wrangler kv namespace create`, then write the
+values into a gitignored **`wrangler.ids.json`**:
 
-**Every wrangler command then needs `-c wrangler.local.jsonc`.** Without it
-wrangler reads the placeholder file and fails with "not a valid UUID" — which
-is a better outcome than deploying a Worker whose DB binding points nowhere,
-but it is still a confusing first error if you were not expecting it.
+```json
+{
+  "REPLACE_WITH_D1_DATABASE_ID": "…",
+  "REPLACE_WITH_KV_NAMESPACE_ID": "…"
+}
+```
+
+`wrangler.local.jsonc` is then **generated** from those two files — it is not
+edited by hand:
+
+```bash
+node scripts/make-local-config.mjs      # or: npm run config, or: ./scripts/cfpress.sh config
+```
+
+The generated file is what every command runs against, so it is also what you
+pass with `-c`:
 
 ```bash
 npx wrangler d1 migrations apply cfpress --remote -c wrangler.local.jsonc
 npx wrangler deploy -c wrangler.local.jsonc
 ```
 
-The launcher's `doctor` action reports whether the placeholders are still in
-place, and `deploy` refuses to run with them (pass `--force` to override).
+`npm run dev`, `npm run deploy`, `npm run db:migrate*` and both launchers all
+do the generation for you and pass `-c` themselves, so the usual path needs no
+flags. **Editing `wrangler.local.jsonc` by hand is pointless** — the next run
+overwrites it, and `npm run gate` fails if it does not match a fresh
+derivation. Editing ids into the committed `wrangler.jsonc` is worse: that file
+is tracked, so the next commit publishes the ids of a live database.
+
+Why two files instead of one: the reviewed config and the deployed config were
+the same file only by hand-maintenance, and that failed silently. A field added
+to `wrangler.jsonc` and not to the local copy changes nothing visible — an
+omitted `var` and an explicit `"false"` both resolve to off — so the deploy
+looks correct while running on half the configuration it documents.
+
+The launcher's `doctor` action reports all three files, and `deploy` refuses to
+run if the generated config still contains placeholders (pass `--force` to
+override).
 
 ### Paid-plan bindings are commented out by default
 

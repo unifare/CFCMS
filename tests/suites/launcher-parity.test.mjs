@@ -473,6 +473,77 @@ function normName(s) {
   check("the powershell exits 3 when it refuses", /return 3/.test(ps));
 }
 
+// 8b. Every wrangler command must be pointed at the *generated* config, and the
+//     generator must run first.
+//
+//     This is the rule the launcher used to break: `act_deploy` ran
+//     `wrangler deploy` with no `-c` at all, so menu 7 deployed the committed
+//     template — the file that carries REPLACE_WITH_* placeholders — and the
+//     refusal message told the operator to paste their real ids into it, which
+//     is tracked by git. A leak on the next commit, and a deploy config free to
+//     drift from the one everything else used.
+//
+//     Scanned as *lines*, and matched on the **invocation** rather than on the
+//     subcommand alone. Two things would otherwise trip it: the refusal message
+//     legitimately contains `npx wrangler d1 create` (advice, not a command),
+//     and each action prints a progress line like `head1 "wrangler deploy"`.
+//     Both launchers invoke wrangler only through `npx` / `Invoke-Npx` — that is
+//     deliberate on Windows, where the bare `wrangler` shim is a `.ps1` that
+//     cannot be spawned — so anchoring on the wrapper is the precise test.
+{
+  const shCmd = /\bnpx\b[^\n]*\bwrangler\s+(?:dev\b|deploy\b|d1\s+migrations\s+apply\b)/;
+  const psCmd = /\bInvoke-Npx\b[^\n]*\bwrangler\s+(?:dev\b|deploy\b|d1\s+migrations\s+apply\b)/;
+  const offenders = (src, re, configRef) =>
+    src
+      .split("\n")
+      .filter((l) => re.test(l))
+      .filter((l) => !l.includes(configRef))
+      .map((l) => l.trim());
+
+  const shBad = offenders(stripShComments(sh), shCmd, '-c "$CONFIG"');
+  const psBad = offenders(stripPsComments(ps), psCmd, '-c $ConfigFile');
+  checkEmpty("every wrangler command in .sh is pointed at the generated config", shBad);
+  checkEmpty("every wrangler command in .ps1 is pointed at the generated config", psBad);
+  // Non-vacuity: a rename of the wrapper, or a switch to `wrangler.toml`, would
+  // silently empty the scan — and an empty scan passes. The shell has four
+  // config-dependent commands (dev, deploy, and the two migration applies).
+  const shCommands = stripShComments(sh).split("\n").filter((l) => shCmd.test(l)).length;
+  const psCommands = stripPsComments(ps).split("\n").filter((l) => psCmd.test(l)).length;
+  check(
+    "the wrangler-command scan actually found commands (non-vacuity)",
+    shCommands >= 4 && psCommands >= 4,
+    `${shCommands} in .sh, ${psCommands} in .ps1`
+  );
+
+  // The generator has to run before anything that consumes its output, or a
+  // stale file is used silently — which is the whole failure this design exists
+  // to remove.
+  const shNeedsConfig = ["act_dev", "act_migrate_local", "act_migrate_remote", "act_deploy"];
+  const shMissing = shNeedsConfig.filter((fn) => {
+    const i = sh.indexOf(`\n${fn}() {`);
+    if (i === -1) return true;
+    const j = sh.indexOf("\n}\n", i);
+    return j === -1 || !/ensure_config/.test(sh.slice(i, j));
+  });
+  checkEmpty("the shell regenerates the config before every action that reads it", shMissing);
+
+  const psNeedsConfig = ["Invoke-Dev", "Invoke-MigrateLocal", "Invoke-MigrateRemote", "Invoke-Deploy"];
+  const psMissing = psNeedsConfig.filter((fn) => {
+    const i = ps.indexOf(`function ${fn} {`);
+    if (i === -1) return true;
+    let depth = 0;
+    for (let j = ps.indexOf("{", i); j < ps.length; j++) {
+      if (ps[j] === "{") depth++;
+      else if (ps[j] === "}") {
+        depth--;
+        if (depth === 0) return !/Invoke-EnsureConfig/.test(ps.slice(i, j + 1));
+      }
+    }
+    return true;
+  });
+  checkEmpty("the powershell regenerates the config before every action that reads it", psMissing);
+}
+
 // 9. Both must treat "no summary line" as failure, which is the rule they are
 //    named after in AGENTS.md.
 {

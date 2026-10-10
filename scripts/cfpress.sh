@@ -33,7 +33,23 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 cd "$ROOT" || { echo "cannot cd to $ROOT" >&2; exit 2; }
 
-CONFIG="wrangler.jsonc"
+# The generated deploy config, and the two files it is derived from.
+#
+# `CONFIG` is what every wrangler command below is pointed at with `-c`. It is
+# NOT the committed file: `wrangler.jsonc` carries REPLACE_WITH_* placeholders
+# so a public clone never publishes account-scoped ids, and the real values live
+# in `wrangler.ids.json` (gitignored). `ensure_config` below runs the generator
+# that joins them.
+#
+# ⚠️ This used to be `CONFIG="wrangler.jsonc"` with `wrangler deploy` given no
+# `-c` at all, and the refusal message told the operator to *edit the committed
+# template* with their real ids. That is a leak: `wrangler.jsonc` is tracked, so
+# the next `git commit -a` publishes the ids of a live database. The two files
+# were also free to drift, and did — batch 11 put the feature-switch `vars`
+# block in the template only, so the deployed Worker had no `vars` at all.
+CONFIG="wrangler.local.jsonc"
+TEMPLATE="wrangler.jsonc"
+IDS="wrangler.ids.json"
 DB_NAME="cfpress"
 # Deliberately an uncommon port. 8787 is the default for `wrangler dev`, so it
 # collides with every other Wrangler project on the machine (and with the two
@@ -79,9 +95,13 @@ require_deps() {
 
 require_wrangler() { require_node; require_deps; }
 
-# --- wrangler.jsonc facts ----------------------------------------------------
-# The two placeholders are read from the real config rather than assumed, so a
-# future second placeholder cannot slip past the deploy guard unnoticed.
+# --- deploy config -----------------------------------------------------------
+# `CONFIG` is generated, so there are two ways for it to be wrong: the generator
+# cannot run (no ids file), or it ran and left placeholders behind (it cannot,
+# but the check is cheap and this is the file that ships).
+#
+# The placeholders are read from the config rather than assumed, so a future
+# third placeholder cannot slip past the deploy guard unnoticed.
 placeholders_found() {
   [ -f "$CONFIG" ] || return 0
   grep -o 'REPLACE_WITH_[A-Z0-9_]*' "$CONFIG" 2>/dev/null | sort -u
@@ -89,6 +109,23 @@ placeholders_found() {
 
 config_ok() {
   [ -f "$CONFIG" ] && [ -f "package.json" ]
+}
+
+# Regenerate `wrangler.local.jsonc` from the template + the local ids.
+#
+# Every wrangler action calls this first, so "the deploy config" has exactly one
+# definition and a stale copy cannot be used by accident. The generator is
+# idempotent: unchanged input means it does not rewrite the file, so this is
+# cheap enough to run before every action.
+ensure_config() {
+  require_node
+  [ -f "$TEMPLATE" ] || die "$TEMPLATE missing — are you in the project root?"
+  node scripts/make-local-config.mjs || {
+    err "could not generate $CONFIG (see the message above)"
+    return 3
+  }
+  [ -f "$CONFIG" ] || { err "$CONFIG was not produced"; return 3; }
+  return 0
 }
 
 # --- actions -----------------------------------------------------------------
@@ -130,25 +167,28 @@ act_types() {
 
 act_migrate_local() {
   require_wrangler
+  ensure_config || return $?
   head1 "apply migrations to the LOCAL database"
-  npx --no-install wrangler d1 migrations apply "$DB_NAME" --local
+  npx --no-install wrangler d1 migrations apply "$DB_NAME" --local -c "$CONFIG"
 }
 
 act_migrate_remote() {
   require_wrangler
+  ensure_config || return $?
   head1 "apply migrations to the REMOTE database"
   warn "this touches the production D1 database"
-  npx --no-install wrangler d1 migrations apply "$DB_NAME" --remote
+  npx --no-install wrangler d1 migrations apply "$DB_NAME" --remote -c "$CONFIG"
 }
 
 act_dev() {
   require_wrangler
+  ensure_config || return $?
   head1 "wrangler dev  (http://$DEV_HOST:$DEV_PORT)"
   dim "Ctrl-C to stop. First run: apply local migrations first (menu 2) or tables will be missing."
   dim "Bundled themes ship via Worker assets — sync them into public/themes first."
   node scripts/sync-bundled-themes.mjs || return $?
   say ""
-  exec npx --no-install wrangler dev --port "$DEV_PORT" --ip "$DEV_HOST"
+  exec npx --no-install wrangler dev --port "$DEV_PORT" --ip "$DEV_HOST" -c "$CONFIG"
 }
 
 act_theme_deploy() {
@@ -302,8 +342,14 @@ act_make() {
 # the config does not fail loudly — it produces a Worker whose DB binding points
 # nowhere, and the first symptom is a 500 on a URL you already announced. So the
 # placeholder check runs before deploy, not after.
+#
+# ⚠️ The ids go in `wrangler.ids.json`, never in `$TEMPLATE`. An earlier version
+# of this message told the operator to edit the committed template, which is
+# tracked by git — following that advice published a live database id to a
+# public repository on the next commit.
 deploy_precheck() {
   require_wrangler
+  ensure_config || return $?
   if ! config_ok; then
     die "missing $CONFIG or package.json — are you in the project root?"
   fi
@@ -313,12 +359,13 @@ deploy_precheck() {
     say ""
     for m in $missing; do say "    $m"; done
     say ""
-    say "  Create the real resources and paste the ids in:"
+    say "  This file is generated. Put the real ids in $IDS:"
     say ""
     say "    npx wrangler d1 create $DB_NAME        # -> database_id"
     say "    npx wrangler kv namespace create CACHE # -> id"
     say ""
-    say "  Then edit $CONFIG. To deploy anyway: $0 deploy --force"
+    say "  $IDS is gitignored; $TEMPLATE is not, so never edit ids into it."
+    say "  Then re-run. To deploy anyway: $0 deploy --force"
     return 3
   fi
   return 0
@@ -330,10 +377,11 @@ act_deploy() {
     deploy_precheck || return $?
   fi
   require_wrangler
+  ensure_config || return $?
   head1 "sync bundled themes (content/themes -> public/themes assets)"
   node scripts/sync-bundled-themes.mjs || return $?
   head1 "wrangler deploy"
-  npx --no-install wrangler deploy
+  npx --no-install wrangler deploy -c "$CONFIG"
 }
 
 act_deploy_full() {
@@ -366,6 +414,20 @@ act_doctor() {
     warn "wrangler   not installed locally"
   fi
 
+  # The config is derived, so report all three links in the chain: a missing ids
+  # file and a stale generated file look identical from the outside (both mean
+  # "the commands are not using what you think"), and only naming them apart
+  # tells you which one to fix.
+  if [ -f "$TEMPLATE" ]; then
+    say "  template   $TEMPLATE (committed, placeholders)"
+  else
+    warn "template   $TEMPLATE MISSING"
+  fi
+  if [ -f "$IDS" ]; then
+    say "  ids        $IDS present"
+  else
+    warn "ids        $IDS MISSING — generate it before dev/deploy"
+  fi
   if [ -f "$CONFIG" ]; then
     say "  config     $CONFIG present"
     ph=$(placeholders_found)
@@ -400,7 +462,7 @@ act_doctor() {
 act_version() {
   head1 "cfpress launcher"
   say "  project   $(node -p "require('./package.json').version" 2>/dev/null || echo '?')"
-  say "  config    $CONFIG"
+  say "  config    $CONFIG  ${C_DIM}(generated from $TEMPLATE + $IDS)${C_RESET}"
   say "  dev url   http://$DEV_HOST:$DEV_PORT"
   say "  root      $ROOT"
   if have git; then
@@ -423,6 +485,7 @@ ${C_BOLD}CFPress launcher${C_RESET}  ${C_DIM}(repo root: $ROOT)${C_RESET}
   ${C_BOLD}ACTIONS${C_RESET}
     dev                 start the local dev server (menu 1)
     migrate:local       apply migrations to the local D1 (menu 2)
+    config              regenerate wrangler.local.jsonc from wrangler.ids.json
     theme [dir]         upload + activate a theme on the running dev server
     seed                seed demo content on the running dev server
     test [suite]        run every suite, or one by name (menu 4)
@@ -495,7 +558,7 @@ show_menu() {
   printf '%s│%s  %s8%s) 部署+远程迁移   deploy:full\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$C_RESET"
   printf '%s│%s  %s9%s) 诊断环境        doctor\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$C_RESET"
   printf '%s└──────────────────────────────────────────────┘%s\n' "$C_BLUE" "$C_RESET"
-  dim "  other:  t2 <name> 单套件 · mk <theme|plugin|table> <name> · v 版本 · h 帮助 · q 退出"
+  dim "  other:  t2 <name> 单套件 · mk <theme|plugin|table> <name> · cfg 生成部署配置 · v 版本 · h 帮助 · q 退出"
 }
 
 menu_loop() {
@@ -524,6 +587,7 @@ menu_loop() {
       9) act_doctor ;;
       t2\ *) act_test "$(printf '%s' "$choice" | cut -d' ' -f2)" ;;
       mk\ *) set -- $(printf '%s' "$choice"); act_make "$2" "$3" ;;
+      cfg|config) ensure_config ;;
       v) act_version ;;
       h|help|'') act_help ;;
       q|quit|exit) say "bye."; return 0 ;;
@@ -554,6 +618,7 @@ main() {
     -h|--help|help)   act_help ;;
     -v|--version|version) act_version ;;
     dev)              act_dev ;;
+    config|config:gen|config:generate) ensure_config ;;
     migrate:local|migrate-local|db:migrate:local) act_migrate_local ;;
     migrate:remote|migrate-remote|db:migrate) act_migrate_remote ;;
     theme|theme:deploy) act_theme_deploy "$@" ;;

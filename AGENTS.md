@@ -291,11 +291,19 @@ KV 镜像在免费计划上纯属写入放大器。这类能力一律走**开关
 > `Env` 上可读、`wrangler.jsonc` 的 `vars` 里有键。前两条由 `architecture.test.mjs` 断言；
 > 第三条同样由它断言（**双向**：配置里有、没有开关读它的键也算红，那是改名后的残留）。
 > 这不是形式主义：批次 11 把 `vars` 块**只加进了 `wrangler.jsonc`**，而所有命令跑的是
-> `wrangler.local.jsonc`（gitignore，带真 id）——于是线上根本没有 `vars`。**漏一个 var 和写
-> `"false"` 的解析结果都是"关"**，所以这个差异在两个批次里完全隐形，只有"设一个 var → deploy
-> → 发现开关没动"才会暴露。两份配置的结构一致性由 `tests/tools/_config-parity.mjs` 守
-> （进了 `npm run gate`；本地文件不存在时它明确报 **n/a 而不是 pass**，因为"文件不在所以跳过"
-> 正是本仓库最忌讳的假绿）。
+> `wrangler.local.jsonc`——于是线上根本没有 `vars`。**漏一个 var 和写 `"false"` 的解析结果
+> 都是"关"**，所以这个差异在两个批次里完全隐形，只有"设一个 var → deploy → 发现开关没动"
+> 才会暴露。
+
+> ⚠️ **部署配置是生成的，别手改**。链条只有两条边：
+> `wrangler.jsonc`（提交，占位符）+ `wrangler.ids.json`（gitignore，真 id，**唯一手写**）
+> → `node scripts/make-local-config.mjs` → `wrangler.local.jsonc`（生成物，所有命令带 `-c` 跑的）。
+> 三处守卫：`architecture.test.mjs`（`varName` ↔ 模板 `vars` 键，双向）、
+> `tests/tools/_config-parity.mjs`（**本地文件 = 重新生成的字节**；进 `npm run gate`；
+> 本地文件/ids 缺失时明确报 **n/a 而不是 pass**，因为"文件不在所以跳过"正是本仓库最忌讳的假绿）、
+> `launcher-parity` §8b（启动器每条 wrangler 命令都带 `-c "$CONFIG"`，且读它之前先重新生成）。
+> **永远不要把真 id 写进 `wrangler.jsonc`**——它被 git 跟踪，下一次 commit 就把在用的数据库
+> id 发到公开仓库。启动器曾经就是这么教的（不带 `-c` 部署占位符那份 + 叫你去编辑模板），已修。
 
 ## 多语言与 URL（规则 56–59）
 
