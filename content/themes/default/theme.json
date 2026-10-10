@@ -27,6 +27,18 @@
     "zh-CN",
     "en"
   ],
+  "routes": [
+    {
+      "path": "/blog",
+      "template": "archive",
+      "title": "Blog",
+      "query": {
+        "type": "post",
+        "limit": 50,
+        "order": "created_at desc"
+      }
+    }
+  ],
   "fields": [
     {
       "key": "category",

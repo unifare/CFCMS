@@ -16,6 +16,10 @@ import { featureSnapshot, inheritedValue, truthy, FEATURE_SETTINGS_KEY, FEATURE_
 import { clearOwnerMenusAllSites, listAdminMenuGroups } from "./platform/admin-menus";
 import { clearPluginMenus } from "./extensions/plugin/menus";
 import { createSite, updateSite, deleteSite, listSites, DEFAULT_SITE_ID } from "./platform/sites";
+// The custom-field read ladder is defined once; the admin read has to agree
+// with what the front end renders for the same post in the same language.
+import { resolveMetaByPost } from "./platform/post-meta";
+import { defaultLocale } from "./platform/frontend";
 // Media access policy — the same module the front-end `/media/<key>` read path
 // uses, so the library a user can list is the library they can fetch.
 import { readMediaPolicy, mediaOwnerClause } from "./platform/media-policy";
@@ -290,15 +294,18 @@ async function savePost(
     await env.DB.prepare("DELETE FROM scheduled_posts WHERE post_id=?").bind(entityId).run();
   }
   // Custom fields: persist any theme-declared meta sent alongside the post.
+  // The value is written against THIS save's locale (migration 0019): a
+  // category name is prose, and the language that saved it owns what it says.
+  // Reading is the ladder in `platform/post-meta.ts` — never here.
   if (body.meta && typeof body.meta === "object" && !Array.isArray(body.meta)) {
     for (const [k, v] of Object.entries(body.meta as Record<string, unknown>)) {
       const key = String(k);
       if (!/^[a-z0-9_][a-z0-9_-]{0,63}$/i.test(key)) continue;
       if (!(await fieldExists(env, key, siteId))) continue;
       await env.DB.prepare(
-        "INSERT INTO post_meta(post_id,meta_key,meta_value,updated_at) VALUES(?,?,?,?) ON CONFLICT(post_id,meta_key) DO UPDATE SET meta_value=excluded.meta_value,updated_at=excluded.updated_at"
+        "INSERT INTO post_meta(post_id,meta_key,locale,meta_value,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(post_id,meta_key,locale) DO UPDATE SET meta_value=excluded.meta_value,updated_at=excluded.updated_at"
       )
-        .bind(entityId, key, v === null || v === undefined ? null : String(v), now())
+        .bind(entityId, key, locale, v === null || v === undefined ? null : String(v), now())
         .run()
         .catch(() => {});
     }
@@ -344,15 +351,15 @@ async function findActivePostType(env: Env, name: string, siteId: string) {
   }
 }
 
-/** All custom-field values stored against a post. */
-async function postMeta(env: Env, postId: string): Promise<Record<string, string>> {
+/** Custom-field rows of a post, unresolved — the ladder decides per language. */
+async function postMetaRows(env: Env, postId: string): Promise<{ post_id: string; meta_key: string; locale: string | null; meta_value: string | null }[]> {
   try {
-    const r = await env.DB.prepare("SELECT meta_key, meta_value FROM post_meta WHERE post_id=?")
+    const r = await env.DB.prepare("SELECT post_id, meta_key, locale, meta_value FROM post_meta WHERE post_id=?")
       .bind(postId)
       .all();
-    return Object.fromEntries(((r.results as any[]) ?? []).map((m) => [m.meta_key, m.meta_value]));
+    return (r.results as any[]) ?? [];
   } catch {
-    return {};
+    return []; // pre-0019 database: the `locale` column itself is missing
   }
 }
 
@@ -1560,8 +1567,12 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
         WHERE p.id=? ORDER BY t.locale
       `).bind(id).all();
       const items = (row.results as any[]) ?? [];
-      const meta = await postMeta(env, id);
-      return ok({ items: items.map((i) => ({ ...i, meta })) });
+      // One meta map per language row, resolved through the ladder — the editor
+      // edits a language, so it must see that language's field values, not a
+      // blend of whichever row the query returned first.
+      const metaRows = await postMetaRows(env, id);
+      const dflt = await defaultLocale(env, siteId);
+      return ok({ items: items.map((i) => ({ ...i, meta: resolveMetaByPost(metaRows, String(i.locale ?? ""), dflt).get(id) ?? {} })) });
     }
   }
 
@@ -1578,9 +1589,10 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
         WHERE p.id=? ORDER BY t.locale
       `).bind(id).all();
       const items = (row.results as any[]) ?? [];
-      // Attach theme-declared custom fields for the editor.
-      const meta = await postMeta(env, id);
-      return ok({ items: items.map((i) => ({ ...i, meta })) });
+      // Attach theme-declared custom fields for the editor, per language row.
+      const metaRows = await postMetaRows(env, id);
+      const dflt = await defaultLocale(env, siteId);
+      return ok({ items: items.map((i) => ({ ...i, meta: resolveMetaByPost(metaRows, String(i.locale ?? ""), dflt).get(id) ?? {} })) });
     }
   }
 

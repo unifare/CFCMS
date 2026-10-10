@@ -2,7 +2,7 @@
 {{@section "content"}}
 
 <div class="wrap">
-  <div class="sec-head tight"><h2>{{page.title}}</h2><div class="line"></div><span class="more">{{#if posts}}{{default(theme.strings.articles.count, "")}} {{len(posts)}} {{default(theme.strings.articles.unit, "articles")}}{{/if}}</span></div>
+  <div class="sec-head tight"><h2>{{default(theme.strings.archive.title, "All articles")}}</h2><div class="line"></div><span class="more">{{#if posts}}{{default(theme.strings.articles.count, "")}} {{len(posts)}} {{default(theme.strings.articles.unit, "articles")}}{{/if}}</span></div>
   {{#if posts}}
     <div class="grid">
       {{#each posts as post}}

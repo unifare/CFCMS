@@ -19,12 +19,10 @@
  * own URL out of `post.alternates`. Seeding the same slug for both languages
  * would hide that behaviour rather than exercise it.
  *
- * ⚠️ `category` and `tags` are the exception, and they are written **once, in
- * the default language**. `post_meta` is `PRIMARY KEY(post_id, meta_key)` with
- * no locale column, so a value there is shared by every language of that post;
- * translating it is not possible today. A field the platform stores once per
- * post is written in the site's default language — otherwise the default
- * language is the one that looks broken.
+ * `category` and `tags` carry their own prose, so **each language writes its
+ * own values** — migration 0019 gave `post_meta` a locale column, and a
+ * category name is a word a reader sees. "Design" on a Chinese page is exactly
+ * the half-translated page this seeder exists to make impossible.
  *
  * Local dev only. Usage: node scripts/seed-demo-content.mjs
  * Against a deployment: CFP_BASE=https://your.workers.dev node scripts/seed-demo-content.mjs
@@ -372,19 +370,20 @@ const I18N_ZH = body(
 
 // ---------------------------------------------------------------------------
 // The content, keyed by post id. `en` and `zh-CN` are two translations of one
-// row; `meta` is per post, not per language (see the header note).
+// row; `meta` is per language — a category name is prose a reader sees.
 // ---------------------------------------------------------------------------
 const CONTENTS = {
   "post_Qps_LsNapf22VhSW9bFxTA": {
     kind: "posts",
-    meta: { category: "Design", tags: "long read,design systems,typography" },
     en: {
+      meta: { category: "Design", tags: "long read,design systems,typography" },
       slug: "hello-world",
       title: "Hello World",
       excerpt: "A publishing platform built to end the negotiation with its own framework.",
       content: HELLO,
     },
     "zh-CN": {
+      meta: { category: "设计", tags: "长文,设计系统,字体排印" },
       slug: "ni-hao-shi-jie",
       title: "你好，世界",
       excerpt: "一个为了终结与自身框架的谈判而建成的发布平台。",
@@ -393,14 +392,15 @@ const CONTENTS = {
   },
   "post_4E_VfYU_rSAnepUdteAqew": {
     kind: "posts",
-    meta: { category: "Life", tags: "notebooks,workflow" },
     en: {
+      meta: { category: "Life", tags: "notebooks,workflow" },
       slug: "second-post",
       title: "Second Post",
       excerpt: "A shorter note about uniformity of mechanism and variety of output.",
       content: SECOND,
     },
     "zh-CN": {
+      meta: { category: "生活", tags: "笔记,工作流" },
       slug: "di-er-pian",
       title: "第二篇",
       excerpt: "一篇更短的笔记：机制统一，产出多样。",
@@ -409,14 +409,15 @@ const CONTENTS = {
   },
   "post_EDGE01aaaaaaaaaaaaaaaa": {
     kind: "posts",
-    meta: { category: "Technology", tags: "edge,architecture,long read" },
     en: {
+      meta: { category: "Technology", tags: "edge,architecture,long read" },
       slug: "rendering-at-the-edge",
       title: "Rendering at the edge, one pass at a time",
       excerpt: "A runtime that forgets you between requests is not a limitation to work around. It is the design.",
       content: EDGE,
     },
     "zh-CN": {
+      meta: { category: "技术", tags: "边缘计算,架构,长文" },
       slug: "zai-bian-yuan-xuan-ran",
       title: "在边缘一次渲染",
       excerpt: "一个在请求之间把你忘掉的运行时，不是需要绕开的限制，它就是设计本身。",
@@ -425,14 +426,15 @@ const CONTENTS = {
   },
   "post_TMPL02bbbbbbbbbbbbbbbb": {
     kind: "posts",
-    meta: { category: "Technology", tags: "templates,constraints" },
     en: {
+      meta: { category: "Technology", tags: "templates,constraints" },
       slug: "a-template-language-small-enough-to-reason-about",
       title: "A template language small enough to reason about",
       excerpt: "Ten helpers, no arithmetic, and no way to call out. That is the whole vocabulary, on purpose.",
       content: TEMPLATES,
     },
     "zh-CN": {
+      meta: { category: "技术", tags: "模板语言,约束" },
       slug: "ke-yi-tui-qiao-de-mo-ban-yu-yan",
       title: "小到可以推敲的模板语言",
       excerpt: "十个 helper，没有算术，也无法向外调用。这就是全部词汇，而且是刻意的。",
@@ -441,14 +443,15 @@ const CONTENTS = {
   },
   "post_I18N03cccccccccccccccc": {
     kind: "posts",
-    meta: { category: "Design", tags: "i18n,data modelling" },
     en: {
+      meta: { category: "Design", tags: "i18n,data modelling" },
       slug: "two-languages-one-row",
       title: "Two languages, one row",
       excerpt: "Adding a language should not be a migration, and a price should never be translated.",
       content: I18N,
     },
     "zh-CN": {
+      meta: { category: "设计", tags: "国际化,数据建模" },
       slug: "liang-zhong-yu-yan-tong-yi-xing",
       title: "两种语言，同一行",
       excerpt: "增加一种语言不该是一次迁移，而价格永远不该被翻译。",
@@ -533,9 +536,8 @@ for (const [id, c] of Object.entries(CONTENTS)) {
         excerpt: v.excerpt,
         content: v.content,
         status: "published",
-        // Only on the primary save: `post_meta` has no locale column, so writing
-        // it twice would just overwrite the same shared row with the same value.
-        ...(locale === DEFAULT_LOCALE && c.meta ? { meta: c.meta } : {}),
+        // Meta is per language now: this save's locale owns the values it sends.
+        ...(v.meta ? { meta: v.meta } : {}),
       }),
     });
     const okFlag = r.status < 400;

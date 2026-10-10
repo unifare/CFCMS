@@ -39,6 +39,7 @@ import { featureEnabled } from "../../shared/features";
 import { setting } from "../../platform/frontend";
 import { listSites } from "../../platform/sites";
 import { siteDefaultLocale, siteLocales } from "../../platform/i18n/locale-registry";
+import { resolveMetaByPost } from "../../platform/post-meta";
 import { resolveThemeTable } from "./tables";
 import { tableBySlug, tableList, tableSave } from "./table-facade";
 import { themeFilePrefix, activeTheme, type ActiveTheme } from "./runtime-declarative";
@@ -452,7 +453,7 @@ export async function handleThemeApi(env: Env, request: Request): Promise<Respon
         .bind(siteId, type, slug, locale)
         .first<any>();
       if (!row) return json({ error: "not_found" }, 404);
-      row.meta = await postMetaMap(env, row.id);
+      row.meta = await postMetaMap(env, row.id, locale, await siteDefaultLocale(env, siteId));
       return json({ item: row });
     }
 
@@ -510,11 +511,11 @@ export async function handleThemeApi(env: Env, request: Request): Promise<Respon
   }
 }
 
-/** Custom fields for a post, as a flat key→value map. */
-async function postMetaMap(env: Env, postId: string): Promise<Record<string, string>> {
+/** Custom fields for a post, resolved for the requesting language. */
+async function postMetaMap(env: Env, postId: string, locale: string, fallback: string): Promise<Record<string, string>> {
   try {
-    const r = await env.DB.prepare("SELECT meta_key, meta_value FROM post_meta WHERE post_id=?").bind(postId).all();
-    return Object.fromEntries(((r.results as any[]) ?? []).map((m) => [m.meta_key, m.meta_value]));
+    const r = await env.DB.prepare("SELECT post_id, meta_key, locale, meta_value FROM post_meta WHERE post_id=?").bind(postId).all();
+    return resolveMetaByPost((r.results as any[]) ?? [], locale, fallback).get(postId) ?? {};
   } catch {
     return {}; // table absent on a pre-0008 database
   }

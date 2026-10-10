@@ -78,7 +78,10 @@
         </a>
       {{/each}}
     </div>
-    <aside class="side">
+    {{! `sec-topics` is what the header nav's 专题/Topics link scrolls to: the
+        tag cloud IS the topic browser, and an anchor to an id the page does
+        not have is a link that silently does nothing. }}
+    <aside class="side" id="sec-topics">
       <h5>{{default(theme.strings.tags.title, "Tags")}}</h5>
       <div class="tagcloud" id="tags"></div>
       <div class="newsbox">

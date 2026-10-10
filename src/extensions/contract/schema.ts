@@ -88,7 +88,7 @@ export const PLATFORM_SCHEMA = [
   { table: "media_files", tenant: "site", locale: null, note: "site_id added in migration 0009; uploaded_by added in 0018 (NULL = uploaded before ownership existed, grandfathered visible site-wide); alt_text/title are language-neutral by design — one alt for every language, stated in the editor UI rather than silently assumed" },
 
   // -- tenant-scoped via a parent (no local site_id, by design) --------------
-  { table: "post_meta", tenant: "platform", derivedTenant: "post_id → posts.site_id", locale: null, note: "custom post fields; scoped by the post they hang off" },
+  { table: "post_meta", tenant: "platform", derivedTenant: "post_id → posts.site_id", locale: { kind: "column" }, note: "custom post fields; scoped by the post they hang off, per language since 0019 (a category name is prose, not a number). '' = written before the dimension existed; the read ladder is own locale → site default → '' → any" },
   { table: "post_revisions", tenant: "platform", derivedTenant: "post_id → posts.site_id", locale: { kind: "column" }, note: "revisions carry a locale column AND inherit tenant from the post" },
   { table: "post_autosaves", tenant: "platform", derivedTenant: "post_id → posts.site_id", locale: { kind: "column" }, note: "autosave draft, keyed (post_id,user_id,locale)" },
   { table: "post_translations", tenant: "platform", derivedTenant: "post_id → posts.site_id", locale: { kind: "column" }, note: "L1 content translation; keyed (post_id,locale)" },

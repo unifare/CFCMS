@@ -779,6 +779,67 @@ const SCENARIOS = [
     ],
     runs: [["tests/suites/architecture.test.mjs", "the installed/not-installed predicate counts rows (rule 69c)"]],
   },
+  // --- post_meta carries a language (batch 23, MEDIA-EDITOR-PLAN B5) --------
+  {
+    // `post_meta` is keyed (post_id, meta_key, locale) since migration 0019,
+    // and every reader resolves values through one ladder in
+    // `platform/post-meta.ts`. A reader that keeps the ladder but forgets to
+    // pass the language is the quietest regression: the map still fills, the
+    // template still renders, and the page simply shows the site default's
+    // value in every language — the exact symptom B5 exists to remove.
+    label: "the listing attach stops being language-aware",
+    file: join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
+    before: ["  const byPost = resolveMetaByPost(metaRows as any[], locale, fallback);"],
+    after: ['  const byPost = resolveMetaByPost(metaRows as any[], "", fallback);'],
+    runs: [["tests/suites/locale-url.test.mjs", "and the second language's listing resolves its own"]],
+  },
+  {
+    // The single object is the other reader of the same ladder. Dropping its
+    // attach does not break the page: `post.meta.category` renders empty, the
+    // kicker falls back to its generic label, and HTTP stays 200 — the silent
+    // half-answer that shipped before this batch.
+    label: "the single page stops attaching custom fields",
+    file: FRONTEND,
+    before: ["    row.meta=resolveMetaByPost((mr.results as any[])??[],locale,dflt).get(row.id)??{};"],
+    after: ["    row.meta={};"],
+    runs: [["tests/suites/locale-url.test.mjs", "the single page shows the default language's own value"]],
+  },
+  {
+    // A write that discards the language lands every value on the `''` legacy
+    // tier, where the *last* writer of any language wins for all of them. Both
+    // languages then read one blended value — and because SQLite upserts
+    // silently, the defect is a 200 with content in the wrong language.
+    label: "the meta writer saves every language onto the legacy tier",
+    file: API,
+    before: [".bind(entityId, key, locale, v === null || v === undefined ? null : String(v), now())"],
+    after: ['.bind(entityId, key, "", v === null || v === undefined ? null : String(v), now())'],
+    runs: [["tests/suites/locale-url.test.mjs", "the single page shows the default language's own value"]],
+  },
+  {
+    // `attachMeta` renders each row's blocks anyway; reading_time is a string
+    // scan on that HTML, not a second render pass. Dropping the line degrades
+    // every listing card by one field with no error anywhere.
+    label: "listings stop deriving a reading time",
+    file: join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
+    before: ['    it.reading_time = readingTime(String(it.html ?? ""), 220, locale);\n'],
+    after: [""],
+    runs: [["tests/suites/locale-url.test.mjs", "listings carry a reading time (derived, not rendered twice)"]],
+  },
+  {
+    // The ladder's whole point is that a listing, a single page and the admin's
+    // language rows answer "which value does this language see" the same way.
+    // A second copy of the resolver is how the card says 设计 while the article
+    // says Design comes back — so a rival definition has to be refused
+    // structurally, before any of the behavioural suites could disagree.
+    label: "a second copy of the meta ladder is defined",
+    file: API,
+    before: ['import { resolveMetaByPost } from "./platform/post-meta";'],
+    after: [
+      'import { resolveMetaByPost } from "./platform/post-meta";\n' +
+        'function resolveMetaByPost(rows: any[], locale: string, fallback: string) { return new Map(); }',
+    ],
+    runs: [["tests/suites/architecture.test.mjs", "the meta read ladder is defined in exactly one module (rule 70)"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */

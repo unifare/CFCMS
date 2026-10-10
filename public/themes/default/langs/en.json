@@ -54,5 +54,6 @@
   "theme.default.notFound.title": "This page does not exist",
   "theme.default.notFound.desc": "It may have moved, or it never existed. The writing is still where you left it.",
   "theme.default.notFound.back": "Back to the front page",
-  "theme.default.page.kicker": "Page"
+  "theme.default.page.kicker": "Page",
+  "theme.default.archive.title": "All articles"
 }

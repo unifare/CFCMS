@@ -9,7 +9,8 @@
  */
 import { Env } from "../../shared/types";
 import { bundledThemeFile } from "../../shared/bundled";
-import { esc, setting, siteInfo, menu, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale } from "../../platform/frontend";
+import { esc, setting, siteInfo, menu, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale, readingTime } from "../../platform/frontend";
+import { resolveMetaByPost } from "../../platform/post-meta";
 import { parsePack } from "../../platform/i18n/translate";
 import { resolveLocale } from "../../platform/i18n/resolve";
 import { themePackKey } from "./packs";
@@ -289,22 +290,29 @@ export async function runThemeQuery(
 
   const rows = await env.DB.prepare(sql).bind(...binds).all();
   const items = (rows.results as any[]) ?? [];
-  await attachMeta(env, items);
-  // Listings carry a print-ready date and a cover, like single objects do — a
-  // route-based archive should not be the one page where they are missing.
-  for (const it of items) { it.date_display = formatDate(it.created_at, locale); it.cover = coverFrom(it.content); }
+  await attachMeta(env, items, locale, await defaultLocale(env, siteId));
+  // Listings carry a print-ready date, a cover and a reading time, like single
+  // objects do — a route-based archive should not be the one page where they
+  // are missing. All three derive from data already in the row: `attachMeta`
+  // has just rendered `html`, so the reading time is a string scan on that,
+  // not another render pass.
+  for (const it of items) {
+    it.date_display = formatDate(it.created_at, locale);
+    it.cover = coverFrom(it.content);
+    it.reading_time = readingTime(String(it.html ?? ""), 220, locale);
+  }
   return items as QueryRow[];
 }
 
 /** Attach theme-declared custom fields to query results as `meta`. */
-async function attachMeta(env: Env, rows: any[]): Promise<void> {
+async function attachMeta(env: Env, rows: any[], locale: string, fallback: string): Promise<void> {
   if (!rows.length) return;
   const ids = rows.map((r) => r.id);
   const placeholders = ids.map(() => "?").join(",");
   let metaRows: any[] = [];
   try {
     const res = await env.DB.prepare(
-      `SELECT post_id, meta_key, meta_value FROM post_meta WHERE post_id IN (${placeholders})`
+      `SELECT post_id, meta_key, locale, meta_value FROM post_meta WHERE post_id IN (${placeholders})`
     )
       .bind(...ids)
       .all();
@@ -312,12 +320,9 @@ async function attachMeta(env: Env, rows: any[]): Promise<void> {
   } catch {
     metaRows = []; // table may not exist on a pre-0008 database
   }
-  const byPost = new Map<string, Record<string, string>>();
-  for (const m of metaRows) {
-    const bucket = byPost.get(m.post_id) ?? {};
-    bucket[m.meta_key] = m.meta_value;
-    byPost.set(m.post_id, bucket);
-  }
+  // The ladder lives in `platform/post-meta.ts` — a listing and the single page
+  // of the same post must resolve a field's language the same way.
+  const byPost = resolveMetaByPost(metaRows as any[], locale, fallback);
   for (const row of rows) {
     row.meta = byPost.get(row.id) ?? {};
     // Expose a rendered HTML form for convenience in templates.

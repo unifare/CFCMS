@@ -1,6 +1,7 @@
 import { Env } from "../shared/types";
 import { parseBlocks } from "../rendering/blocks";
 import { siteLocales, siteDefaultLocale } from "./i18n/locale-registry";
+import { resolveMetaByPost } from "./post-meta";
 
 export function esc(v:unknown){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!))}
 /**
@@ -128,6 +129,14 @@ export async function findContent(env:Env,type:string,slug:string,locale:string,
     row.date_display=formatDate(row.created_at,locale);
     row.cover=coverFrom(row.content);
     row.alternates=await contentAlternates(env,siteId,row.id,row.type);
+    // A single object carries the same custom fields a listing does: the
+    // templates read `post.meta.category` on both, so only one of them having
+    // values was a silent half-answer (the article kicker fell back to its
+    // generic label while the card next to it named the category). Resolved
+    // through the same ladder as the listing — one definition, two readers.
+    const dflt=await defaultLocale(env,siteId);
+    const mr=await env.DB.prepare("SELECT post_id, meta_key, locale, meta_value FROM post_meta WHERE post_id=?").bind(row.id).all().catch(()=>({results:[] as any[]}));
+    row.meta=resolveMetaByPost((mr.results as any[])??[],locale,dflt).get(row.id)??{};
   }
   return row;
 }

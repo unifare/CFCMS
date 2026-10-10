@@ -1,7 +1,8 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-10-10 (GMT+8) ｜ 交接基线：**批次 22 —— 双语内容上线、注册行不等于安装（规则 69）、启动链自动安装主题声明**
-> （批次 21 默认主题的中文版与切换器、文章页切换器读翻译自己的 URL、中英双语演示内容、规则 25；
+> 更新时间：2026-10-11 (GMT+8) ｜ 交接基线：**批次 23 —— post_meta 语言维度（B5）+ 列表 reading_time + /blog 归档路由 + 单页字段修复**
+> （批次 22 双语内容上线、注册行不等于安装（规则 69）、启动链自动安装主题声明；
+> 批次 21 默认主题的中文版与切换器、文章页切换器读翻译自己的 URL、中英双语演示内容、规则 25；
 > 批次 20 journal 主题从产品移除 + 测试夹具主题不再被发布到线上；
 > 批次 19 主题卸载：读错层级 + 不可能成功的按钮；批次 18 界面语言偏好：一个写者两个读者；
 > 批次 16 Track 0 + B1 + A3 + B3 媒体隔离 / 块 attrs 契约 / 统一媒体控件 / 编辑器界面翻译；
@@ -11,8 +12,8 @@
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
 >
 > ⚠️ 批次 16 已完成 **Track 0**（媒体隔离）、**B1**（块 attrs 契约）、**A3**（统一媒体控件）、**B3**（编辑器界面翻译）。
-> 其余（A4 媒体屏升级、B4 多语言编辑体验、B5 `post_meta` 语言维度）
-> 在 `docs/design/MEDIA-EDITOR-PLAN.md`（**已定稿、未实现**，含四条轨道的完整拆分与已拍板语义）。
+> 其余（A4 媒体屏升级、B4 多语言编辑体验）仍待做；**B5 `post_meta` 语言维度已在批次 23 落地**。
+> 未完成项见 `docs/design/MEDIA-EDITOR-PLAN.md`（已定稿，含四条轨道的完整拆分与已拍板语义）。
 > ⚠️ 本轮的批次过程文档在 `docs/history/HANDOVER-PLUGIN-BATCH.md`（已降级为批次存档，只记步骤 1–6 的细节）。
 > 每日工作日志在 `.workbuddy-ai/memory/YYYY-MM-DD.md`（gitignore，本机才有）。
 
@@ -201,6 +202,63 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
 
+**批次 23（post_meta 语言维度 + reading_time + /blog 归档）—— ✅ 本轮完成**
+
+起点是用户引用批次 22 的两条「仍未修」并点名：**"这个要做。另外文章列表没有中文的文章列表？"**
+先量后动，量出来三件事里**两件半已经存在**，还额外量出**两个同族静默缺陷**：
+
+| 用户的问题 | 实测答案 |
+|---|---|
+| 文章列表没有中文的？ | **存在**——`/zh-CN` 首页「最新文章」网格与「最近发布」榜单都显示 5 篇中文文章。缺的是**归档路由**：`/en/archive`、`/zh-CN/archive`、`/blog`、`/zh-CN/blog`、`/zh-CN/tag/design` 全部 404（主题带了 `archive.html` 却没有任何路由指向它）；导航「文章/专题/榜单/关于」全是**页内锚点**，且 `#sec-topics` 指向一个**不存在的 id**（死锚点） |
+| post_meta 跨语言共享 | 属实。迁移 0019 重建表（SQLite 改不了 PK） |
+| 列表 reading_time | 做了——**且推翻了自己上一批的结论**（见下） |
+
+**额外量出的两个缺陷（同一族：声明了、模板读了、没人喂）**
+
+1. **`findContent`（单页）从来没挂过 meta**——线上文章 kicker 恒是 "Long read · CFPress"，
+   而 `single.html` 读 `{{post.meta.category}}`。列表卡片有分类名、文章页没有，HTTP 200。
+2. 死锚点 `#sec-topics`：指向不存在 id 的链接不报错、不 404，**只是什么都不做**。
+
+**改了什么**
+
+1. **迁移 0019**（`post_meta` 加 locale 维度，B5）：SQLite 不能 ALTER PK → 重建表
+   （`PRIMARY KEY(post_id, meta_key, locale)`），旧行全部落 `locale=''`。
+2. **读阶梯唯一定义** `platform/post-meta.ts`（`resolveMetaByPost` / `metaLocaleRank`）：
+   本语言（0）→ 站点默认语言（1）→ `''` 遗留行（2）→ 任意（3）。**遗留行故意不回填**
+   （0019 头部注释记录原因）——回填替用户决定归属，而第 2 层已让未重新保存的数据照原样渲染。
+   三个读者（列表 `attachMeta` / 单页 `findContent` / 主题 Worker `postMetaMap`）+ admin 的
+   语言行展开全部走它；写入（`savePost` meta upsert）绑定本次保存的 locale。
+   → **规则 70**（AGENTS.md / ARCHITECTURE §10 / architecture.test.mjs 三处同步）。
+3. **列表 `reading_time`**：`runThemeQuery` 给每行 `it.reading_time = readingTime(it.html, 220, locale)`。
+   **勘误**：批次 22 文档写"逐行 renderBlocks 会撞 10ms CPU"——**错的**。`attachMeta`
+   本来就逐行渲染 `html`（卡片要用），reading_time 只是对已渲染 HTML 的字符串扫描，
+   没有第二遍渲染。一个错误结论让一个字段缺席了两批。
+4. **`/blog` 归档路由**：`theme.json` 声明 `routes[]`（`/blog` → `archive` 模板，query 取
+   `type:post, limit:50, created_at desc`）→ 激活/启动时 upsert 进 `theme_routes` → 路由器按语言匹配。
+   `matchRoute` 要求段数相等，所以 `/blog` 路由**遮不住**内置 `/blog/{slug}` 单篇处理（在其后）。
+   `itemUrl` 用 `/{locale}{routeBase}/{slug}`，归档卡片的链接自动是 `/zh-CN/blog/<中文 slug>`。
+   归档标题从 `theme.strings.archive.title` 读（两包各 +1 键，57 键对齐）。
+5. **导航修复**：「文章」改为常驻 `/{locale}/blog` 链接；「专题/榜单/关于」保留为首页锚点，
+   并给标签 aside 补上 `id="sec-topics"`（死锚点 = 不报错的坏链接）。
+6. **播种脚本双语化 meta**：en `Design/Life/Technology` + 英文标签，zh-CN `设计/生活/技术`
+   + 中文标签；**删掉批次 21「共享字段按站点默认语言写」的权宜限制**。
+
+**验证（本地全部实测）**
+
+- `/zh-CN` 首页分类 `设计 9 / 生活 4 / 技术 7`（en：`Design 6 / Life 3 / Technology 6`）；
+  首页 reading_time 标记 14/12；`/zh-CN/blog` → 「全部文章」5 卡、链接 `/zh-CN/blog/<中文 slug>`；
+  文章 kicker 「设计 · CFPress」（原 "Long read"）；`id="sec-topics"` 恰一次。
+- 阶梯第 2 层实测：删掉 zh 行后中文单页回落显示英文值。
+- `tsc --noEmit` src/ 0 错误；`locale-url` **36/0**（30→36，§1b 六条新断言）。
+
+**本轮学到的一条**
+
+- **错误结论比没有结论更持久**：10ms CPU 的成本分析看起来像测量，于是 reading_time
+  缺席了整整两批没人质疑。量它只花了一分钟——`attachMeta` 的循环就在那里。
+
+**新基线**：**24 套件 / 1415 条 + `_schema-scope` 26 = 1441 条 / 0 失败**；
+`_skeleton-inject` **64 场景 / 0 问题**（本轮新增 5 条）；`tsc --noEmit` src/ 0 错误。
+
 **批次 22（双语内容上线 + 注册行不等于安装）—— ✅ 本轮完成**
 
 批次 21 的收尾是用户的第三个选择：**"本地 + 线上都做"**。本地那一半已完成并验证，
@@ -259,16 +317,16 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
   于是所有人都以为"主题装好了"——因为前台确实渲染了。**能渲染是最强的假绿**：
   它让声明面为空这件事完全不可见，直到有人真的去写一个字段。
 
-**仍未修（与批次 21 相同，本轮实测确认）**
+**仍未修（与批次 21 相同，本轮实测确认）→ 批次 23 已全部修掉**
 
-- **列表页没有 `reading_time`**：`runThemeQuery` 给了 `date_display` 和 `cover`，唯独没给
-  `reading_time`（单篇由 `findContent` 给）→ 首页/归档/索引里 `{{#if post.reading_time}}`
-  恒空，中英一致。**没顺手改**是因为列表最多 100 行，逐行 `renderBlocks` 算时长会撞
-  免费计划 **10ms CPU** 天花板。
-- **`post_meta` 没有语言维度**（`PRIMARY KEY(post_id, meta_key)`）：分类/标签跨语言共享，
-  所以中文页的分类标签是英文的（本轮线上实测：`Design`/`Life`/`Technology` 在中英文首页
-  都出现）。本轮取舍是**共享字段按站点默认语言写**，限制写进播种脚本头部注释。
-  真正的修法是给 `post_meta` 加 locale 维度（`docs/design/MEDIA-EDITOR-PLAN.md` 的 B5）。
+- ~~**列表页没有 `reading_time`**~~ **批次 23 已修**：`runThemeQuery` 现在给每行
+  `it.reading_time = readingTime(it.html, 220, locale)`。**上面"逐行 `renderBlocks` 会撞
+  10ms CPU"的说法是错的**——`attachMeta` 本来就逐行渲染 `html`（列表卡片要用），
+  reading_time 只是对**已渲染的 HTML 做一次字符串扫描**，没有第二遍渲染。这条论断
+  原样保留在这里，是因为"看起来像成本分析的错误结论"恰恰是它让一个字段缺席了两批。
+- ~~**`post_meta` 没有语言维度**~~ **批次 23 已修**：迁移 0019 重建表
+  （`PRIMARY KEY(post_id, meta_key, locale)`），读阶梯唯一定义 `platform/post-meta.ts`
+  （本语言 → 站点默认 → `''` 遗留行 → 任意），写入带语言，规则 70。
 
 **顺带修正**：§6 的套件表把批次 20 已删除的 `theme-journal` 还列着，且若干套件条数是
 批次 19 的数字。**已全部改为本轮实测值**（这条本身也是"文档比代码活得久"的又一次实例）。
@@ -327,16 +385,11 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
   本地 `field_defs` 被套件清空后，播种照样 **12 次 200**，而 `post_meta` 一行没写、
   页面分类标签全是"未分类"。**HTTP 200 再一次和"写进去了"无关。**
 
-**仍未修（本轮实测，未动）**
+**仍未修（本轮实测，未动）→ 批次 23 已全部修掉**
 
-- **列表页没有 `reading_time`**：`runThemeQuery` 给了 `date_display` 和 `cover`，
-  唯独没给 `reading_time`（单篇由 `findContent` 给）。首页/归档/索引模板里
-  `{{#if post.reading_time}}` 的位置因此**恒空**，中英一致。**没顺手改**是因为
-  列表最多 100 行，逐行 `renderBlocks` 去算时长会撞免费计划 **10ms CPU** 的天花板。
-- **`post_meta` 没有语言维度**（`PRIMARY KEY(post_id, meta_key)`）：分类/标签跨语言共享，
-  所以中文页的分类标签是英文的。本轮的取舍是**共享字段按站点默认语言写**
-  （否则默认语言那一侧反而坏了），并把这个限制写进播种脚本的头部注释。
-  真正的修法是给 `post_meta` 加 locale 维度（`docs/design/MEDIA-EDITOR-PLAN.md` 的 B5）。
+- ~~**列表页没有 `reading_time`**~~ **批次 23 已修**（同上一节的勘误：reading_time 是对
+  已渲染 HTML 的字符串扫描，不是第二遍 `renderBlocks`，10ms CPU 的顾虑不成立）。
+- ~~**`post_meta` 没有语言维度**~~ **批次 23 已修**（迁移 0019 + 规则 70）。
 
 **新基线**：**25 套件 + `_schema-scope`，1427 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_skeleton-inject` **57 场景 / 0 问题**（本轮新增 2 条，各配一个注入场景）；
@@ -946,7 +999,7 @@ theme-api 站点与主题头可伪造、`?? "default"` 地雷、四处 `|| "en"`
   以证明 `null` 是"没行"而不是"过滤被丢掉"）。
 
 
-## 6. 测试与验证（当前全绿：24 套件 / 1406 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 25 项 / 1432 条）
+## 6. 测试与验证（当前全绿：24 套件 / 1415 条 / 0 失败，另有 `_schema-scope` 26 条 —— 合计 25 项 / 1441 条）
 
 ```bash
 npx tsc --noEmit                 # src/ 0 错误（node_modules 里的 lib 冲突是既有的，忽略）
@@ -955,7 +1008,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 
 | 套件 | 数量 | 守什么 |
 |---|---|---|
-| architecture | 124 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**规则 66 捆绑主题经 assets 分发：`BUNDLED_THEMES` ↔ `content/themes` 对齐、`public/themes` 逐文件逐字节同步、每个消费点都有兜底、上传/卸载守卫**、**规则 69 注册行不等于安装：boot 链先注册后安装 + 判据数行而非戳记 + 判据镜像清理面**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
+| architecture | 127 | 分层红线、默认值零容忍、清单声明与文件对齐、语言包 key 前缀、屏幕集合钉住、菜单引用的表存在、已退役表不再被引用、规则 41 分类表四道结构守卫、**规则 49/51 闭集合双表对比**、**规则 52–55 功能开关**、**规则 56–59 多语言与 URL**、**规则 60 媒体读取路径必须晚于站点解析（结构判据）**、**规则 61 块 attrs 契约：解析渲染器每个 case 的 `a.<key>` 读取集合与声明比对 + 控件覆盖每种类型 + `media-list` 必须声明 `itemKeys`**、**规则 62 媒体控件与 `/media/` URL 各只许一处构造**、**规则 63 词典：SPA 的每个 `t("…")` 键都在每个语言包里 + 两包键集相同 + `core.editor.*` 每个键都有调用点**、**规则 64 自动保存定时器只有一处清理路径 + 导航确实调用它**、**规则 65 主题表的 i18n 侧表（记录说什么就让它成真）**、**规则 66 捆绑主题经 assets 分发：`BUNDLED_THEMES` ↔ `content/themes` 对齐、`public/themes` 逐文件逐字节同步、每个消费点都有兜底、上传/卸载守卫**、**规则 69 注册行不等于安装：boot 链先注册后安装 + 判据数行而非戳记 + 判据镜像清理面**、**规则 70 post_meta 读阶梯只许一处定义 + 读者全走阶梯 + 扫描非空**、**编辑器块面板来自 `CORE_BLOCKS`（SPA 禁块名字面量）**、**Dashboard 统计卡来自 API（禁 stat 硬编码）**、**声明式设置表单 13 类型逐个有渲染分支**、**元守卫：`check()` 条件非布尔即抛错 + 禁"集合当条件" + 禁"字面量当条件"** |
 | _schema-scope | 26 | 迁移流应用到临时 SQLite，逐表检验「声明 vs 真实列」一致（租户 + 语言维度） |
 | manifest-validation | 104 | 安装边界：每个用例注入单个缺陷，断言必须抛错（含内联语言包、菜单 args、**规则 48–51**、规则 41 双向） |
 | admin-menus | 43 | 注册表 schema / `menuRowId` 防碰撞 / 归属隔离 / 排序 / 能力过滤 / 主题与插件注册 / 停用插件只删自己的菜单 / 新站点可见 / 切主题切回 |
@@ -963,7 +1016,7 @@ node tests/<name>.test.mjs       # 逐个跑（判据是 0 failures，别把断�
 | template-engine | 49 | 模板解释器单元（含子模板未闭合 section 抛错、三层继承最派生者胜） |
 | scaffold | 71 | 生成的 theme/plugin/table 过**真实**校验器 + **真实**模板引擎 + **真实**架构规则 |
 | theme-integration | 101 | 上传→激活→CPT→渲染→切主题保数据，端到端（含表驱动路由） |
-| locale-url | 30 | 按语言 slug 的路由/404/唯一性、hreflang、按语言 feed、切换器（规则 56–59） |
+| locale-url | 36 | 按语言 slug 的路由/404/唯一性、hreflang、按语言 feed、切换器（规则 56–59）、**§1b 自定义字段带语言（单页/列表按语言取值 + 阶梯第 2 层回退 + 列表 reading_time）** |
 | theme-fixture | 47 | fixture 主题的声明与模板自洽 |
 | theme-default | 53 | default 主题（墨白 MOBAI）：模板真渲染 + head 的 SEO 契约（canonical/og/hreflang/feed）+ 语言包键完整性 |
 | multisite | 94 | 多站点隔离（含 SEO 端点按站点、**§9 断言关掉 KV 镜像后确实没有 KV 写入**、**feed 按站点 + RSS 断言**） |

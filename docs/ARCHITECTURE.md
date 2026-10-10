@@ -1143,7 +1143,7 @@ npm run make:table -- <theme> <table>  # 生成表声明片段
 | `site_locales` | 平台 | **新增**，站点启用哪些语言 |
 | `posts` | 平台 | 文章/页面/CPT（共用，`type` 区分） |
 | `post_translations` | 平台 | 内容翻译 |
-| `post_meta` | 平台 | 自定义字段值 |
+| `post_meta` | 平台 | 自定义字段值；**0019 起按语言**（键 `post_id,meta_key,locale`，读阶梯唯一定义 `platform/post-meta.ts`，规则 70） |
 | `users` / `roles` / `permissions` / `sessions` | 平台 | 权限体系 |
 | `media` | 平台 | 媒体库 |
 | `menus` / `menu_items` | 平台 | 前台导航 |
@@ -2232,6 +2232,25 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    **行为验证**：删掉本地 `field_defs`（套件本来就留下这个状态），重启 dev server 让 isolate
    全新启动，**不发任何激活请求**，字段自己回来——结构断言只能看到调用点存在，
    看不到它真的跑了
+
+【post_meta 的语言读阶梯只许一处定义】（AGENTS.md 规则 70，批次 23 / 迁移 0019 / B5）
+70. `post_meta` 自 0019 起带 locale 维度（`PRIMARY KEY(post_id, meta_key, locale)`），
+    "这个语言读这篇内容的哪个字段值"是一个四级阶梯：本语言行（0）→ 站点默认语言行（1）→
+    `''` 遗留行（2，0019 之前的共享行）→ 任意行（3）
+   a) 阶梯**只许一处定义**：`platform/post-meta.ts` 的 `resolveMetaByPost` / `metaLocaleRank`。
+      与 `resolveContentLocale`（规则 57）同一纪律；两份阶梯的退化形状是"卡片写着 设计、
+      文章写着 Design"，逐请求、逐字段
+   b) **每个读 `post_meta` 的模块**（列表 `attachMeta` / 单页 `findContent` / 主题 Worker
+      `postMetaMap` / admin 语言行展开）必须经 `resolveMetaByPost` 解析。裸 SELECT 允许，
+      重实现解析不允许
+   c) **写入必须带语言**：`savePost` 的 meta upsert 绑定本次保存的 `locale`。写入丢语言 =
+      全部落 `''` 层、最后写的语言赢（upsert 静默覆盖，HTTP 200）
+   d) 迁移**不回填** `''` 遗留行（0019 头部注释记录原因）：回填替用户决定归属，阶梯第 2 层
+      已让它们照旧渲染
+   守卫：`architecture.test.mjs`（规则 70 节，3 条：唯一定义 + 读者全走阶梯 + 扫描非空）；
+   行为：`locale-url.test.mjs` §1b（单页/列表按语言取值 + 阶梯第 2 层回退）；注入场景
+   `_skeleton-inject.mjs`（5 条：列表丢语言 / 单页不挂字段 / 写入落 `''` 层 / 列表丢
+   reading_time / 第二份阶梯定义）
 ```
 
 ---
@@ -2268,7 +2287,8 @@ export const PLATFORM_SCHEMA = [
   { table: "settings", tenant: "site", locale: null,
     note: "site settings (UNIQUE(site_id,key))" },
   { table: "post_meta", tenant: "platform", derivedTenant: "post_id → posts.site_id",
-    locale: null, note: "custom post fields; scoped by the post they hang off" },
+    locale: { kind: "column" },
+    note: "custom post fields; scoped by the post they hang off; per-language since 0019 (read ladder in platform/post-meta.ts, rule 70)" },
   { table: "locales", tenant: "platform", locale: null,
     note: "language registry shared by all sites" },
   // …

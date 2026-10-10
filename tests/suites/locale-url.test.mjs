@@ -147,13 +147,16 @@ function buildThemeZip() {
     version: "1.0.0",
     templates: ["index", "page", "single", "archive", "404"],
     runtime: "declarative",
+    // `savePost` persists a meta value only when a theme declared the field,
+    // so the custom-field language section below needs this to exist.
+    fields: [{ key: "category", type: "text", postTypes: ["post"] }],
   };
   const tpl = (body) => strToU8(`<!doctype html><html><head><title>{{page.title}}</title></head><body>${body}</body></html>`);
   return zipSync({
     "theme.json": strToU8(JSON.stringify(manifest, null, 2)),
-    "templates/index.html": tpl(`<h1>LOCURL-INDEX</h1><span id="langnav">{{#each lang_nav as l}}<a class="lnav{{#if l.current}} on{{/if}}" href="{{l.url}}">{{l.code}}</a>{{/each}}</span><span class="locale">{{locale}}</span>`),
+    "templates/index.html": tpl(`<h1>LOCURL-INDEX</h1><span id="langnav">{{#each lang_nav as l}}<a class="lnav{{#if l.current}} on{{/if}}" href="{{l.url}}">{{l.code}}</a>{{/each}}</span><span class="locale">{{locale}}</span><span id="list">{{#each posts as p}}<i class="lrow" data-title="{{p.title}}" data-cat="{{p.meta.category}}">{{#if p.reading_time}}rt{{/if}}</i>{{/each}}</span>`),
     "templates/page.html": tpl(`<h1 class="page-title">{{page.title}}</h1>`),
-    "templates/single.html": tpl(`<h1 class="single-title">{{post.title}}</h1><span id="alts">{{#each post.alternates as alt}}<a class="alt" data-locale="{{alt.locale}}"{{#if alt.default}} data-default="1"{{/if}} href="{{alt.url}}">{{alt.locale}}</a>{{/each}}</span><span id="single-langnav">{{#each lang_nav as l}}<a class="slnav{{#if l.current}} on{{/if}}" href="{{l.url}}">{{l.code}}</a>{{/each}}</span>`),
+    "templates/single.html": tpl(`<h1 class="single-title">{{post.title}}</h1><span id="alts">{{#each post.alternates as alt}}<a class="alt" data-locale="{{alt.locale}}"{{#if alt.default}} data-default="1"{{/if}} href="{{alt.url}}">{{alt.locale}}</a>{{/each}}</span><span id="single-langnav">{{#each lang_nav as l}}<a class="slnav{{#if l.current}} on{{/if}}" href="{{l.url}}">{{l.code}}</a>{{/each}}</span><span id="single-meta">{{post.meta.category}}</span>`),
     "templates/archive.html": tpl(`<h1>LOCURL-ARCHIVE</h1>`),
     "templates/404.html": tpl(`<h1>LOCURL-404</h1>`),
     "langs/en.json": strToU8(JSON.stringify({ [`theme.${THEME}.title`]: "URLs" })),
@@ -222,6 +225,7 @@ async function main() {
     method: "POST", headers: auth,
     body: JSON.stringify({
       locale: "en", slug: `${PREFIX}hello`, title: "Hello (en)", status: "published",
+      meta: { category: "Design" },
       content: JSON.stringify([{ type: "core/paragraph", attrs: { text: "English body" } }]),
     }),
   })).json();
@@ -232,6 +236,7 @@ async function main() {
     method: "PUT", headers: auth,
     body: JSON.stringify({
       locale: "zh-CN", slug: `${PREFIX}ni-hao`, title: "你好（中文）", status: "published",
+      meta: { category: "设计" },
       content: JSON.stringify([{ type: "core/paragraph", attrs: { text: "中文正文" } }]),
     }),
   })).json();
@@ -249,6 +254,37 @@ async function main() {
   check("an explicit prefix whose slug belongs to another language 404s (no silent fallback)", zhOld.status, 404);
   const enNew = await req(worker, env, `/en/blog/${PREFIX}ni-hao`);
   check("the zh slug does not leak into en", enNew.status, 404);
+
+  // -- 1b. custom fields are per language, on singles and listings alike ----
+  //
+  // Two defects lived here at once, and both were invisible while the front
+  // end rendered: `post_meta` had no locale column (a Chinese page showed the
+  // English category because the only stored value was English), and
+  // `findContent` never attached meta at all (the article's kicker fell back
+  // to its generic label while the card next to it named the category). The
+  // ladder — own locale, then the site default, then pre-0019 rows — lives in
+  // `platform/post-meta.ts`; this section watches it from both ends.
+  console.log("\n1b. Custom fields carry a language");
+  const enSingleMeta = (await (await req(worker, env, `/en/blog/${PREFIX}hello`)).text()).match(/<span id="single-meta">([^<]*)<\/span>/)?.[1];
+  check("the single page shows the default language's own value", enSingleMeta, "Design");
+  const zhSingleMeta = (await (await req(worker, env, `/zh-CN/blog/${PREFIX}ni-hao`)).text()).match(/<span id="single-meta">([^<]*)<\/span>/)?.[1];
+  check("the single page shows this language's own value", zhSingleMeta, "设计");
+
+  // The listing is page-wide, so the assertions pick this suite's own post out
+  // by title — a shared local D1 legitimately carries other sites' posts, and
+  // an assertion about "the" row would be pinned to whatever ran last.
+  const enList = [...(await (await req(worker, env, "/en")).text()).matchAll(/<i class="lrow" data-title="([^"]*)" data-cat="([^"]*)">(rt)?<\/i>/g)].map((m) => ({ title: m[1], cat: m[2], rt: Boolean(m[3]) }));
+  const zhList = [...(await (await req(worker, env, "/zh-CN")).text()).matchAll(/<i class="lrow" data-title="([^"]*)" data-cat="([^"]*)">(rt)?<\/i>/g)].map((m) => ({ title: m[1], cat: m[2], rt: Boolean(m[3]) }));
+  check("a listing resolves each row's fields for the page's language", enList.find((r) => r.title === "Hello (en)")?.cat, "Design");
+  check("and the second language's listing resolves its own", zhList.find((r) => r.title === "你好（中文）")?.cat, "设计");
+  checkTruthy("listings carry a reading time (derived, not rendered twice)", enList.find((r) => r.title === "Hello (en)")?.rt === true && zhList.find((r) => r.title === "你好（中文）")?.rt === true);
+
+  // Tier 2 of the ladder: a language that never saved a value shows the site
+  // default's value rather than an empty chip. Deleting the row directly is
+  // the honest way to build that state — there is no API for "unsave" a field.
+  sqlite.exec(`DELETE FROM post_meta WHERE post_id='${postId}' AND locale='zh-CN'`);
+  const zhFallback = (await (await req(worker, env, `/zh-CN/blog/${PREFIX}ni-hao`)).text()).match(/<span id="single-meta">([^<]*)<\/span>/)?.[1];
+  check("a language with no own value falls back to the site default's", zhFallback, "Design");
 
   // -- 2. hreflang alternates on the single --------------------------------
   console.log("\n2. hreflang alternates");

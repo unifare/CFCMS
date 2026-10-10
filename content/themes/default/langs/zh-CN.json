@@ -54,5 +54,6 @@
   "theme.default.notFound.title": "这一页不存在",
   "theme.default.notFound.desc": "它可能被移动过，或者从来没有存在过。文章还在原处等你。",
   "theme.default.notFound.back": "返回首页",
-  "theme.default.page.kicker": "页面"
+  "theme.default.page.kicker": "页面",
+  "theme.default.archive.title": "全部文章"
 }

@@ -2045,6 +2045,59 @@ section("A registry row is not an install (rule 69)");
 }
 
 // ---------------------------------------------------------------------------
+section("The custom-field read ladder is defined once (rule 70)");
+// ---------------------------------------------------------------------------
+
+/**
+ * `post_meta` carries a language since migration 0019, and "which value does
+ * this language see" is a four-tier ladder (own locale → site default →
+ * legacy `''` rows → anything). Like the content-locale fallback ladder
+ * (rule 57's `resolveContentLocale`), the answer only stays consistent if it
+ * is defined **once**: a listing, a single page and the admin's language rows
+ * must resolve the same field the same way, and a second copy of the ladder
+ * is how "the card says 设计 while the article says Design" comes back.
+ *
+ * Two structural claims, both checkable without a database:
+ *
+ *   1. the resolver is *defined* in exactly one module (`platform/post-meta.ts`);
+ *   2. every module that reads `post_meta` resolves through it. A raw SELECT
+ *      is allowed — the ladder needs the rows — but the *resolution* may not
+ *      be re-implemented next to it.
+ */
+{
+  const srcFiles = walk(join(ROOT, "src"), [".ts"]);
+  const sources = srcFiles.map((f) => ({ path: rel(f), src: blankComments(read(f)) }));
+
+  // ⚠️ `\b`, not `\(`: the declaration is generic —
+  // `export function resolveMetaByPost<T extends MetaRow>(...)` — so a regex
+  // that demands `(` right after the name matches nothing and both assertions
+  // below pass by finding zero definers. The scenario that proves this guard
+  // can fail anchors on the same spelling.
+  const defRe = /function\s+resolveMetaByPost\b/;
+  const definers = sources.filter((f) => defRe.test(f.src)).map((f) => f.path);
+  check(
+    "the meta read ladder is defined in exactly one module (rule 70)",
+    definers.length === 1 && definers[0] === "src/platform/post-meta.ts",
+    `defined in: ${definers.join(", ") || "nowhere"}`
+  );
+
+  const readers = sources.filter(
+    (f) => f.path !== "src/platform/post-meta.ts" && /FROM\s+post_meta\b/.test(f.src)
+  );
+  const strays = readers.filter((f) => !f.src.includes("resolveMetaByPost"));
+  checkEmpty("every post_meta reader resolves through the ladder (rule 70b)", strays.map((f) => f.path));
+
+  // Non-vacuity: the reader scan must see the readers this rule was written
+  // for. If the walk or the pattern silently empties, both assertions above
+  // would pass by finding nothing — the exact shape the meta-guard exists for.
+  check(
+    "the ladder scan actually saw the post_meta readers (non-vacuity)",
+    readers.length >= 3,
+    `${readers.length} reader module(s): ${readers.map((f) => f.path).join(", ")}`
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

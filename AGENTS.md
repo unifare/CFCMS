@@ -597,6 +597,26 @@ HTTP 200、零报错、什么都没写。演示内容的 `category`/`tags` 读�
 isolate 全新启动，**不发任何激活请求**，字段自己回来——这是修复成立与否的唯一判据，
 因为结构断言只能看到调用点存在，看不到它真的跑了。
 
+## post_meta 的语言读阶梯只许一处定义（规则 70）
+
+批次 23 给 `post_meta` 加了 locale 维度（迁移 0019，`PRIMARY KEY(post_id, meta_key, locale)`；
+`docs/design/MEDIA-EDITOR-PLAN.md` 的 B5）。从此"这个语言读这篇内容的哪个字段值"是一个
+**四级阶梯**：本语言行（0）→ 站点默认语言行（1）→ `''` 遗留行（2，0019 之前的共享行，
+**故意不回填**，让未重新保存的数据照原样渲染）→ 任意行（3）。
+
+| 规则 | 说明 |
+|---|---|
+| 70a | 阶梯**只许一处定义**：`platform/post-meta.ts` 的 `resolveMetaByPost` / `metaLocaleRank`。这与 `resolveContentLocale`（规则 57 的铸点）同一纪律——两份阶梯的退化形状是"卡片写着 设计、文章写着 Design"，而且是逐请求、逐字段的 |
+| 70b | **每个读 `post_meta` 的模块**（列表 `attachMeta`、单页 `findContent`、主题 Worker 的 `postMetaMap`、admin 的语言行展开）必须经 `resolveMetaByPost` 解析。裸 SELECT 允许（阶梯需要行），**重实现解析不允许** |
+| 70c | **写入必须带语言**：`savePost` 的 meta upsert 绑定的是本次保存的 `locale`。写入丢语言 = 所有语言的值都落在 `''` 遗留层，最后写的那个语言赢——SQLite upsert 静默覆盖，HTTP 200 |
+| 70d | 主题迁移数据库时**不回填** `''` 遗留行（0019 头部注释记录了原因）：回填会替用户决定"这些共享值属于哪个语言"，而阶梯的第 2 层已经让它们照旧渲染 |
+
+守卫在 `architecture.test.mjs`（规则 70 节，**3 条**：唯一定义 + 读者全走阶梯 +
+扫描非空）；行为断言在 `locale-url.test.mjs` §1b（单页/列表按语言取值 + 阶梯第 2 层
+回退——删掉本语言行后回落到站点默认语言）；注入场景在 `_skeleton-inject.mjs`
+（**5 条**：列表挂接丢语言 / 单页不挂字段 / 写入落 `''` 层 / 列表丢 reading_time /
+第二份阶梯定义）。
+
 ## 守卫失效记录（READ THIS）
 
 `tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。
