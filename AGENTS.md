@@ -655,6 +655,26 @@ isolate 全新启动，**不发任何激活请求**，字段自己回来——�
 + 占用站点回落 default + 主题真没了）；注入场景在 `_skeleton-inject.mjs`
 （force 被无视——历史形状逐字）。
 
+## 菜单位置解析必须确定性（规则 73）
+
+批次 26 修的确定性缺口：`menu()` 取 header 菜单是 `SELECT id … LIMIT 1` **没有 ORDER BY**。
+同一站点建两个 header 菜单（后台完全允许）后，前台导航是 SQLite 高兴给哪行就哪行——
+**请求之间会翻转，而代码一行没动**。与"列表按 MIN(locale) 排字母"同族：不确定的读取
+迟早被用户当成数据丢失。
+
+| 规则 | 说明 |
+|---|---|
+| 73a | 菜单位置 → 菜单的解析必须**定序**：`ORDER BY id LIMIT 1`，最小 id 稳定获胜。任何"取一个"的查询都必须能回答"为什么是这一个" |
+| 73b | 位置集合来自**激活主题 manifest 的 `menuLocations[]`**（渲染时直读，不落库、不需要重新激活——区别于 routes[] 的注册机制），`buildScope` 按 location 输出 `menu.<id>` / `menu.<id>_html`；`menu.primary*` 保留为 header 的别名（旧模板兼容）。声明里没有的 location **不渲染**，模板里也没有硬编码字面量 |
+| 73c | 菜单条目管理是完整 CRUD：批量重排一次提交全序列（服务端先验每个 id 属于本站点本菜单再写）、嵌套只允许一层（父必须同菜单、非自身、无父级）、删除父条目把子条目**升级为顶级**而不是孤儿。全部 site-scoped（规则 6） |
+
+守卫在 `architecture.test.mjs`（规则 73 节，**4 条**：ORDER BY 存在 / 渲染读 manifest
+而非字面量 / 内置主题声明 menuLocations / SPA 走 scoped）；行为断言在
+`admin-contract.test.mjs` §13（CRUD + 重排 + 嵌套契约 + 跨站点 404）与
+`theme-integration.test.mjs` §11（独立站点上双 header 菜单确定性获胜 + footer 位置渲染
++ 二次渲染逐字一致）；注入场景在 `_skeleton-inject.mjs`（LIMIT 1 无排序 + 渲染器硬编码
+header——两条都是历史真实形状）。
+
 ## 守卫失效记录（READ THIS）
 
 `tests/suites/architecture.test.mjs` 自己出过**三次假绿**，都是「检查存在但从不触发」。

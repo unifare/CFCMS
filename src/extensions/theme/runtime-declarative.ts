@@ -9,7 +9,7 @@
  */
 import { Env } from "../../shared/types";
 import { bundledThemeFile } from "../../shared/bundled";
-import { esc, setting, siteInfo, menu, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale, readingTime } from "../../platform/frontend";
+import { esc, setting, siteInfo, menusForLocation, locales, renderBlocks, formatDate, coverFrom, langNav, defaultLocale, readingTime } from "../../platform/frontend";
 import { resolveMetaByPost } from "../../platform/post-meta";
 import { parsePack } from "../../platform/i18n/translate";
 import { resolveLocale } from "../../platform/i18n/resolve";
@@ -29,6 +29,11 @@ export interface ActiveTheme {
   manifest: ThemeManifest;
 }
 
+export interface ThemeMenuLocation {
+  id: string;
+  label?: string;
+}
+
 export interface ThemeManifest {
   name: string;
   title: string;
@@ -39,6 +44,8 @@ export interface ThemeManifest {
   taxonomies?: ThemeTaxonomy[];
   fields?: ThemeField[];
   routes?: ThemeRoute[];
+  /** Menu locations the theme can render; falls back to `header` alone. */
+  menuLocations?: ThemeMenuLocation[];
   adminMenus?: ThemeAdminMenu[];
   blocks?: ThemeBlock[];
   settings?: ThemeSettingDef[];
@@ -437,13 +444,32 @@ export async function buildScope(
   o: ThemeRenderOptions
 ): Promise<Record<string, unknown>> {
   const siteId = o.siteId;
-  const [s, items, ls, strings, siteDefault] = await Promise.all([
+  const [s, ls, strings, siteDefault] = await Promise.all([
     siteInfo(env, siteId),
-    menu(env, o.locale, siteId),
     locales(env, siteId),
     loadThemeStrings(env, theme, o.locale),
     defaultLocale(env, siteId),
   ]);
+  // Menus per declared location (rule 73 — one deterministic winner per
+  // location). The locations come from the active theme's manifest, read at
+  // render time; a theme that declares none gets the historical `header`
+  // behaviour. Each location yields `menu.<id>` (item array) and
+  // `menu.<id>_html` (pre-rendered anchors); `menu.primary*` stays as an
+  // alias of the header location so pre-73 templates keep working.
+  const menuLocs: { id: string }[] = theme.manifest.menuLocations?.length ? theme.manifest.menuLocations : [{ id: "header" }];
+  const menuRows = await Promise.all(menuLocs.map((l) => menusForLocation(env, siteId, l.id, o.locale)));
+  const menuCtx: Record<string, unknown> = {};
+  menuLocs.forEach((l, i) => {
+    const items = ((menuRows[i] as any[]) ?? []).map((it) => ({
+      title: it.title,
+      url: it.url,
+      target: it.target ?? null,
+    }));
+    menuCtx[l.id] = items;
+    menuCtx[`${l.id}_html`] = items.map((it) => `<a href="${esc(it.url)}">${esc(it.title)}</a>`).join(" ");
+  });
+  menuCtx.primary = menuCtx.header;
+  menuCtx.primary_html = menuCtx.header_html;
   // The language switcher. Locale parsing goes through `resolveLocale` (rule
   // 56 — one definition), and the entries are built only from the locales this
   // site declares (rule 59 — no site-blind fallback).
@@ -457,11 +483,6 @@ export async function buildScope(
   }).rest, (o.post as any)?.alternates);
   // One entry is not a switcher — a monolingual site gets no `lang_nav` at all
   // rather than a control that points at the page it is already on.
-  const navItems = (items as any[]).map((i) => ({
-    title: i.title,
-    url: i.url,
-    target: i.target ?? null,
-  }));
   // Plugins may contribute extra scope keys via the `beforeRender` action by
   // mutating the payload object handed to them.
   const extra: Record<string, unknown> = { ...(o.extra ?? {}) };  const hooks = hooksOf(o);
@@ -498,11 +519,7 @@ export async function buildScope(
     },
     locale: o.locale,
     locales: (ls as any[]).map((l) => ({ code: l.code, name: l.name, is_default: l.is_default })),
-    menu: {
-      primary: navItems,
-      // Convenience: pre-rendered anchor markup for the legacy placeholder.
-      primary_html: navItems.map((i) => `<a href="${esc(i.url)}">${esc(i.title)}</a>`).join(" "),
-    },
+    menu: menuCtx,
     post: o.post ?? null,
     lang_nav: langNavRows.length > 1 ? langNavRows : [],
     theme: { name: theme.name, version: theme.version, title: theme.manifest.title, strings },

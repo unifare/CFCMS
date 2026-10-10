@@ -898,6 +898,28 @@ const SCENARIOS = [
     after: ["  if(sites.length) return ok({error:`still active on: ${sites.join(\", \")}`},409);"],
     runs: [["tests/suites/theme-integration.test.mjs", "a forced uninstall is accepted while the theme is in use"]],
   },
+  // --- a menu location resolves deterministically (batch 26, rule 73) --------
+  {
+    // The historical shape, verbatim: `menu()` answered `LIMIT 1` with no
+    // ORDER BY, so with two header menus the nav was whichever row SQLite
+    // felt like returning — it could flip between requests with no code
+    // change. Dropping the ORDER BY must turn the rule-73 guard red.
+    label: "the menu lookup answers LIMIT 1 without ordering",
+    file: FRONTEND,
+    before: ["SELECT id FROM menus WHERE location=? AND site_id=? ORDER BY id LIMIT 1"],
+    after: ["SELECT id FROM menus WHERE location=? AND site_id=? LIMIT 1"],
+    runs: [["tests/suites/architecture.test.mjs", "the menu-location lookup orders before limiting (rule 73)"]],
+  },
+  {
+    // The historical shape: the renderer ignored the theme's declared
+    // locations entirely and hardcoded the header — a theme declaring a
+    // footer menu location had its declaration silently discarded.
+    label: "the renderer hardcodes the header location",
+    file: join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
+    before: ["  const menuLocs: { id: string }[] = theme.manifest.menuLocations?.length ? theme.manifest.menuLocations : [{ id: \"header\" }];"],
+    after: ["  const menuLocs: { id: string }[] = [{ id: \"header\" }];"],
+    runs: [["tests/suites/architecture.test.mjs", "the renderer reads locations from the theme manifest, not a literal (rule 73b)"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -920,6 +942,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "public/admin/js/screens/editor.js"),
   join(ROOT, "public/admin/js/screens/content-list.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
+  join(ROOT, "public/admin/js/screens/menus.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
   ADMIN_I18N, LANGUAGES_SCREEN, THEMES_SCREEN,
   BLOCKS, FRONTEND, BLOCK_FIELDS, MEDIA_PICKER, MEDIA_SCREEN, CORE_PACK, API, WRANGLER])];

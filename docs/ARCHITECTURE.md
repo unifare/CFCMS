@@ -2276,6 +2276,19 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    守卫：`architecture.test.mjs`（规则 72 节，2 条）；行为：`theme-integration.test.mjs` §9
    （占用中 force=1 → 200 + 占用站点回落 default）；注入 `_skeleton-inject.mjs`
    （force 被无视，历史形状逐字）
+
+【菜单位置解析必须确定性】（AGENTS.md 规则 73，批次 26）
+73. `menu()` 取 header 菜单曾是 `LIMIT 1` **无 ORDER BY**——两个 header 菜单时前台
+    导航随 SQLite 心情翻转，请求之间会变而代码没动（与 MIN(locale) 同族：不确定读取）
+   a) 位置 → 菜单的解析**定序**：`ORDER BY id LIMIT 1`，最小 id 稳定获胜
+   b) 位置集合来自**激活主题 manifest 的 `menuLocations[]`**（渲染时直读，不落库、
+      不需重新激活——区别于 routes[] 注册机制）；`buildScope` 输出 `menu.<id>` /
+      `menu.<id>_html`，`menu.primary*` 是 header 别名（旧模板兼容）
+   c) 条目管理完整 CRUD：批量重排一次提交全序列（服务端先验 id 归属再写）、嵌套仅
+      一层、删父条目子条目**升级为顶级**；全部 site-scoped（规则 6）
+   守卫：`architecture.test.mjs`（规则 73 节，4 条）；行为：`admin-contract.test.mjs`
+   §13 + `theme-integration.test.mjs` §11（独立站点双 header 确定性 + footer 渲染）；
+   注入 `_skeleton-inject.mjs`（LIMIT 1 无排序 + 硬编码 header，历史形状）
 ```
 
 ---

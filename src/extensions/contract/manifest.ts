@@ -424,6 +424,8 @@ export interface ThemeManifest extends ExtensionManifest {
   taxonomies?: unknown[];
   fields?: unknown[];
   routes?: unknown[];
+  /** Menu locations the theme renders; absence means the legacy `header`. */
+  menuLocations?: { id: string; label?: string }[];
   blocks?: unknown[];
   locales?: string[];
   tables?: TableDecl[];

@@ -387,6 +387,53 @@ async function main() {
   check("a post with no row in the filtered language is still listed",
     [Boolean(lp2), lp2?.title ?? "", lp2?.locales], [true, "", ["en"]]);
 
+  console.log("\n13. Menus: CRUD, batch reorder, nesting contract, site scoping");
+  // Idempotent: an aborted earlier run must not leave half a fixture behind.
+  sqlite.exec("DELETE FROM menu_items WHERE site_id='adm' AND menu_id IN ('m_a','m_b')");
+  sqlite.exec("DELETE FROM menus WHERE site_id='adm' AND id IN ('m_a','m_b')");
+  const mkA = await req(worker, env, "/api/v1/menus?site=adm", { method: "POST", headers: json, body: JSON.stringify({ id: "m_a", name: "Alpha", location: "header" }) });
+  check("menu create answers 201", mkA.status, 201);
+  await req(worker, env, "/api/v1/menus?site=adm", { method: "POST", headers: json, body: JSON.stringify({ id: "m_b", name: "Beta", location: "footer" }) });
+  // Unlike menus, menu_items POST mints its own id — capture what it returns
+  // so every later call addresses a real row (asserting on a guessed id 404s
+  // and turns half the section vacuous).
+  const addItem = async (menuId, title, parent) => {
+    const r = await req(worker, env, `/api/v1/menus/${menuId}/items?site=adm`, { method: "POST", headers: json, body: JSON.stringify({ title, url: "/" + title, parent_id: parent ?? null }) });
+    return (await r.json()).id;
+  };
+  const it1 = await addItem("m_a", "One");
+  const it2 = await addItem("m_a", "Two");
+  const it3 = await addItem("m_a", "Three", it1);
+  const itB = await addItem("m_b", "BetaItem");
+
+  const badOrder = await req(worker, env, "/api/v1/menus/m_a/items?site=adm", { method: "PUT", headers: json, body: JSON.stringify({ order: [it1, it2, it3, "nope"] }) });
+  check("reorder with an unknown id is refused before writing", badOrder.status, 400);
+  await req(worker, env, "/api/v1/menus/m_a/items?site=adm", { method: "PUT", headers: json, body: JSON.stringify({ order: [it3, it1, it2] }) });
+  const ordered = await (await req(worker, env, "/api/v1/menus/m_a/items?site=adm", { headers: auth })).json();
+  check("a valid batch reorder persists the submitted sequence", ordered.items.map((i) => i.id), [it3, it1, it2]);
+
+  const own = await req(worker, env, `/api/v1/menu_items/${it3}?site=adm`, { method: "PUT", headers: json, body: JSON.stringify({ parent_id: it3 }) });
+  check("an item cannot be its own parent", own.status, 400);
+  const deep = await req(worker, env, `/api/v1/menu_items/${it2}?site=adm`, { method: "PUT", headers: json, body: JSON.stringify({ parent_id: it3 }) });
+  check("nesting beyond one level is refused (it_3 already has a parent)", deep.status, 400);
+  const moved = await req(worker, env, `/api/v1/menu_items/${it2}?site=adm`, { method: "PUT", headers: json, body: JSON.stringify({ parent_id: it1 }) });
+  check("moving under a top-level parent works", moved.status, 200);
+  const mCross = await req(worker, env, `/api/v1/menu_items/${it1}?site=adm`, { method: "PUT", headers: json, body: JSON.stringify({ parent_id: itB }) });
+  check("a parent from another menu is refused", mCross.status, 400);
+  const foreign = await req(worker, env, "/api/v1/menus/m_a?site=default", { method: "PUT", headers: json, body: JSON.stringify({ name: "Hijack", location: "footer" }) });
+  check("another site cannot update this site's menu", foreign.status, 404);
+
+  await req(worker, env, `/api/v1/menu_items/${it1}?site=adm`, { method: "DELETE", headers: json });
+  const after = await (await req(worker, env, "/api/v1/menus/m_a/items?site=adm", { headers: auth })).json();
+  const it3row = after.items.find((i) => i.id === it3);
+  check("deleting a parent promotes its child to top level", [Boolean(it3row), it3row?.parent_id ?? null], [true, null]);
+
+  const delB = await req(worker, env, "/api/v1/menus/m_b?site=adm", { method: "DELETE", headers: json });
+  check("menu delete answers 200", delB.status, 200);
+  const mGone = await (await req(worker, env, "/api/v1/menus/m_b/items?site=adm", { headers: auth })).json();
+  check("deleting a menu removes its items too", mGone.items, []);
+  await req(worker, env, "/api/v1/menus/m_a?site=adm", { method: "DELETE", headers: json });
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));
   sqlite.close();

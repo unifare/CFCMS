@@ -2173,6 +2173,45 @@ section("A refusal must have an exit: forced theme uninstall (rule 72)");
 }
 
 // ---------------------------------------------------------------------------
+section("A menu location resolves deterministically (rule 73)");
+// ---------------------------------------------------------------------------
+
+/**
+ * `menu()` used to answer `SELECT id FROM menus WHERE location='header' AND
+ * site_id=? LIMIT 1` — no ORDER BY. With two header menus (the admin could
+ * freely create both), SQLite returned whichever row it felt like, so the
+ * site's navigation could flip between requests with no code change. Rule
+ * 73: a menu location resolves to one deterministic winner (`ORDER BY id`),
+ * the set of locations comes from the active theme's manifest rather than a
+ * literal in the query, and the SPA reads menus through `scoped()` so items
+ * stay site-scoped end to end.
+ */
+{
+  const feSrc = blankComments(read(join(ROOT, "src", "platform", "frontend.ts")));
+  const rdSrc = blankComments(read(join(ROOT, "src", "extensions", "theme", "runtime-declarative.ts")));
+  const themeJson = JSON.parse(read(join(ROOT, "content", "themes", "default", "theme.json")));
+  const spaSrc = blankComments(read(join(ROOT, "public", "admin", "js", "screens", "menus.js")));
+
+  check(
+    "the menu-location lookup orders before limiting (rule 73)",
+    /SELECT id FROM menus WHERE location=\? AND site_id=\? ORDER BY id LIMIT 1/.test(feSrc)
+  );
+  check(
+    "the renderer reads locations from the theme manifest, not a literal (rule 73b)",
+    /theme\.manifest\.menuLocations/.test(rdSrc)
+      && !/location='header'/.test(feSrc)
+  );
+  check(
+    "the bundled theme declares its menu locations",
+    Array.isArray(themeJson.menuLocations) && themeJson.menuLocations.some((l) => l.id === "header")
+  );
+  check(
+    "the menus screen reads menus through the site scope (rule 6)",
+    /scoped\("menus"\)/.test(spaSrc)
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

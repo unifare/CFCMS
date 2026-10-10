@@ -191,28 +191,28 @@ export function langNav(rows:unknown[],currentLocale:string,restPath:string,alte
 // carries — and a listing that cannot show a date or a cover is not a listing
 // anyone wants.
 /**
- * Header navigation for a site. Menus are looked up by `site_id` when the
- * schema supports it, falling back to the legacy global lookup so pre-0008
- * installs keep working.
+ * Navigation items for one declared menu location. Rule 73 (菜单位置解析必须
+ * 确定性): when two menus claim the same location, `ORDER BY id` picks a
+ * stable winner — the previous `LIMIT 1` without ordering returned whatever
+ * SQLite felt like, so the nav could flip between requests on a site with
+ * two header menus.
+ *
+ * The lookup keeps `site_id = ?` on purpose (§10 rule 6, no site-blind
+ * fallbacks): a site with no menu for a location renders no menu, which is
+ * correct; finding "any" menu would be cosmetic on a single-site install and
+ * a data leak on a multi-site one.
+ *
+ * ⚠️ `menu_id` is only unique **per site** (`UNIQUE(site_id, id)` on `menus`).
+ * Two sites can both have a menu called `primary`, so filtering by `menu_id`
+ * alone pulls in the other tenant's items — the menu row being site-scoped
+ * does not disambiguate the items; the items carry `site_id` too, so use it.
  */
-export async function menu(env:Env,locale:string,siteId:string){
+export async function menusForLocation(env:Env,siteId:string,location:string,locale:string){
   let m:any=null;
   try{
-    m=await env.DB.prepare("SELECT id FROM menus WHERE location='header' AND site_id=? LIMIT 1").bind(siteId).first<any>();
+    m=await env.DB.prepare("SELECT id FROM menus WHERE location=? AND site_id=? ORDER BY id LIMIT 1").bind(location,siteId).first<any>();
   }catch{/* menus predates the site_id column on an unmigrated install */}
-  // The fallback deliberately KEEPS `site_id = ?`. Dropping it to "find any
-  // header menu" would render another tenant's navigation on this site — the
-  // failure mode is cosmetic in a single-site install and a data leak in a
-  // multi-site one. A site with no header menu renders no menu, which is
-  // correct; see §10 rule 6 (no site-blind fallbacks).
-  if(!m) m=await env.DB.prepare("SELECT id FROM menus WHERE location='header' AND site_id=? LIMIT 1").bind(siteId).first<any>();
   if(!m)return[];
-  // ⚠️ `menu_id` is only unique **per site** (`UNIQUE(site_id, id)` on `menus`).
-  // Two sites can both have a menu called `primary`, so filtering by `menu_id`
-  // alone pulls in the other tenant's items — the exact leak this function's
-  // own comment above warns about, and how a shop's nav item ended up on the
-  // default site's front page. The menu row being site-scoped does not
-  // disambiguate the items; the items carry `site_id` too, so use it.
   const r=await env.DB.prepare("SELECT * FROM menu_items WHERE menu_id=? AND site_id=? AND (locale IS NULL OR locale=?) ORDER BY sort_order,id").bind(m.id,siteId,locale).all();
   return r.results as any[];
 }

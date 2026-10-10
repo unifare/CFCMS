@@ -1691,6 +1691,75 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
   const mm=path.match(/^menus\/([^/]+)\/items$/);
   if(mm&&method==="GET"){const r=await env.DB.prepare("SELECT * FROM menu_items WHERE site_id=? AND menu_id=? ORDER BY sort_order,id").bind(siteId,mm[1]).all();return ok({items:r.results,site:siteId});}
   if(mm&&method==="POST"){const b=await jsonBody(request),id=await randomId();await env.DB.prepare("INSERT INTO menu_items (id,site_id,menu_id,parent_id,title,url,target,sort_order,locale,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(id,siteId,mm[1],b.parent_id||null,String(b.title||""),String(b.url||"#"),b.target||null,Number(b.sort_order||0),b.locale||null,now(),now()).run();return ok({id,site:siteId},201);}
+  // Batch reorder: the SPA submits the full rendered sequence in one call, so
+  // a drag cannot interleave with another writer. Every id is verified to
+  // belong to this menu *on this site* before anything is written.
+  if(mm&&method==="PUT"){
+    const b=await jsonBody(request);
+    if(!Array.isArray(b.order)) return ok({error:"order array required"},400);
+    const ids=(b.order as unknown[]).map(String);
+    const rows=await env.DB.prepare("SELECT id FROM menu_items WHERE site_id=? AND menu_id=?").bind(siteId,mm[1]).all();
+    const known=new Set(((rows.results as any[])??[]).map(r=>String(r.id)));
+    if(ids.some(id=>!known.has(id))) return ok({error:"unknown item in order"},400);
+    let n=0;
+    for(const id of ids){
+      await env.DB.prepare("UPDATE menu_items SET sort_order=?,updated_at=? WHERE site_id=? AND menu_id=? AND id=?").bind(n++,now(),siteId,mm[1],id).run();
+    }
+    await activity(env,user.id,"update","menu_items",mm[1],{count:ids.length});
+    return ok({ok:true,count:ids.length});
+  }
+  // Menu update/delete. Both are site-scoped: the `menus` PK is
+  // (site_id, id), and deleting a menu must take its items with it or they
+  // would linger pointing at a menu that no longer exists.
+  const mdm=path.match(/^menus\/([^/]+)$/);
+  if(mdm&&method==="PUT"){
+    const b=await jsonBody(request);
+    const location=String(b.location||"").trim();
+    if(!location) return ok({error:"location required"},400);
+    const r=await env.DB.prepare("UPDATE menus SET name=?,location=?,updated_at=? WHERE site_id=? AND id=?").bind(String(b.name||"Menu"),location,now(),siteId,mdm[1]).run();
+    if(!r.meta.changes) return ok({error:"menu not found"},404);
+    await activity(env,user.id,"update","menu",mdm[1]);
+    return ok({ok:true});
+  }
+  if(mdm&&method==="DELETE"){
+    await env.DB.prepare("DELETE FROM menu_items WHERE site_id=? AND menu_id=?").bind(siteId,mdm[1]).run();
+    const r=await env.DB.prepare("DELETE FROM menus WHERE site_id=? AND id=?").bind(siteId,mdm[1]).run();
+    if(!r.meta.changes) return ok({error:"menu not found"},404);
+    await activity(env,user.id,"delete","menu",mdm[1]);
+    return ok({ok:true});
+  }
+  const mim=path.match(/^menu_items\/([^/]+)$/);
+  if(mim&&method==="PUT"){
+    const b=await jsonBody(request);
+    const cur=await env.DB.prepare("SELECT id,menu_id,parent_id,title,url,target,locale FROM menu_items WHERE site_id=? AND id=?").bind(siteId,mim[1]).first<any>();
+    if(!cur) return ok({error:"item not found"},404);
+    // Nesting contract: one level only. The parent must live in the same menu
+    // on the same site, must not be the item itself, and must be top-level —
+    // deeper trees are rejected rather than silently rendered wrong.
+    let parentId:string|null;
+    if(b.parent_id===undefined){ parentId=cur.parent_id??null; }
+    else{
+      parentId=b.parent_id?String(b.parent_id):null;
+      if(parentId){
+        if(parentId===mim[1]) return ok({error:"item cannot be its own parent"},400);
+        const p=await env.DB.prepare("SELECT parent_id FROM menu_items WHERE site_id=? AND menu_id=? AND id=?").bind(siteId,cur.menu_id,parentId).first<any>();
+        if(!p) return ok({error:"parent not in the same menu"},400);
+        if(p.parent_id) return ok({error:"nesting beyond one level is not supported"},400);
+      }
+    }
+    await env.DB.prepare("UPDATE menu_items SET title=?,url=?,target=?,locale=?,parent_id=?,updated_at=? WHERE site_id=? AND id=?")
+      .bind(b.title===undefined?String(cur.title??""):String(b.title),b.url===undefined?String(cur.url??"#"):String(b.url),b.target===undefined?(cur.target??null):(b.target||null),b.locale===undefined?(cur.locale??null):(b.locale||null),parentId,now(),siteId,mim[1]).run();
+    await activity(env,user.id,"update","menu_item",mim[1]);
+    return ok({ok:true});
+  }
+  if(mim&&method==="DELETE"){
+    const r=await env.DB.prepare("DELETE FROM menu_items WHERE site_id=? AND id=?").bind(siteId,mim[1]).run();
+    if(!r.meta.changes) return ok({error:"item not found"},404);
+    // Children of a removed item become top-level rather than orphaned.
+    await env.DB.prepare("UPDATE menu_items SET parent_id=NULL WHERE site_id=? AND parent_id=?").bind(siteId,mim[1]).run();
+    await activity(env,user.id,"delete","menu_item",mim[1]);
+    return ok({ok:true});
+  }
   if (path === "extensions/bootstrap" && method === "POST") { await seedBundledExtensions(env); return ok({ok:true}); }
   if (path === "extensions/plugins" && method === "GET") {
     const rows=await env.DB.prepare("SELECT * FROM plugin_installs ORDER BY title").all();
@@ -1797,6 +1866,14 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
   }
   // Theme business-capability introspection
   if(path==="theme/post-types"&&method==="GET") return ok({items:await listPostTypes(env,siteId),site:siteId});
+  // Declared menu locations of the active theme (rule 73 input). Read from
+  // the manifest, not from registered rows — the SPA needs the same list the
+  // renderer will use, and a manifest read cannot drift from rendering.
+  if(path==="theme/menu-locations"&&method==="GET"){
+    const t=await activeTheme(env,siteId).catch(()=>null);
+    const locs=t?.manifest?.menuLocations?.length?t.manifest.menuLocations:[{id:"header"}];
+    return ok({items:locs,site:siteId});
+  }
   if(path==="theme/routes"&&method==="GET") return ok({items:await listRoutes(env,siteId),site:siteId});
   if(path==="theme/menus"&&method==="GET") return ok({items:await listThemeAdminMenus(env,siteId),site:siteId});
   // The unified view: theme menus and plugin menus in one list, grouped by

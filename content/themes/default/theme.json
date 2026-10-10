@@ -9,6 +9,10 @@
     "menus",
     "widgets"
   ],
+  "menuLocations": [
+    { "id": "header", "label": "Header" },
+    { "id": "footer", "label": "Footer" }
+  ],
   "templates": [
     "index",
     "home",

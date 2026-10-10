@@ -364,6 +364,16 @@ async function main() {
     "DELETE FROM theme_settings WHERE theme_name='uninstallme'",
     "DROP TABLE IF EXISTS theme_uninstallme_listing_i18n",
     "DROP TABLE IF EXISTS theme_uninstallme_listing",
+    // §11's throwaway site: the menu determinism section runs on its own site
+    // so leftover header menus on `default` (user data, or another suite's
+    // fixture) cannot change which menu wins the ORDER BY.
+    "DELETE FROM menu_items WHERE site_id='menutest'",
+    "DELETE FROM menus WHERE site_id='menutest'",
+    "DELETE FROM theme_routes WHERE site_id='menutest'",
+    "DELETE FROM site_locales WHERE site_id='menutest'",
+    "DELETE FROM settings WHERE site_id='menutest'",
+    "DELETE FROM posts WHERE site_id='menutest'",
+    "DELETE FROM sites WHERE id='menutest'",
   ]) {
     try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
   }
@@ -819,6 +829,60 @@ async function main() {
   // a 400 that still mutated state would be worse than a 500.
   check("the bundled theme is still installed",
     sqlite.prepare("SELECT COUNT(*) AS n FROM theme_installs WHERE name='default'").get().n, 1);
+
+  console.log("\n11. Menu locations resolve deterministically (rule 73)");
+  // Two header menus on one site used to be a coin flip: `LIMIT 1` without
+  // ORDER BY returned whichever row SQLite felt like, so the nav could change
+  // between requests. The contract now: the location set comes from the
+  // active theme's manifest (header + footer for the bundled default), and
+  // each location renders exactly one menu — the lexicographically smallest
+  // id wins, every time. The section runs on a throwaway site so neither the
+  // user's real menus nor another suite's fixtures can skew the winner.
+  const mkSite = await req(worker, env, "/api/v1/sites", {
+    method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: "menutest", name: "Menu Test", path_prefix: "/menutest" }),
+  });
+  check("throwaway site created", mkSite.status, 201);
+  const actDef = await req(worker, env, "/api/v1/extensions/themes/default/activate?site=menutest", { method: "POST", headers: authHeaders });
+  checkTruthy("bundled default theme activates on the throwaway site", actDef.status === 200);
+  const locsRes = await req(worker, env, "/api/v1/theme/menu-locations?site=menutest", { headers: authHeaders });
+  const locs = await locsRes.json();
+  check("the manifest's menu locations are served to the admin",
+    (locs.items || []).map((l) => l.id), ["header", "footer"]);
+  for (const [id, name, location] of [["menu_aaa", "AAA", "header"], ["menu_zzz", "ZZZ", "header"], ["menu_foot", "Foot", "footer"]]) {
+    const r = await req(worker, env, "/api/v1/menus?site=menutest", {
+      method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, name, location }),
+    });
+    checkTruthy(`menu ${id} created`, r.status === 201);
+  }
+  for (const [menuId, id, title] of [["menu_aaa", "mi_a", "AAA-LINK"], ["menu_zzz", "mi_z", "ZZZ-LINK"], ["menu_foot", "mi_f", "FOOT-LINK"]]) {
+    const r = await req(worker, env, `/api/v1/menus/${menuId}/items?site=menutest`, {
+      method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, title, url: `/${title.toLowerCase()}` }),
+    });
+    checkTruthy(`item ${id} created`, r.status === 201);
+  }
+  const navRes = await req(worker, env, "/menutest/", { headers: authHeaders });
+  const navBody = await navRes.text();
+  check("of two header menus the deterministic winner renders", navBody.includes("AAA-LINK"), true);
+  check("the loser does not render", navBody.includes("ZZZ-LINK"), false);
+  check("the declared footer location renders its menu", navBody.includes("FOOT-LINK"), true);
+  // Second render must be byte-identical on the nav — the whole point of 73.
+  const navRes2 = await req(worker, env, "/menutest/", { headers: authHeaders });
+  const navBody2 = await navRes2.text();
+  check("a second render picks the same menu (no coin flip)",
+    navBody2.includes("AAA-LINK") && !navBody2.includes("ZZZ-LINK"), true);
+  // Cleanup: remove the throwaway site so the shared local D1 stays clean.
+  await req(worker, env, "/api/v1/sites/menutest", { method: "DELETE", headers: authHeaders });
+  for (const sql of [
+    "DELETE FROM menu_items WHERE site_id='menutest'",
+    "DELETE FROM menus WHERE site_id='menutest'",
+    "DELETE FROM theme_routes WHERE site_id='menutest'",
+    "DELETE FROM site_locales WHERE site_id='menutest'",
+    "DELETE FROM settings WHERE site_id='menutest'",
+    "DELETE FROM posts WHERE site_id='menutest'",
+  ]) { try { sqlite.exec(sql); } catch { /* table may not exist */ } }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));

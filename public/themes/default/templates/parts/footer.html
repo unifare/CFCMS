@@ -1,4 +1,7 @@
 <footer>
+  {{! Footer menu — one entry per item of the menu assigned to the theme's
+      `footer` location. A site with no footer menu renders nothing here. }}
+  {{#if menu.footer_html}}<nav class="foot-nav">{{{menu.footer_html}}}</nav>{{/if}}
   <div class="wrap">
     <div class="foot">
       <div>
