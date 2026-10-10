@@ -2251,6 +2251,20 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    行为：`locale-url.test.mjs` §1b（单页/列表按语言取值 + 阶梯第 2 层回退）；注入场景
    `_skeleton-inject.mjs`（5 条：列表丢语言 / 单页不挂字段 / 写入落 `''` 层 / 列表丢
    reading_time / 第二份阶梯定义）
+
+【语言切换是取数，不是改名】（AGENTS.md 规则 71，批次 24）
+71. 共享行形态把所有语言的内容装进 `GET posts/{id}` 的一个响应；版本条点击另一个语言
+    时**只改 `state.editing.locale`** = 上一个语言的标题和块留在屏幕上、顶着新语言的名字，
+    下一次保存把上一个语言的内容写进另一个语言的行（200 + 静默毁数据）
+   a) 切换到已存在版本**必须重新取数**并传目标语言（`editContent(type, id, locale)`）；
+      同 `posts` id 也不例外——共享行形态恰恰需要它
+   b) `current.locale = locale; render()` 的改名形状被结构性禁止
+   c) 后台内容列表**代表行 = 站点默认语言**，**永远不是 `MIN(locale)`**（字典序巧合）；
+      `?locale=` 按语言过滤；被过滤语言没有行的文章**仍然列出**（不静默吞行）；
+      每行携带 `locales`，SPA 画版本徽标
+   守卫：`architecture.test.mjs`（规则 71 节，3 条）；行为：`admin-spa.test.mjs`（切换后
+   标题/块/徽标来自目标语言）+ `admin-contract.test.mjs` §12；注入 `_skeleton-inject.mjs`
+   （4 条：编辑器只改名 / 列表钉死语言 / 丢 `locales` / 列表只显示行自己的语言）
 ```
 
 ---

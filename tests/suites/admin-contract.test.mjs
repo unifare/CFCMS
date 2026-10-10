@@ -362,6 +362,31 @@ async function main() {
   checkTruthy("card labels are delivered (translated server-side)", dash.cards.every((c) => typeof c.label === "string" && c.label.length > 0));
   checkTruthy("recent content is present as an array", Array.isArray(dash.recent));
 
+  console.log("\n12. The content list opens on the site's default language");
+  // The list pins one row per post. That row used to be `MIN(locale)` —
+  // alphabetically first, which answered "which translation sorts first",
+  // not "which language does this site consider primary". Make the site's
+  // default differ from the alphabetically-first language so the two answers
+  // are observably different (MIN('en','zh-CN') = 'en', default = 'zh-CN').
+  sqlite.exec("DELETE FROM site_locales WHERE site_id='adm'");
+  sqlite.exec("INSERT INTO site_locales(site_id,code,is_default,enabled,sort_order) VALUES ('adm','zh-CN',1,1,0),('adm','en',0,1,1)");
+  const put = (id, body) =>
+    req(worker, env, `/api/v1/posts/${id}?site=adm`, { method: "PUT", headers: json, body: JSON.stringify(body) });
+  await put("adm_lp", { locale: "en", title: "Only En", slug: "list-post", status: "published", content: [] });
+  await put("adm_lp", { locale: "zh-CN", title: "只有中文", status: "published", content: [] });
+  await put("adm_lp2", { locale: "en", title: "English only", status: "published", content: [] });
+  const lp = await (await req(worker, env, "/api/v1/posts?site=adm", { headers: auth })).json();
+  const lpRow = lp.items.find((i) => i.id === "adm_lp");
+  check("the list opens on the site's default language", lpRow?.locale, "zh-CN");
+  check("and shows that language's title", lpRow?.title, "只有中文");
+  check("each item carries the languages it actually has", lpRow?.locales, ["en", "zh-CN"]);
+  const lpEn = await (await req(worker, env, "/api/v1/posts?site=adm&locale=en", { headers: auth })).json();
+  check("an explicit ?locale= filter shows that language's row", lpEn.items.find((i) => i.id === "adm_lp")?.title, "Only En");
+  const lpZh = await (await req(worker, env, "/api/v1/posts?site=adm&locale=zh-CN", { headers: auth })).json();
+  const lp2 = lpZh.items.find((i) => i.id === "adm_lp2");
+  check("a post with no row in the filtered language is still listed",
+    [Boolean(lp2), lp2?.title ?? "", lp2?.locales], [true, "", ["en"]]);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("Failed: " + failures.join(", "));
   sqlite.close();

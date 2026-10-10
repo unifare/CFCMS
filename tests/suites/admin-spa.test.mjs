@@ -612,6 +612,90 @@ if (modules && !bootError) {
   check("and navigating away stops it", state.autosaveTimer === null);
 
   // -------------------------------------------------------------------------
+  section("Switching a language version loads that language's row");
+  // -------------------------------------------------------------------------
+  //
+  // Shared-row shape: one `posts` id carrying a translation row per language,
+  // so `GET posts/{id}` returns *both* languages' content in one response.
+  // The version bar used to answer a click on `zh-CN` by only relabelling
+  // `state.editing.locale` — the title and the blocks stayed in the previous
+  // language under the new language's name, and saving from that screen would
+  // overwrite the other language with the wrong content. A 200 that destroys
+  // data, and nothing on screen to say so.
+  // The block area renders attribute controls from the server-declared
+  // contract (`GET /api/v1/blocks`); without it a block is a bare container
+  // and the body text appears nowhere in the markup — the stub must ship the
+  // contract or the assertion below would be about a placeholder.
+  routeTable.set("/api/v1/blocks", {
+    items: [{ type: "core/paragraph", label: "Paragraph", attrs: [{ key: "text", type: "text", label: "Text" }] }],
+  });
+  routeTable.set("/api/v1/posts/p1", {
+    items: [
+      { id: "p1", slug: "two-languages", slug_own: null, locale: "en", title: "Two languages, one row",
+        excerpt: "", status: "published", content: JSON.stringify([{ type: "core/paragraph", attrs: { text: "English body" } }]), meta: {} },
+      { id: "p1", slug: "two-languages", slug_own: "liang-zhong-yu-yan", locale: "zh-CN", title: "两种语言，同一行",
+        excerpt: "", status: "published", content: JSON.stringify([{ type: "core/paragraph", attrs: { text: "中文正文" } }]), meta: {} },
+    ],
+  });
+  routeTable.set("/api/v1/i18n/translations", {
+    versions: [
+      { locale: "en", exists: 1, post_id: "p1" },
+      { locale: "zh-CN", exists: 1, post_id: "p1" },
+    ],
+  });
+
+  state.page = "posts";
+  contentEl.innerHTML = "";
+  await modules.editor.editContent("posts", "p1");
+  await settle();
+  check("opening a post unqualified opens the default language's row",
+    state.editing?.locale === "en" && contentEl.innerHTML.includes('value="Two languages, one row"'),
+    `locale=${state.editing?.locale}`);
+  check("the version bar lists both languages",
+    contentEl.innerHTML.includes('data-lang-version="zh-CN"'), contentEl.innerHTML.slice(0, 200));
+
+  await modules.editor.switchVersion("zh-CN", true, "p1");
+  await settle();
+  check("switching versions loads the requested language's row, not a relabel",
+    state.editing?.locale === "zh-CN" && contentEl.innerHTML.includes('value="两种语言，同一行"'),
+    `locale=${state.editing?.locale}`);
+  check("and the blocks come from that language's row",
+    // `state.blocks` is what the editor renders *and* what saveContent sends,
+    // so it is the load-bearing copy. (The harness's `querySelector("#blocks")`
+    // returns a detached element, so the drawn markup is not readable back
+    // from contentEl — the state is the honest assertion here.)
+    JSON.stringify(state.blocks ?? []).includes("中文正文")
+      && !JSON.stringify(state.blocks ?? []).includes("English body"),
+    `blocks=${JSON.stringify(state.blocks).slice(0, 160)}`);
+  check("and the bar marks the language now being edited",
+    /<button class="btn primary[^"]*"[^>]*data-lang-version="zh-CN"/.test(contentEl.innerHTML),
+    "no primary chip for zh-CN");
+  await modules.state.stopAutosave();
+
+  // The content list answers "does this post have a Chinese version yet" on
+  // the row itself, with a badge per language version — it used to show one
+  // locale badge and leave version discovery to opening every post.
+  state.editing = null;
+  routeTable.set("/api/v1/posts", {
+    items: [
+      { id: "p1", slug: "two-languages", locale: "en", title: "Two languages, one row",
+        status: "published", locales: ["en", "zh-CN"], updated_at: 1790000000 },
+      { id: "p2", slug: "en-only", locale: "en", title: "English only",
+        status: "draft", locales: ["en"], updated_at: 1790000000 },
+    ],
+  });
+  contentEl.innerHTML = "";
+  await render();
+  const listHtml = contentEl.innerHTML;
+  check("the list shows a badge per language version the post has",
+    listHtml.includes('<span class="badge primary">en</span> <span class="badge outline">zh-CN</span>')
+      && listHtml.includes('<span class="badge primary">en</span></td>'),
+    listHtml.match(/<td>(<span[^>]*>[^<]*<\/span>)+<\/td>/)?.[0] || "no locale cell");
+  check("the list offers a language filter",
+    listHtml.includes('id="contentLocale"') && listHtml.includes('value="zh-CN"'),
+    "no contentLocale select");
+
+  // -------------------------------------------------------------------------
   section("The media library screen: paging, filtering and tiles");
   // -------------------------------------------------------------------------
   //

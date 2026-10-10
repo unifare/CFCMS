@@ -413,6 +413,7 @@ const EN: Pack = {
   // -- content list --------------------------------------------------------
   "core.content.updated": "Updated",
   "core.content.locale": "Locale",
+  "core.content.localeDefault": "Default language ({locale})",
   "core.content.untitled": "(untitled)",
   "core.content.countOn": "{n} on {site}",
   "core.content.noneYet": "No {type} yet.",
@@ -842,6 +843,7 @@ const ZH_CN: Pack = {
   "core.status.unknown": "未知",
   "core.content.updated": "更新时间",
   "core.content.locale": "语言",
+  "core.content.localeDefault": "默认语言（{locale}）",
   "core.content.untitled": "（无标题）",
   "core.content.countOn": "{site} 上共 {n} 个条目",
   "core.content.noneYet": "还没有 {type}。",

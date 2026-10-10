@@ -159,17 +159,46 @@ async function listPosts(env: Env, url: URL, kind: string, siteId: string) {
   const q = url.searchParams.get("q") ?? "";
   const locale = String(url.searchParams.get("locale") ?? "").trim();
   // A post has one row per locale, so joining translations without pinning a
-  // locale would return the same post several times. Pin to the requested
-  // locale, or fall back to a deterministic "first" translation.
-  const localeClause = locale ? "t.locale = ?" : "t.locale = (SELECT MIN(locale) FROM post_translations WHERE post_id = p.id)";
+  // locale would return the same post several times — the list pins one row
+  // per post. Which row is the question: this used to be `MIN(locale)`, i.e.
+  // *lexicographic* order, which answered "which translation sorts first" —
+  // `en` on a bilingual site by coincidence of the alphabet, not because the
+  // site considers English primary. The list is the operator's table of
+  // contents; it must open on the language the site opens on, and `?locale=`
+  // (the content list's language filter) overrides it.
+  const dflt = await defaultLocale(env, siteId);
+  const pinned = locale || dflt;
+  // `?q=''` keeps untranslated rows visible under a language filter: a post
+  // with no row in the filtered language must still be *listed* (its title
+  // column renders empty and its `locales` badges say which languages exist),
+  // because silently dropping it is how "the Chinese version is lost" gets
+  // believed. With a real `q`, an untranslated row can still match on `p.slug`.
   const rows = await env.DB.prepare(`
     SELECT p.id, p.slug, p.status, p.type, p.author_id, p.created_at, p.updated_at,
            t.locale, t.title, t.excerpt, t.content
-    FROM posts p LEFT JOIN post_translations t ON t.post_id = p.id AND ${localeClause}
-    WHERE p.site_id = ? AND p.type = ? AND (t.title LIKE ? OR p.slug LIKE ?)
+    FROM posts p LEFT JOIN post_translations t ON t.post_id = p.id AND t.locale = ?
+    WHERE p.site_id = ? AND p.type = ? AND (? = '' OR t.title LIKE ? OR p.slug LIKE ?)
     ORDER BY p.updated_at DESC LIMIT ? OFFSET ?
-  `).bind(...(locale ? [siteId, kind, locale] : [siteId, kind]), `%${q}%`, `%${q}%`, limit, offset).all();
-  return ok({ items: rows.results, page, limit, site: siteId });
+  `).bind(pinned, siteId, kind, q, `%${q}%`, `%${q}%`, limit, offset).all();
+  const items = ((rows.results as any[]) ?? []).map((i) => ({ ...i, locales: [i.locale].filter(Boolean) as string[] }));
+  // Which languages each item actually has — the list shows version badges
+  // from this, so "does this post have a Chinese version yet" has an answer
+  // that does not require opening every post.
+  const ids = items.map((i) => i.id);
+  if (ids.length) {
+    const ph = ids.map(() => "?").join(",");
+    const vr = await env.DB.prepare(
+      `SELECT post_id, locale FROM post_translations WHERE post_id IN (${ph}) ORDER BY locale`
+    ).bind(...ids).all().catch(() => ({ results: [] as any[] }));
+    const have = new Map<string, string[]>();
+    for (const r of (vr.results as any[]) ?? []) {
+      const list = have.get(r.post_id) ?? [];
+      list.push(String(r.locale));
+      have.set(r.post_id, list);
+    }
+    for (const i of items) i.locales = have.get(i.id) ?? i.locales;
+  }
+  return ok({ items, page, limit, site: siteId });
 }
 
 async function savePost(
@@ -1561,17 +1590,21 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
       return savePost(env, user.id, id, await jsonBody(request), type, siteId);
     }
     if (method === "GET") {
+      // Default language first: `items[0]` is what the editor opens, and it
+      // used to be whichever translation sorted first — "en" by alphabet, not
+      // by site policy. The editor can still ask for a specific language; this
+      // only fixes what an unqualified open shows.
+      const dflt = await defaultLocale(env, siteId);
       const row = await env.DB.prepare(`
         SELECT p.*, t.locale, t.title, t.excerpt, t.content, t.slug AS slug_own
         FROM posts p LEFT JOIN post_translations t ON t.post_id=p.id
-        WHERE p.id=? ORDER BY t.locale
-      `).bind(id).all();
+        WHERE p.id=? ORDER BY CASE WHEN t.locale = ? THEN 0 ELSE 1 END, t.locale
+      `).bind(id, dflt).all();
       const items = (row.results as any[]) ?? [];
       // One meta map per language row, resolved through the ladder — the editor
       // edits a language, so it must see that language's field values, not a
       // blend of whichever row the query returned first.
       const metaRows = await postMetaRows(env, id);
-      const dflt = await defaultLocale(env, siteId);
       return ok({ items: items.map((i) => ({ ...i, meta: resolveMetaByPost(metaRows, String(i.locale ?? ""), dflt).get(id) ?? {} })) });
     }
   }
@@ -1583,15 +1616,19 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     if (method === "DELETE") return deletePost(env, user.id, id, siteId);
     if (method === "PUT") return savePost(env, user.id, id, await jsonBody(request), kind, siteId);
     if (method === "GET") {
+      // Default language first: `items[0]` is what the editor opens, and it
+      // used to be whichever translation sorted first — "en" by alphabet, not
+      // by site policy. The editor can still ask for a specific language; this
+      // only fixes what an unqualified open shows.
+      const dflt = await defaultLocale(env, siteId);
       const row = await env.DB.prepare(`
         SELECT p.*, t.locale, t.title, t.excerpt, t.content, t.slug AS slug_own
         FROM posts p LEFT JOIN post_translations t ON t.post_id=p.id
-        WHERE p.id=? ORDER BY t.locale
-      `).bind(id).all();
+        WHERE p.id=? ORDER BY CASE WHEN t.locale = ? THEN 0 ELSE 1 END, t.locale
+      `).bind(id, dflt).all();
       const items = (row.results as any[]) ?? [];
       // Attach theme-declared custom fields for the editor, per language row.
       const metaRows = await postMetaRows(env, id);
-      const dflt = await defaultLocale(env, siteId);
       return ok({ items: items.map((i) => ({ ...i, meta: resolveMetaByPost(metaRows, String(i.locale ?? ""), dflt).get(id) ?? {} })) });
     }
   }

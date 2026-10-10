@@ -2098,6 +2098,48 @@ section("The custom-field read ladder is defined once (rule 70)");
 }
 
 // ---------------------------------------------------------------------------
+section("Switching a language version is a fetch, not a rename (rule 71)");
+// ---------------------------------------------------------------------------
+
+/**
+ * A shared-row post (one `posts` id, one `post_translations` row per
+ * language) hands the editor *every* language's content in one response. The
+ * version bar used to answer a click by only relabelling
+ * `state.editing.locale` — the previous language's title and blocks stayed on
+ * screen under the new language's name. Nothing failed, HTTP was 200, and the
+ * next save wrote the previous language's content into the other language's
+ * row. A language switch that does not load the language's row is a data
+ * destroyer wearing a navigation button.
+ *
+ * Two structural claims:
+ *   1. the switch must re-fetch, naming the requested language;
+ *   2. the relabel shape must not exist.
+ *
+ * And on the list side: the representative row is the *site's default
+ * language* — never `MIN(locale)`, which answered "which translation sorts
+ * first" and pinned bilingual lists to `en` by alphabetical coincidence
+ * (rule 57's hardcoded-locale family, one spelling over).
+ */
+{
+  const editorSrc = blankComments(read(join(ROOT, "public/admin/js/screens/editor.js")));
+
+  check(
+    "the version switch re-fetches the requested language's row (rule 71)",
+    /await editContent\(state\.type, postId \|\| current\.id, locale\)/.test(editorSrc)
+  );
+  check(
+    "and never just relabels the editing locale (rule 71b)",
+    !/current\.locale = locale/.test(editorSrc)
+  );
+
+  const apiSrc = blankComments(read(join(ROOT, "src/api.ts")));
+  check(
+    "the content list pins the site's default language, never MIN(locale) (rule 71c)",
+    /const pinned = locale \|\| dflt;/.test(apiSrc) && !/MIN\(locale\)/.test(apiSrc)
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

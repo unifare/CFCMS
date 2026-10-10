@@ -840,6 +840,51 @@ const SCENARIOS = [
     ],
     runs: [["tests/suites/architecture.test.mjs", "the meta read ladder is defined in exactly one module (rule 70)"]],
   },
+  // --- the admin speaks languages (batch 24) ---------------------------------
+  {
+    // The historical shape, verbatim: for a shared-row post (one `posts` id,
+    // one translation row per language) the version bar answered a click by
+    // only relabelling `state.editing.locale` — the previous language's title
+    // and blocks stayed on screen under the new language's name, and saving
+    // from that screen overwrote the other language with the wrong content.
+    label: "the editor only relabels the language instead of loading its row",
+    file: EDITOR_SCREEN,
+    before: ["    await editContent(state.type, postId || current.id, locale);"],
+    after: [
+      "    if (postId && postId !== current.id) await editContent(state.type, postId);",
+      "    else { current.locale = locale; render(); }",
+    ],
+    runs: [["tests/suites/admin-spa.test.mjs", "switching versions loads the requested language's row, not a relabel"]],
+  },
+  {
+    // The representative row used to be `MIN(locale)` — alphabetically first,
+    // which pinned bilingual lists to `en` by coincidence of the alphabet.
+    // `|| "en"` is the same observable behaviour (rule 57's hardcoded-locale
+    // family) and flips the same named assertion on a site whose default is
+    // not `en`.
+    label: "the content list pins a hardcoded language instead of the site's default",
+    file: API,
+    before: ["  const pinned = locale || dflt;"],
+    after: ['  const pinned = locale || "en";'],
+    runs: [["tests/suites/admin-contract.test.mjs", "the list opens on the site's default language"]],
+  },
+  {
+    // Without the per-post language set, the list cannot say "en ✓ zh-CN ✓" —
+    // every row looks monolingual and version discovery moves back into
+    // opening every post.
+    label: "the list stops carrying each post's language versions",
+    file: API,
+    before: ["    for (const i of items) i.locales = have.get(i.id) ?? i.locales;"],
+    after: [""],
+    runs: [["tests/suites/admin-contract.test.mjs", "each item carries the languages it actually has"]],
+  },
+  {
+    label: "the list shows only the row's own language",
+    file: join(ROOT, "public/admin/js/screens/content-list.js"),
+    before: ["    const versions = Array.isArray(x.locales) && x.locales.length ? x.locales : [x.locale].filter(Boolean);"],
+    after: ["    const versions = [x.locale].filter(Boolean);"],
+    runs: [["tests/suites/admin-spa.test.mjs", "the list shows a badge per language version the post has"]],
+  },
 ];
 
 /** Every file any scenario may touch, hashed before and after. */
@@ -860,6 +905,7 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "docs/guides/THEME-DEV.md"),
   join(ROOT, "public/admin/js/screens/account.js"),
   join(ROOT, "public/admin/js/screens/editor.js"),
+  join(ROOT, "public/admin/js/screens/content-list.js"),
   join(ROOT, "public/admin/js/screens/dashboard.js"),
   join(ROOT, "public/admin/js/screens/theme-menu.js"),
   ADMIN_I18N, LANGUAGES_SCREEN, THEMES_SCREEN,

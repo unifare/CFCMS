@@ -26,9 +26,15 @@ export function newContent(type) {
   render();
 }
 
-export async function editContent(type, id) {
+export async function editContent(type, id, wantLocale) {
   const d = await api(scoped(contentPath(type) + "/" + id));
-  const x = d.items?.[0] || {};
+  const items = d.items || [];
+  // Rows arrive ordered default-language-first, but "first" must not be the
+  // editor's only answer to "which language am I editing": the version bar
+  // asks for a specific one, and a shared-row post (one `posts` row, one
+  // translation row per language) carries *every* language's content in this
+  // one response. Pick the requested language; fall back to the first row.
+  const x = (wantLocale ? items.find((i) => i.locale === wantLocale) : null) || items[0] || {};
   state.editing = {
     // `slug_own` is this language's own URL segment (NULL = follows the
     // main-table slug); `slug` is always the row's main-table value.
@@ -538,13 +544,21 @@ document.addEventListener("click", async (e) => {
  * Both create an independent draft. Neither overwrites the version you were
  * looking at, which is the property that makes "English is live, Japanese is
  * still being written" possible.
+ *
+ * Exported for the admin-spa suite: the version bar is a document-level click
+ * handler, so the switch behaviour is asserted through this function directly.
  */
-async function switchVersion(locale, exists, postId) {
+export async function switchVersion(locale, exists, postId) {
   const current = state.editing;
   if (!current?.id) return;
   if (exists) {
-    if (postId && postId !== current.id) await editContent(state.type, postId);
-    else { current.locale = locale; render(); }
+    // Always re-fetch the requested language's row — including when it is the
+    // same `posts` id, because a shared-row post keeps *both* languages'
+    // content in one response, and merely relabelling `state.editing.locale`
+    // left the previous language's title and blocks on screen under the new
+    // language's name. Saving from that screen would overwrite the other
+    // language with the wrong content — a 200 that destroys data.
+    await editContent(state.type, postId || current.id, locale);
     return;
   }
   const choice = await openDialog({
