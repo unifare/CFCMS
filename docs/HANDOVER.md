@@ -1,7 +1,9 @@
 # CFPress (CFCMS) 交接文档
 
-> 更新时间：2026-10-09 (GMT+8) ｜ 交接基线：**批次 16 Track 0 + B1 + A3 + B3 —— 媒体隔离 / 块 attrs 契约 / 统一媒体控件 / 编辑器界面翻译**
-> （批次 15 数据驱动后台；批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；
+> 更新时间：2026-10-10 (GMT+8) ｜ 交接基线：**批次 20 —— journal 主题从产品移除 + 测试夹具主题不再被发布到线上**
+> （批次 19 主题卸载：读错层级 + 不可能成功的按钮；批次 18 界面语言偏好：一个写者两个读者；
+> 批次 16 Track 0 + B1 + A3 + B3 媒体隔离 / 块 attrs 契约 / 统一媒体控件 / 编辑器界面翻译；
+> 批次 15 数据驱动后台；批次 14 多语言 URL——slug 按语言 + hreflang + 按语言 feed + 规则 56–59；
 > 批次 13 mobai 主题 + RSS；批次 12 写入路径修复 + journal 主题；批次 11 平台功能开关。
 > 批次 10 及更早见下方各节与 `docs/history/`。）
 > 读者：接下来接手本项目的开发者或 AI 会话。**先读本文，再读 `docs/ARCHITECTURE.md`，改代码前读 `AGENTS.md`。**
@@ -197,7 +199,60 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 **新基线**：**23 套件 + `_schema-scope`，24 项 / 1240 条 / 0 失败**；`tsc --noEmit` src/ 0 错误；
 `_tenant-query-audit` 每条命中都有裁决；`_media-inject` 7/7 场景有效。
 
-**批次 19（主题卸载：两条报错，一个是设计，一个是屏幕在说谎）—— ✅ 本轮完成**
+**批次 20（journal 从产品移除 + 测试夹具主题不再被发布）—— ✅ 本轮完成**
+
+起点是用户的两句话：**"Journal 这个是什么。要删除。另外 fixture 是什么鬼"**。
+第一句是产品决定，第二句在查证时翻出一个**真的线上泄漏**。
+
+| 项 | 结论 |
+|---|---|
+| `Journal` 是什么 | 与 `default`（墨白）并列的**第二套自带主题**（`BUNDLED_THEMES`）。"未使用"= 没有站点选它；"无法卸载"= 文件在 `content/themes/journal/`、随 Worker assets 分发，R2 里没有安装包，端点一律 400（规则 66） |
+| 要真的删掉 | 只能**从产品移除**（删目录 + 移出 `BUNDLED_THEMES` + 同步 + 改测试/文档 + 部署），捆绑主题没有"装了但不显示"的状态 |
+| `fixture` 是什么 | **测试夹具主题**：套件拿它验证主题系统（声明/模板自洽、菜单注册、表生成）。架构测试的注释写着它 "not shipped as a product theme" |
+| ⚠️ **但它确实被发布到了线上（真缺陷）** | 同步脚本把**整个** `content/themes/` 复制进 `public/themes/`，而 `wrangler deploy` 会把 `public/` 原样上传。实测 `https://cfpress.2aass.workers.dev/themes/fixture/theme.json` → **HTTP 200** |
+
+**根因（规则 66b/66e）**：`architecture.test.mjs` 断言的是"**两棵树逐文件、逐字节一致**"。
+`content/themes/` 里本来就有**不该发布**的目录（夹具），所以这个不变量是错的——
+它把**泄漏钉成了正确**：夹具在 `public/themes/` 里存在得越久，套件越是绿的。
+**"两个集合必须相等"这类断言，要先问清"它们凭什么相等"。**
+
+| 修法 | 状态 |
+|---|---|
+| `content/themes/journal/`（11 文件）+ `public/themes/journal/` 删除；`BUNDLED_THEMES = ["default"]` | ✅ |
+| `sync-bundled-themes.mjs`：复制集**从 `BUNDLED_THEMES` 推导**（新增 `readBundledThemeNames()`，解析源文件，与架构测试**共用同一份解析**），不再遍历 `content/themes/`；空名单 / 缺 `theme.json` 一律抛错而不是警告 | ✅ |
+| `architecture.test.mjs` 规则 66 节重钉：`public/themes` **恰好等于** `BUNDLED_THEMES` 的文件（逐字节）+ **非捆绑目录绝不进 `public/`** + 同步脚本复制集**读 `BUNDLED_THEMES`** 且**不遍历整目录**（13 → **18 条**断言） | ✅ |
+| 注入场景 +2（→**55**）：**夹具泄漏进 `public/themes`**（注入工具新增 `creates` 形态——"断言不存在"的守卫需要一个"不存在"来制造，字符串替换做不到）、**同步退回整目录镜像** | ✅ |
+| 套件/注册表同步：删 `theme-journal.test.mjs`；`run-all.mjs`、`package.json`（`test` 链 + `test:journal`）、`scripts/cfpress.sh`、`scripts/cfpress.ps1` 四处表格同步 | ✅ |
+| `admin-spa` 的捆绑主题场景改用「捆绑但**不在本站激活**」的 `default`（唯一捆绑主题，所以要让本站激活的是别的主题） | ✅ |
+| 文档：`AGENTS.md` 规则 66a/66b/**66e**、`ARCHITECTURE.md` §10 规则 66、本文件 | ✅ |
+
+**顺带修掉一个"验证器本身坏了"**：`_fixture-inject-verify.mjs` 的
+`import("./theme-fixture.test.mjs")` 自仓库重组（`a604c63`）起就指向 `tests/tools/`，
+而套件在 `tests/suites/` → **每次都 `ERR_MODULE_NOT_FOUND`**，被 `suiteOnce()` 记成
+`summary: "<threw>"`，驱动器随即以 "baseline is already red" 退出。
+**主题夹具的 10 个反向验证场景因此长期跑不起来**，而它的输出读起来像"树是红的"。
+改成 `../suites/` 后：**10 场景 / 0 从未变红 / 0 中止 / 0 注入失败 / 0 还原失败**。
+
+**这一批的三个教训**：
+
+1. **"两个集合相等"的断言，要先问"它们凭什么相等"**。`public/themes` 与
+   `content/themes` 相等曾经是**正确的巧合**（那时每个目录都该发布），
+   夹具一进来就变成**泄漏的证明**。守卫要断言**规则**（发布集 = `BUNDLED_THEMES`），
+   不要断言**当下的巧合**。
+2. **豁免必须是排除，不是纳入**。`EXEMPT = new Set(["fixture"])` 写在测试里、
+   注释还写着"not shipped"，但**没有任何一处拿它去排除发布**——声明先于运行时，
+   只不过这次声明在**测试注释**里。**规则写在注释里 = 规则不存在。**
+3. **验证器自己也会坏，而它坏起来像"树坏了"**。一个 `import` 路径写错，
+   整套反向验证静默停摆，输出还指向别处。**工具的失败信息必须指向工具自己**
+   （`summary: "<threw>"` 现在会被读成 harness 问题，而不是 tree 问题）。
+
+**新基线**：**24 套件 + `_schema-scope`，25 项 / 1425 条 / 0 失败**（套件 1399 + `_schema-scope` 26）；
+`tsc --noEmit` src/ 0 错误；`_skeleton-inject` **55 场景 0 问题**；
+`_fixture-inject-verify` 10/10 场景有效；`_config-parity` 7/7；`_locale-url-inject` 4/0；
+`_launcher-inject` 18 场景（**5 个 PS1 锚点陈旧 SKIP，先于本批存在**）；
+`_tenant-query-audit` 3 条无裁决（`src/api.ts:814/820`、`admin-menus.ts:268`，来自 `fa313e7`，先于本批存在）。
+
+**批次 19（主题卸载：两条报错，一个是设计，一个是屏幕在说谎）—— ✅ 已完成**
 
 起点是用户的两条报错：`"journal" ships with the product and cannot be uninstalled` 与
 `still active on: acct`，以及"现在的主题也不是他们"。

@@ -60,7 +60,14 @@ async function suiteOnce() {
   capturing = true;
   exitCode = 0;
   try {
-    await import(`./theme-fixture.test.mjs?run=${++runSeq}`);
+    // ⚠️ `../suites/`, not `./`: the suite lives under `tests/suites/` since
+    // the repository was regrouped (`a604c63`), and this import was left
+    // pointing at `tests/tools/`. It therefore threw ERR_MODULE_NOT_FOUND on
+    // every run, which `suiteOnce` reports as `summary: "<threw>"` — and the
+    // driver then refused to continue with "baseline is already red". A broken
+    // *harness* reads as a broken tree, so the whole 10-scenario
+    // reverse-validation of the theme fixture had been silently unrunnable.
+    await import(`../suites/theme-fixture.test.mjs?run=${++runSeq}`);
   } catch (e) {
     if (!(e instanceof ExitSignal)) {
       capturing = false;

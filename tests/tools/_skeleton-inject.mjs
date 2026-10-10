@@ -34,7 +34,7 @@
  * Usage: node tests/tools/_skeleton-inject.mjs
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -82,6 +82,12 @@ const THEMES_SCREEN = join(ROOT, "public/admin/js/screens/themes.js");
 // does to turn a capability on for every site at once, so it is the half of the
 // switch definition that no source-level guard would otherwise see.
 const WRANGLER = join(ROOT, "wrangler.jsonc");
+// The deploy-time half of "what ships": this script decides which of
+// `content/themes/` reaches `public/themes/`, and everything under `public/` is
+// uploaded verbatim by `wrangler deploy`. It mirrored the whole directory once,
+// which put the test fixture theme on the public internet.
+const SYNC_THEMES = join(ROOT, "scripts/sync-bundled-themes.mjs");
+const FIXTURE_LEAK = join(ROOT, "public/themes/fixture/theme.json");
 
 /**
  * The scenarios. Each names the suite to run and the assertion (a substring of
@@ -596,6 +602,34 @@ const SCENARIOS = [
     runs: [["tests/suites/architecture.test.mjs", "every synced theme file is byte-identical to its source"]],
   },
   {
+    label: "a non-bundled theme directory leaks into the deployed assets",
+    // The test fixture theme must never ship — everything under `public/` is
+    // uploaded verbatim by `wrangler deploy`. It *did* ship for as long as the
+    // sync mirrored all of `content/themes/`, and `architecture.test.mjs`
+    // could not see it because it asserted the two trees matched: the leak was
+    // pinned as correctness, and `/themes/fixture/theme.json` answered 200 in
+    // production. A guard that asserts an *absence* needs an absence to be
+    // staged, which no string replacement can do, so this scenario copies a
+    // real file into the forbidden path.
+    creates: {
+      from: join(ROOT, "content/themes/fixture/theme.json"),
+      to: FIXTURE_LEAK,
+    },
+    runs: [["tests/suites/architecture.test.mjs", "no theme directory that is not bundled reaches the deployed assets"]],
+  },
+  {
+    label: "the sync goes back to mirroring all of content/themes",
+    // The shape that leaked the fixture. The tree check above cannot catch it:
+    // `public/themes` is clean today and would only turn dirty the next time
+    // somebody ran the script by hand — which is precisely how a leak survives
+    // a green suite. So the sync's own copy set is pinned lexically, and this
+    // proves that pin can fail.
+    file: SYNC_THEMES,
+    before: ["  const files = names.flatMap((n) => listThemeFiles(join(sourceRoot, n)).map((f) => `${n}/${f}`));"],
+    after: ["  const files = listThemeFiles(sourceRoot);"],
+    runs: [["tests/suites/architecture.test.mjs", "the sync does not enumerate the whole content/themes directory"]],
+  },
+  {
     label: "the bundled languages stop being offered for the site",
     // `core_locales` shipped for a long time with **no consumer at all**: the
     // payload carried the fact, nothing read it, and a fresh install therefore
@@ -685,6 +719,8 @@ const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "src/shared/types.ts"),
   join(ROOT, "src/shared/bundled.ts"),
   PACKS,
+  SYNC_THEMES,
+  FIXTURE_LEAK,
   join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
   join(ROOT, "public/themes/default/templates/home.html"),
   join(ROOT, "src/api.ts"),
@@ -837,41 +873,74 @@ for (const sc of SCENARIOS) {
   if (sc.skip) continue;
   console.log(`\n${"=".repeat(64)}\nScenario: ${sc.label}\n${"=".repeat(64)}`);
 
-  // Pre-condition: the scenario's own anchor must be present and unique.
-  const beforeSrc = normalize(readFileSync(sc.file, "utf8"));
-  const anchorHits = beforeSrc.split(sc.before[0]).length - 1;
-  if (anchorHits !== 1) {
-    problems.push(`${sc.label}: anchor appears ${anchorHits}x (need 1)`);
-    console.log(`  FAIL anchor not unique (${anchorHits}) — scenario not executed`);
-    console.log(`       anchor: ${JSON.stringify(sc.before[0].slice(0, 90))}`);
-    console.log(`       file:   ${rel(sc.file)} (${beforeSrc.length} chars)`);
-    continue;
+  // Two shapes of injection:
+  //   * a text replacement in an existing file (`file` + `before`/`after`);
+  //   * a file that must NOT exist being materialised (`creates`), because
+  //     some guards assert an *absence* ("nothing that is not bundled ships")
+  //     and no string replacement can produce a file that is not there.
+  const creating = !!sc.creates;
+  const target = creating ? sc.creates.to : sc.file;
+  const key = rel(target);
+
+  let beforeSrc = "";
+  if (creating) {
+    if (existsSync(target)) {
+      problems.push(`${sc.label}: ${key} already exists — cannot stage an absence`);
+      console.log(`  FAIL ${key} already exists — scenario not executed`);
+      continue;
+    }
+    console.log(`  pre-condition: ${key} is absent (as it must be)`);
+  } else {
+    // Pre-condition: the scenario's own anchor must be present and unique.
+    beforeSrc = normalize(readFileSync(sc.file, "utf8"));
+    const anchorHits = beforeSrc.split(sc.before[0]).length - 1;
+    if (anchorHits !== 1) {
+      problems.push(`${sc.label}: anchor appears ${anchorHits}x (need 1)`);
+      console.log(`  FAIL anchor not unique (${anchorHits}) — scenario not executed`);
+      console.log(`       anchor: ${JSON.stringify(sc.before[0].slice(0, 90))}`);
+      console.log(`       file:   ${rel(sc.file)} (${beforeSrc.length} chars)`);
+      continue;
+    }
   }
 
-  // Capture only the watched files the scenario touches, by hash.
-  const preHashes = {};
-  for (const f of [sc.file]) preHashes[rel(f)] = sha(normalize(readFileSync(f, "utf8")));
+  // Undo whatever this scenario staged. For a created file that means deleting
+  // it *and* the directory that had to be made for it, so the tree is not left
+  // with an empty `public/themes/fixture/` that no hash can see.
+  const undo = () => {
+    if (!creating) { writeFileSync(sc.file, beforeSrc); return; }
+    rmSync(target, { force: true });
+    try { rmdirSync(dirname(target)); } catch { /* not empty, or already gone */ }
+  };
+
+  // Capture only the file the scenario touches, by hash.
+  const preHashes = { [key]: creating ? "<absent>" : sha(normalize(readFileSync(sc.file, "utf8"))) };
 
   try {
-    apply(sc.file, sc.before[0], sc.after[0]);
+    if (creating) {
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(sc.creates.from, target);
+    } else {
+      apply(sc.file, sc.before[0], sc.after[0]);
+    }
   } catch (e) {
     problems.push(`${sc.label}: ${e.message}`);
     console.log(`  FAIL ${e.message}`);
+    undo();
     assertPristine(pristine, `after failed injection of "${sc.label}"`);
     continue;
   }
 
   // **The injection must be proven to have landed.** Hash, not byte count:
   // `"site"` -> `"sote"` is equal length and would fool a size check.
-  const postHash = sha(normalize(readFileSync(sc.file, "utf8")));
-  if (postHash === preHashes[rel(sc.file)]) {
-    problems.push(`${sc.label}: injection produced no change in ${rel(sc.file)} (hash unchanged)`);
-    console.log(`  FAIL injection did not land (${preHashes[rel(sc.file)]} == ${postHash}) — nothing was proved`);
-    writeFileSync(sc.file, beforeSrc);
+  const postHash = existsSync(target) ? sha(normalize(readFileSync(target, "utf8"))) : "<absent>";
+  if (postHash === preHashes[key]) {
+    problems.push(`${sc.label}: injection produced no change in ${key} (hash unchanged)`);
+    console.log(`  FAIL injection did not land (${preHashes[key]} == ${postHash}) — nothing was proved`);
+    undo();
     assertPristine(pristine, `after no-op injection of "${sc.label}"`);
     continue;
   }
-  console.log(`  injected ${rel(sc.file)}: ${preHashes[rel(sc.file)]} -> ${postHash}`);
+  console.log(`  injected ${key}: ${preHashes[key]} -> ${postHash}`);
 
   // Run the suites and check the *named* assertion flipped.
   let allFlipped = true;
@@ -903,8 +972,8 @@ for (const sc of SCENARIOS) {
 
   // Restore, then prove the restore — a silent restore failure makes every
   // later scenario run on top of this one's damage (the batch-4 trap).
-  writeFileSync(sc.file, beforeSrc);
-  const restored = sha(normalize(readFileSync(sc.file, "utf8")));
+  undo();
+  const restored = existsSync(target) ? sha(normalize(readFileSync(target, "utf8"))) : "<absent>";
   assertPristine(pristine, `after restoring "${sc.label}"`);
   console.log(`  restored (${restored})  ${allFlipped ? "✓ scenario valid" : "✗ scenario INVALID"}`);
   ran++;

@@ -535,21 +535,24 @@ Languages 屏的 Save 原本自己 POST 再 `render()`，**不重载字典**，�
 
 ## 捆绑主题经 Worker assets 分发（规则 66）
 
-捆绑主题（`default`、`journal`，定义在 `src/shared/bundled.ts` 的 `BUNDLED_THEMES`）
+捆绑主题（`default`，定义在 `src/shared/bundled.ts` 的 `BUNDLED_THEMES`）
 曾经**没有分发渠道**：注册行写进了 `theme_installs`，模板文件却只在 R2——而 R2 清空后
 是空的。于是**每次清库/重部署，首页都是 `__fallback__` 壳**，要手工逐个上传 13 个对象
 才能恢复。那是补丁。设计是：
 
 | 规则 | 说明 |
 |---|---|
-| 66a | 捆绑主题运行时经 **ASSETS 绑定**读 `public/themes/**`（`bundledThemeFile`）；R2 只承载用户上传的主题。`content/themes/**` 是源，`public/themes/**` 是同步副本——**两棵树逐文件、逐字节一致**（`scripts/sync-bundled-themes.mjs` 生成；`predeploy` 与两个启动器先跑它再 deploy/dev） |
-| 66b | 每个捆绑名必须对应真实的 `content/themes/<name>/theme.json`；`content/themes/` 下的目录要么捆绑、要么豁免（`fixture` 是测试夹具） |
+| 66a | 捆绑主题运行时经 **ASSETS 绑定**读 `public/themes/**`（`bundledThemeFile`）；R2 只承载用户上传的主题。`content/themes/**` 是源，`public/themes/**` 是同步副本，且**恰好等于 `BUNDLED_THEMES` 那几个主题的文件，逐字节一致**（`scripts/sync-bundled-themes.mjs` 生成；`predeploy` 与两个启动器先跑它再 deploy/dev） |
+| 66b | 每个捆绑名必须对应真实的 `content/themes/<name>/theme.json`；`content/themes/` 下的目录要么捆绑、要么**不发布**（`fixture` 是测试夹具）。同步脚本的复制集**必须从 `BUNDLED_THEMES` 推导**，不许遍历整个 `content/themes/` |
+| 66e | ⚠️ **`public/` 下的每个文件都是公网可读的**（`wrangler deploy` 原样上传）。所以"发布集 = `BUNDLED_THEMES`"是**安全边界**不是便利：同步脚本曾经镜像整个 `content/themes/`，于是**测试夹具主题被发布到了线上**（`/themes/fixture/theme.json` 实测 200），而当时的架构测试断言的是"两棵树逐文件一致"——**它把泄漏钉成了正确**。豁免必须是**排除**，不是**纳入** |
 | 66c | 主题内容加载的**每个消费点**（`runtime-declarative.ts` 的模板读取 / `activeTheme` 探测 / 语言包读取，以及 `packs.ts`）都必须走 assets 兜底。删掉任意一处兜底 = 对应路径清库后 `__fallback__` 回归（守卫逐点钉住，不是全文搜标识符——全文搜在删一处时依旧绿，注入验证抓过这个） |
 | 66d | 捆绑名**不可被上传覆盖、不可被卸载**（`src/api.ts` 的 "ships with the product" 守卫读 `BUNDLED_THEMES`——不许手抄名单） |
 
 改 `content/themes/` 下任何文件后**必须跑 `node scripts/sync-bundled-themes.mjs`**
 （或直接 `npm run deploy`——`predeploy` 会跑）。守卫在 `architecture.test.mjs`（规则 66 节，
-13 条断言含非空）；注入场景在 `_skeleton-inject.mjs`（删兜底 / 树漂移）；
+**18 条断言**含非空：发布集 = `BUNDLED_THEMES`、非捆绑目录绝不进 `public/`、同步脚本的复制集
+从 `BUNDLED_THEMES` 推导）；注入场景在 `_skeleton-inject.mjs`（删兜底 / 树漂移 /
+**夹具泄漏进 `public/themes`** / **同步退回整目录镜像**）；
 行为验证在 `theme-integration.test.mjs` §10（**空 R2 仍渲染 `home`**）。
 
 ## 守卫失效记录（READ THIS）
@@ -1012,9 +1015,10 @@ import 就是环。环在部分浏览器能跑、部分不能，且让"改一个
 运营者点下去只会拿到端点的 409 `still active on: acct`，
 而屏幕上**刚刚**告诉他这个主题没人在用。**payload 一直带着这个事实，是消费方找错了地方。**
 
-**为什么（68b）**：`journal` 的卡片原本带一个"卸载"按钮，而卸载端点对捆绑主题**只会**回
+**为什么（68b）**：捆绑主题的卡片原本带一个"卸载"按钮，而卸载端点对捆绑主题**只会**回
 400（"ships with the product"）。**一个只有唯一可能结果（被拒）的按钮不是功能，是错误制造机**：
 运营者唯一的反馈就是那条报错。端点在同一个响应里下发 `bundled`，屏幕改成一句说明。
+（这条是用户拿 `journal` 报出来的；`journal` 已随后从产品移除，规则本身不变。）
 
 守卫：`admin-spa.test.mjs`（**用真实 payload 形状渲染屏幕**，断言卡片点名站点 +
 按钮带着站点 + 捆绑主题没有卸载按钮）；`admin-contract.test.mjs`（payload 的 `bundled`

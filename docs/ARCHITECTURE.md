@@ -2142,17 +2142,26 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
 66. 捆绑主题（`BUNDLED_THEMES`，`src/shared/bundled.ts`）的模板/语言文件**经 ASSETS 绑定
     分发**，运行时从 `public/themes/**` 读（`bundledThemeFile`），R2 只承载用户上传的主题
    a) 每个捆绑名必须对应真实的 `content/themes/<name>/theme.json`（清单 name 一致）；
-      `content/themes/` 下的目录要么捆绑、要么在豁免名单（`fixture`——测试夹具）
-   b) `public/themes/**` 与 `content/themes/**` **逐文件、逐字节一致**——由
+      `content/themes/` 下的目录要么捆绑、要么**不发布**（`fixture`——测试夹具）。
+      同步脚本的复制集**必须从 `BUNDLED_THEMES` 推导**，不许遍历整个 `content/themes/`
+   b) `public/themes/**` **恰好等于** `BUNDLED_THEMES` 那几个主题的文件，**逐字节一致**——由
       `scripts/sync-bundled-themes.mjs` 生成（`predeploy` 与两个启动器都会先跑它）；
       两棵树不同步 = 用旧模板上线 = 架构测试红
+   e) ⚠️ **`public/` 下的每个文件都是公网可读的**（`wrangler deploy` 原样上传），所以
+      "发布集 = `BUNDLED_THEMES`" 是**安全边界**，不是便利。这条规则是**用事故换来的**：
+      同步脚本原来镜像整个 `content/themes/`，于是测试夹具主题被发布到了线上
+      （`https://<worker>/themes/fixture/theme.json` 实测 **200**），而当时的守卫断言的是
+      "两棵树逐文件一致"——**它把泄漏钉成了正确**，套件在泄漏存在的整个期间都是绿的。
+      **豁免必须是排除，不能是纳入**；一个"两个集合必须相等"的断言，要先问清
+      "它们凭什么相等"。
    c) 主题内容加载的**每个消费点**（`runtime-declarative.ts` 的模板读取 / `activeTheme`
       探测 / 语言包读取，以及 `packs.ts`）都必须走 assets 兜底；删掉任意一处 = 清库后
       该路径退回 `__fallback__`（历史上 R2 是唯一来源，每次清库都要手工逐个上传 13 个
       对象才能恢复——那是补丁，不是设计）
    d) 捆绑名**不可被上传覆盖、不可被卸载**（`src/api.ts` 两处 "ships with the product"
       守卫读 `BUNDLED_THEMES`，不许抄一份名单）
-   反向验证：`_skeleton-inject.mjs`（删兜底 / 两棵树漂移 → 对应断言必须变红）；
+   反向验证：`_skeleton-inject.mjs`（删兜底 / 两棵树漂移 / **夹具泄漏进 `public/themes`** /
+   **同步退回整目录镜像** → 对应断言必须变红）；
    行为验证：`theme-integration.test.mjs` §10（空 R2 仍渲染 `home`，非 `__fallback__`）
 
 【界面语言偏好：一个写者、两个读者】（AGENTS.md 规则 67）

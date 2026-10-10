@@ -311,7 +311,6 @@ $Script:Suites = [ordered]@{
     'theme-integration'  = 'tests/suites/theme-integration.test.mjs'
     'locale-url'        = 'tests/suites/locale-url.test.mjs'
     'theme-fixture'      = 'tests/suites/theme-fixture.test.mjs'
-    'theme-journal'      = 'tests/suites/theme-journal.test.mjs'
     'theme-default'        = 'tests/suites/theme-default.test.mjs'
     'multisite'          = 'tests/suites/multisite.test.mjs'
     'i18n'               = 'tests/suites/i18n.test.mjs'

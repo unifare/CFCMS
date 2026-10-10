@@ -1,8 +1,8 @@
 /**
  * Themes that ship with the product itself.
  *
- * These are the themes a fresh install renders out of the box. Their files are
- * NOT stored in R2: they live in `content/themes/` in the repo and reach the
+ * This is the theme a fresh install renders out of the box. Its files are NOT
+ * stored in R2: they live in `content/themes/` in the repo and reach the
  * Worker through the assets pipeline (`scripts/sync-bundled-themes.mjs` copies
  * them into `public/themes/` before deploy; `wrangler dev` serves the same
  * directory straight from disk). Template loading falls back to `env.ASSETS`
@@ -14,6 +14,14 @@
  * every entry to a real `content/themes/<name>/theme.json` on disk, so a
  * renamed or removed theme cannot leave a dangling entry here.
  *
+ * **This list is also the definition of what the sync ships.** A directory
+ * under `content/themes/` that is not in here — the test fixture is the one
+ * that exists today — is read by the suites and must never reach
+ * `public/themes/`, because everything under `public/` is uploaded by
+ * `wrangler deploy` and therefore world-readable. The sync derives its copy
+ * set from this constant for exactly that reason; a second, hand-written list
+ * is what let the fixture ship for as long as it did.
+ *
  * Consequences, all deliberate:
  * - `uploadExtension` refuses these names: the repo copy is the authority, and
  *   an uploaded override would be silently shadowed by the assets copy.
@@ -24,7 +32,7 @@
  */
 import { Env } from "./types";
 
-export const BUNDLED_THEMES: readonly string[] = ["default", "journal"];
+export const BUNDLED_THEMES: readonly string[] = ["default"];
 
 /**
  * Read one file of a bundled theme from the worker assets.

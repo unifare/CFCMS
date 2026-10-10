@@ -685,11 +685,15 @@ if (modules && !bootError) {
   routeTable.set("/api/v1/extensions/themes", {
     items: [
       { name: "accttheme", title: "Acct Theme", version: "1.0.0", active: 0, bundled: 0 },
-      { name: "journal", title: "Journal", version: "1.0.0", active: 0, bundled: 1 },
-      { name: "default", title: "MOBAI", version: "1.0.0", active: 1, bundled: 1 },
+      { name: "shoptheme", title: "Shop Theme", version: "1.0.0", active: 1, bundled: 0 },
+      // Bundled *and* not active here: the only reason this card has no
+      // Uninstall is the bundled rule. (`default` is the sole bundled theme
+      // since `journal` was removed from the product, so the case has to be
+      // built by making the site's active theme a different one.)
+      { name: "default", title: "MOBAI", version: "1.0.0", active: 0, bundled: 1 },
     ],
-    active: "default",
-    active_by_site: { default: "default", acct: "accttheme" },
+    active: "shoptheme",
+    active_by_site: { default: "shoptheme", acct: "accttheme" },
     site: "default",
   });
   // The active theme's capability summary reads four endpoints; empty lists are
@@ -701,7 +705,7 @@ if (modules && !bootError) {
   const themeHtml = contentEl.innerHTML;
   check(
     "the themes screen rendered the installed themes",
-    themeHtml.includes("Acct Theme") && themeHtml.includes("MOBAI") && themeHtml.includes("Journal"),
+    themeHtml.includes("Acct Theme") && themeHtml.includes("MOBAI") && themeHtml.includes("Shop Theme"),
     themeHtml.slice(0, 200)
   );
   check(
@@ -716,14 +720,14 @@ if (modules && !bootError) {
   );
   check(
     "the theme active on this site offers no uninstall at all",
-    !/data-theme-del="default"/.test(themeHtml),
+    !/data-theme-del="shoptheme"/.test(themeHtml),
     "the active theme rendered an uninstall button"
   );
   // A bundled theme has no package to remove: the route answers 400 for every
   // attempt, so the button must not be there in the first place.
   check(
     "a bundled theme says so instead of offering an uninstall",
-    themeHtml.includes("Ships with CFPress") && !/data-theme-del="journal"/.test(themeHtml),
+    themeHtml.includes("Ships with CFPress") && !/data-theme-del="default"/.test(themeHtml),
     themeHtml.match(/data-theme-del="[^"]*"/g)?.join(", ") ?? "no uninstall buttons at all"
   );
 }

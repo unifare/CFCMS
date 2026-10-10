@@ -32,6 +32,11 @@ import {
 // The channel contract's closed type set has to agree with the admin control
 // list, the same way the table field types do. Imported, not copied.
 import { ALLOWED_CHANNEL_FIELD_TYPES, HOST_CHANNEL_CODES } from "../../src/extensions/contract/channels.ts";
+// The shipped-theme set has one definition, and the script that produces
+// `public/themes` is the one that reads it. This suite imports that same parse
+// instead of keeping a second copy of the regex: two copies is how the fixture
+// theme shipped for as long as it did (see the bundled-themes section below).
+import { BUNDLED_SRC, readBundledThemeNames } from "../../scripts/sync-bundled-themes.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..", "..");
@@ -1772,9 +1777,11 @@ section("Bundled themes ship through Worker assets (rule 66)");
  * same directory wrangler uploads on every deploy. `content/themes/**` is the
  * editable source, `public/themes/**` is the synced copy (produced by
  * `scripts/sync-bundled-themes.mjs`, wired into `predeploy` and both
- * launchers), and this suite pins the two trees **file-for-file and
- * byte-for-byte**, so a template edited in `content/` but never synced fails
- * here instead of quietly serving stale markup in production.
+ * launchers), and this suite pins `public/themes/**` to **exactly the files of
+ * the bundled themes**, byte-for-byte — so a template edited in `content/` but
+ * never synced fails here instead of quietly serving stale markup in
+ * production, and a directory that is not bundled (the test fixture) cannot
+ * ride along into the deployed assets.
  *
  * Paired with the runtime fallback come the ownership guards: the bundled
  * names cannot be displaced by an upload or removed by an uninstall, because
@@ -1782,20 +1789,20 @@ section("Bundled themes ship through Worker assets (rule 66)");
  * exists to prevent.
  *
  * Reverse validation: `tests/tools/_skeleton-inject.mjs` removes the assets
- * fallback and desynchronises the two trees; the named assertions below must
- * go red on each defect.
+ * fallback, desynchronises a synced template, leaks a non-bundled theme into
+ * `public/themes/`, and re-broadens the sync's copy set; the named assertions
+ * below must go red on each defect.
  */
 {
   // Parsed from source, not imported: `bundled.ts` sits above shared code that
   // uses extensionless relative imports, which Node's native TS stripping
   // cannot resolve — the same reason the schema section below parses
-  // `PLATFORM_SCHEMA` out of `schema.ts` instead of importing it. The parse is
-  // pinned by the non-vacuity check immediately after it.
+  // `PLATFORM_SCHEMA` out of `schema.ts` instead of importing it. The parse
+  // itself lives in `scripts/sync-bundled-themes.mjs` (the script that *ships*
+  // the set) and is imported here, so there is one place to keep correct. The
+  // non-vacuity check immediately below is what keeps that shared parse honest.
   const bundledSrcRaw = read(join(ROOT, "src/shared/bundled.ts"));
-  const listBlock = bundledSrcRaw.match(/export const BUNDLED_THEMES(?::\s*readonly string\[\])?\s*=\s*\[([\s\S]*?)\]\s*(?:as const)?;/);
-  const BUNDLED_THEMES = listBlock
-    ? [...listBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
-    : [];
+  const BUNDLED_THEMES = readBundledThemeNames(BUNDLED_SRC);
 
   // -- the registry side -----------------------------------------------------
   check(
@@ -1823,13 +1830,25 @@ section("Bundled themes ship through Worker assets (rule 66)");
   const themeDirs = readdirSync(join(ROOT, "content", "themes")).filter((d) =>
     statSync(join(ROOT, "content", "themes", d)).isDirectory()
   );
-  check("the content/themes scan found the theme directories (non-vacuity)", themeDirs.length >= 3, themeDirs.join(", "));
+  check("the content/themes scan found the theme directories (non-vacuity)", themeDirs.length >= 2, themeDirs.join(", "));
   checkEmpty(
     "every content/themes directory is bundled or explicitly exempt",
     themeDirs.filter((d) => !BUNDLED_THEMES.includes(d) && !EXEMPT.has(d))
   );
 
-  // -- the assets side: the two trees agree ----------------------------------
+  // -- the assets side: public/themes is exactly the bundled themes -----------
+  //
+  // ⚠️ This used to assert "the two trees agree file-for-file", and that was
+  // the wrong invariant in the most expensive possible way: it made the *test
+  // fixture* theme's presence under `public/themes/` a **requirement**. Every
+  // file under `public/` is uploaded by `wrangler deploy`, so the suite was
+  // pinning a test fixture onto the public internet — `/themes/fixture/theme.json`
+  // answered 200 in production — while the comment a few lines above called
+  // that theme "not shipped as a product theme". The two trees were never meant
+  // to match: `content/themes/` may hold directories that must NOT ship. The
+  // real invariant is "what ships is what `BUNDLED_THEMES` names", so that is
+  // what is asserted, and the exemption is an *exclusion* rather than an
+  // inclusion.
   const contentRoot = join(ROOT, "content", "themes");
   const publicRoot = join(ROOT, "public", "themes");
   const listFiles = (base) => {
@@ -1845,26 +1864,57 @@ section("Bundled themes ship through Worker assets (rule 66)");
     walkFiles(base);
     return out.sort();
   };
-  const srcFiles = listFiles(contentRoot);
+  const bundledFiles = BUNDLED_THEMES
+    .flatMap((n) => listFiles(join(contentRoot, n)).map((f) => `${n}/${f}`))
+    .sort();
   const syncedFiles = listFiles(publicRoot);
-  check("the synced assets tree was actually scanned (non-vacuity)", syncedFiles.length >= 20, `${syncedFiles.length} files under public/themes`);
+  check("the bundled theme sources were actually scanned (non-vacuity)", bundledFiles.length >= 5, `${bundledFiles.length} files under the bundled theme(s)`);
+  check("the synced assets tree was actually scanned (non-vacuity)", syncedFiles.length >= 5, `${syncedFiles.length} files under public/themes`);
 
-  const onlyInContent = srcFiles.filter((f) => !syncedFiles.includes(f));
-  const onlyInPublic = syncedFiles.filter((f) => !srcFiles.includes(f));
+  const missingFromAssets = bundledFiles.filter((f) => !syncedFiles.includes(f));
+  const shippedButNotBundled = syncedFiles.filter((f) => !bundledFiles.includes(f));
   checkEmpty(
-    "public/themes matches content/themes file-for-file (run scripts/sync-bundled-themes.mjs)",
+    "public/themes holds exactly the bundled themes' files (run scripts/sync-bundled-themes.mjs)",
     [
-      ...onlyInContent.map((f) => `missing from public/themes: ${f}`),
-      ...onlyInPublic.map((f) => `stale in public/themes: ${f}`),
+      ...missingFromAssets.map((f) => `missing from public/themes: ${f}`),
+      ...shippedButNotBundled.map((f) => `shipped but not bundled: ${f}`),
     ]
+  );
+
+  // Named separately from the set comparison above so a leak names the rule it
+  // breaks, and so the reverse-validation scenario has one assertion to pin.
+  const notBundledDirs = themeDirs.filter((d) => !BUNDLED_THEMES.includes(d));
+  checkEmpty(
+    "no theme directory that is not bundled reaches the deployed assets",
+    notBundledDirs.filter((d) => syncedFiles.some((f) => f.startsWith(`${d}/`)))
+  );
+  check(
+    "the non-bundled scan is not vacuous (something on disk is there to be excluded)",
+    notBundledDirs.length >= 1,
+    `content/themes holds ${themeDirs.join(", ")}`
   );
 
   // Byte-for-byte, not just same names: a template edited in content/ but
   // never synced would otherwise keep shipping the old markup from public/.
-  const drifted = srcFiles
+  const drifted = bundledFiles
     .filter((f) => syncedFiles.includes(f))
     .filter((f) => read(join(contentRoot, f)) !== read(join(publicRoot, f)));
   checkEmpty("every synced theme file is byte-identical to its source", drifted);
+
+  // And the sync has to *derive* its copy set from that one definition rather
+  // than walking `content/themes/` — the shape that leaked the fixture in the
+  // first place. Lexical, because it is the only way to see where the list
+  // comes from: the tree above is clean today, and a future edit that
+  // re-broadens the copy set would not show up in it until someone re-ran the
+  // script by hand.
+  const syncSrc = blankComments(read(join(ROOT, "scripts/sync-bundled-themes.mjs")));
+  check("the sync reads the bundled names (not a hand-copied list)", /readBundledThemeNames|BUNDLED_THEMES/.test(syncSrc));
+  checkEmpty(
+    "the sync does not enumerate the whole content/themes directory",
+    /listThemeFiles\(\s*sourceRoot\s*\)/.test(syncSrc)
+      ? ["sync-bundled-themes.mjs walks content/themes directly — the fixture would ship again"]
+      : []
+  );
 
   // -- the runtime fallback is wired -----------------------------------------
   // The whole design rests on `bundledThemeFile` being reachable from **every**

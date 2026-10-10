@@ -46,10 +46,11 @@ export default async function themes(c) {
         : `<div class="muted text-sm">${others.length ? esc(t("core.themes.alsoUsed", "Also used by: {sites}", { sites: others.join(", ") })) : esc(t("core.themes.notInUse", "Not in use"))}</div>
            <button class="btn primary sm" style="margin-top:.75rem" data-theme-activate="${attr(x.name)}">${icon("check")}${esc(t("core.themes.activateHere", "Activate here"))}</button>
            ${x.bundled
-             // `default` and `journal` ship inside the Worker's assets. Offering
-             // Uninstall here meant every click on them ended in a 400 ("ships
-             // with the product") — an action with exactly one possible answer,
-             // which is a refusal. Say why instead of offering it.
+             // A bundled theme (`BUNDLED_THEMES`) ships inside the Worker's
+             // assets, so there is no package to remove. Offering Uninstall here
+             // meant every click ended in a 400 ("ships with the product") — an
+             // action with exactly one possible answer, which is a refusal. Say
+             // why instead of offering it.
              ? `<div class="muted text-sm" style="margin-top:.5rem">${esc(t("core.themes.bundled", "Ships with CFPress — cannot be uninstalled"))}</div>`
              : `<button class="btn outline danger sm" style="margin-top:.5rem" data-theme-del="${attr(x.name)}" data-theme-del-sites="${attr(others.join(","))}">${icon("trash")}${esc(t("core.themes.uninstall", "Uninstall"))}</button>`}`}
     </div>`;

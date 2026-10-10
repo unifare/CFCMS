@@ -63,7 +63,6 @@ const suites = [
   ["theme sandbox (L3)", "suites/theme-worker.test.mjs"],
   ["locale urls", "suites/locale-url.test.mjs"],
   ["fixture theme", "suites/theme-fixture.test.mjs"],
-  ["journal theme", "suites/theme-journal.test.mjs"],
   ["default theme", "suites/theme-default.test.mjs"],
   // The launcher parity check is pure text analysis over scripts/cfpress.sh and
   // scripts/cfpress.ps1 — no Worker, no database. It guards the promise those
