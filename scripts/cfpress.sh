@@ -207,6 +207,18 @@ act_seed() {
   node scripts/seed-demo-content.mjs
 }
 
+# Binds the local test domains (from `sites.host`) inside a **marker block** of
+# the system hosts file. The block is the only thing it touches, it backs the
+# file up (and verifies the backup) before writing, and it is idempotent.
+# Writing needs an elevated shell, so a permission failure exits 3 with the
+# exact command to re-run rather than a silent half-success.
+act_hosts() {
+  require_node
+  head1 "bind test domains in the hosts file"
+  dim "edits the system hosts file inside a marker block; backs it up first"
+  node scripts/dev-hosts.mjs "$@"
+}
+
 # --- tests: one suite at a time ---------------------------------------------
 # `npm test` is a single && chain, and in this sandbox spawnSync of the node
 # binary fails with EBUSY (see AGENTS.md) — the whole chain then reports SKIP,
@@ -487,6 +499,7 @@ ${C_BOLD}CFPress launcher${C_RESET}  ${C_DIM}(repo root: $ROOT)${C_RESET}
     config              regenerate wrangler.local.jsonc from wrangler.ids.json
     theme [dir]         upload + activate a theme on the running dev server
     seed                seed demo content on the running dev server
+    hosts <cmd>         bind test domains in the hosts file (list/add/remove/verify)
     test [suite]        run every suite, or one by name (menu 4)
     typecheck           tsc --noEmit (menu 5)
     types               regenerate worker-configuration.d.ts
@@ -622,6 +635,7 @@ main() {
     migrate:remote|migrate-remote|db:migrate) act_migrate_remote ;;
     theme|theme:deploy) act_theme_deploy "$@" ;;
     seed|seed:demo)   act_seed ;;
+    hosts)            act_hosts "$@" ;;
     test|test:all)    act_test "${1:-}" ;;
     typecheck|types:check) act_typecheck ;;
     types)            act_types ;;

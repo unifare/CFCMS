@@ -284,7 +284,7 @@ async function main() {
 
   const c2 = await req(worker, env, "/api/v1/sites", {
     method: "POST", headers: { ...auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ id: "de", name: "Deutsch", path_prefix: "/de" }),
+    body: JSON.stringify({ id: "de", name: "Deutsch", path_prefix: "/de", host: "de.example.com" }),
   });
   check("site create with prefix", c2.status, 201);
 
@@ -346,6 +346,23 @@ async function main() {
   // dev port does not turn up a fixture that looks like a config value.
   const withPort = await req(worker, env, "/en", {}, "shop.example.com:47913");
   check("port is stripped for host matching", withPort.headers.get("X-CFPress-Site"), "shop");
+
+  // Two sites bound to two different hosts, on one fixture: this is the shape
+  // the local test domains use (`cfpress.test` / `shop.cfpress.test` /
+  // `de.cfpress.test`), and it is what "multi-site isolation" means at the
+  // routing layer — the same URL path answers as a different site depending on
+  // the host alone.
+  const deHost = await req(worker, env, "/", {}, "de.example.com");
+  check("a second host resolves to its own site", deHost.headers.get("X-CFPress-Site"), "de");
+  // And the precedence is pinned, because it is the one thing a reader of
+  // `resolveSite()` gets wrong: a path prefix is the more specific answer, so
+  // it wins over a host that names another site.
+  const prefixOverHost = await req(worker, env, "/de/", {}, "shop.example.com");
+  check("a path prefix beats a host that names another site",
+    prefixOverHost.headers.get("X-CFPress-Site"), "de");
+  const unknownHost = await req(worker, env, "/", {}, "nobody.example.com");
+  check("an unknown host falls back to the default site",
+    unknownHost.headers.get("X-CFPress-Site"), "default");
 
   const unknown = await req(worker, env, "/en", {}, "nope.example.com");
   check("unknown host falls back to default", unknown.headers.get("X-CFPress-Site"), "default");

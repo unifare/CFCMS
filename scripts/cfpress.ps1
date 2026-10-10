@@ -285,6 +285,19 @@ function Invoke-Seed {
     & node scripts/seed-demo-content.mjs
     return $LASTEXITCODE
 }
+# Binds the local test domains (from `sites.host`) inside a **marker block** of
+# the system hosts file. The block is the only thing it touches, it backs the
+# file up (and verifies the backup) before writing, and it is idempotent.
+# Writing needs an elevated shell, so a permission failure exits 3 with the
+# exact command to re-run rather than a silent half-success.
+function Invoke-Hosts {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    Assert-Node
+    Write-Head 'bind test domains in the hosts file'
+    Write-Dim 'edits the system hosts file inside a marker block; backs up first'
+    & node scripts/dev-hosts.mjs @Arguments
+    return $LASTEXITCODE
+}
 
 # --- tests: one suite at a time ---------------------------------------------
 # `npm test` is a single && chain, and in this sandbox spawnSync of the node
@@ -592,6 +605,7 @@ CFPress launcher  (repo root: $Root)
     config              regenerate wrangler.local.jsonc / 生成部署配置
     theme [dir]         upload + activate a theme / 部署主题 (menu 3)
     seed                seed demo content / 灌演示数据
+    hosts (cmd)         bind test domains in the hosts file / 绑定测试域名
     test [suite]        run every suite, or one by name / 跑测试 (menu 4)
     typecheck           tsc --noEmit / 类型检查 (menu 5)
     types               regenerate worker-configuration.d.ts / 重新生成绑定类型
@@ -727,6 +741,7 @@ function Invoke-Action {
         'theme:deploy'   { return (Invoke-ThemeDeploy $first) }
         'seed'           { return (Invoke-Seed) }
         'seed:demo'      { return (Invoke-Seed) }
+        'hosts'          { return (Invoke-Hosts @Extra) }
         'test'           { return (Invoke-Test $first) }
         'test:all'       { return (Invoke-Test) }
         'typecheck'      { return (Invoke-Typecheck) }
