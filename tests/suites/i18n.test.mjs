@@ -247,17 +247,40 @@ async function main() {
   sqlite.exec("UPDATE site_locales SET is_default=1, enabled=1, sort_order=0 WHERE site_id='default' AND code='en'");
   sqlite.exec("DELETE FROM locales WHERE code <> 'en'");
   sqlite.exec("DELETE FROM i18n_overrides WHERE site_id='default' AND key LIKE 'core.%'");
-  sqlite.exec("DELETE FROM site_users WHERE ui_lang IS NOT NULL AND ui_lang <> 'en'");
+  // Reset the *preference*, never the account. This used to be
+  // `DELETE FROM site_users WHERE ui_lang IS NOT NULL AND ui_lang <> 'en'`,
+  // which is destructive on a database every suite shares: a run that left a
+  // non-en preference behind (a failing section 7b does exactly that) deleted
+  // `admin` — and `bootstrapAdmin` only fires on an *empty* table, so the
+  // account never came back. Every later suite then crashed inside its login
+  // helper with `undefined.split`, which the injection harness reports as
+  // "no summary (aborted)" — a clean red translated into an unreadable one,
+  // and a poisoned database for everything after it. NULL is the same clean
+  // state (it resolves to the site default) without the collateral damage.
+  sqlite.exec("UPDATE site_users SET ui_lang=NULL WHERE ui_lang IS NOT NULL AND ui_lang <> 'en'");
   sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key='i18n.defaultLocale'");
+  // `ui_locale_follow_site` lives in the same settings table (section 7b writes
+  // it). Deleting by *prefix* rather than by the exact key is deliberate: a run
+  // that crashed after turning it on would otherwise leave the next run
+  // asserting against a menu narrowed by the previous one — a clean failure
+  // translated into a confusing one (AGENTS.md, the third false-green note).
+  sqlite.exec("DELETE FROM settings WHERE site_id='default' AND key LIKE 'cfpress.features%'");
 
   console.log("\n0. Admin bootstrap & auth");
   const loginRes = await req(worker, env, "/api/v1/auth/login", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: "admin", password: "change-me-now" }),
   });
-  const cookie = (loginRes.headers.getSetCookie?.() ?? [loginRes.headers.get("set-cookie")])[0].split(";")[0];
-  const auth = { cookie, "Content-Type": "application/json" };
+  // Assert the status *before* reading the cookie. A missing session cookie
+  // used to throw `undefined.split` right here, which ended the run before its
+  // summary — and the injection harness reports a missing summary as "aborted",
+  // i.e. the crash hid the very failure the suite exists to report. (AGENTS.md
+  // §12: a suite that throws under injection has no summary, and no summary is
+  // not a pass.) Reading the cookie defensively turns the same situation into a
+  // clean red on this line plus a readable cascade.
   check("login", loginRes.status, 200);
+  const cookie = String((loginRes.headers.getSetCookie?.() ?? [loginRes.headers.get("set-cookie")] ?? [])[0] ?? "").split(";")[0];
+  const auth = { cookie, "Content-Type": "application/json" };
 
   // -- 1. L0: a fresh site is monolingual ---------------------------------
   console.log("\n1. L0 — site switch");
@@ -444,6 +467,46 @@ async function main() {
     method: "POST", headers: auth, body: JSON.stringify({ locale: "en" }),
   })).json();
   check("switch back to en after the fr probe", frReset.locale, "en");
+
+  // -- 7b. the opt-in that ties the menu to the site ----------------------
+  // Section 7 just asserted the *default*: disabling a site language does not
+  // take it out of the admin's language menu. `ui_locale_follow_site` is the
+  // operator's opt-in for the opposite behaviour — and because the switcher
+  // list and the validation set are one definition, turning it on must narrow
+  // both at once. A filter in the SPA would leave the server accepting a
+  // language the menu no longer shows, so the refusal is asserted, not just
+  // the shorter menu.
+  console.log("\n7b. ui_locale_follow_site narrows the menu to the site");
+  const swOff = await (await req(worker, env, "/api/v1/i18n/locales", { headers: auth })).json();
+  checkTruthy("off by default: the menu still offers zh-CN", swOff.ui_locales.includes("zh-CN"));
+
+  await req(worker, env, "/api/v1/features", {
+    method: "POST", headers: auth,
+    body: JSON.stringify({ key: "ui_locale_follow_site", value: true }),
+  });
+  const swOn = await (await req(worker, env, "/api/v1/i18n/locales", { headers: auth })).json();
+  check("on: the menu lists the site's languages only", swOn.ui_locales, ["en"]);
+  const msgsOn = await (await req(worker, env, "/api/v1/i18n/messages", { headers: auth })).json();
+  check("the switcher list follows the same definition", (msgsOn.ui_locales ?? []).map((l) => l.code), ["en"]);
+  const refusedUi = await (await req(worker, env, "/api/v1/i18n/ui-locale", {
+    method: "POST", headers: auth, body: JSON.stringify({ locale: "zh-CN" }),
+  })).json();
+  checkTruthy("and the server refuses what the menu no longer offers", refusedUi.error);
+  // Leave it inherited (off) for everything that runs after this suite.
+  await req(worker, env, "/api/v1/features", {
+    method: "POST", headers: auth,
+    body: JSON.stringify({ key: "ui_locale_follow_site", value: null }),
+  });
+  // And put the preference back regardless of how the assertions above went.
+  // When the switch is *not* honoured (the injected defect), the POST above
+  // succeeds instead of being refused and leaves `ui_lang='zh-CN'` behind — the
+  // exact state that used to make the next run's cleanup delete `admin`. This
+  // line is what makes the section safe to fail.
+  await req(worker, env, "/api/v1/i18n/ui-locale", {
+    method: "POST", headers: auth, body: JSON.stringify({ locale: "en" }),
+  });
+  const swBack = await (await req(worker, env, "/api/v1/i18n/locales", { headers: auth })).json();
+  checkTruthy("resetting to inherited restores the full menu", swBack.ui_locales.includes("zh-CN"));
 
   // -- 8. L2 dictionary stack --------------------------------------------
   console.log("\n8. L2 dictionary layers");

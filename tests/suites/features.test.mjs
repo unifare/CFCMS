@@ -201,9 +201,9 @@ async function main() {
     const r = await req(bare, "/api/v1/features", { headers: { Cookie: cookie } });
     check("features list is 200", r.status, 200);
     const body = await r.json();
-    check("one entry per declared switch", body.items.length, 2);
-    check("the two expected keys are present", body.items.map((i) => i.key).sort(), ["cache_mirror_kv", "theme_runtime_worker"]);
-    check("both ship disabled", body.items.every((i) => i.enabled === false), true);
+    check("one entry per declared switch", body.items.length, 3);
+    check("the expected keys are present", body.items.map((i) => i.key).sort(), ["cache_mirror_kv", "theme_runtime_worker", "ui_locale_follow_site"]);
+    check("all ship disabled", body.items.every((i) => i.enabled === false), true);
     check("with no var and no row the provenance is the default", body.items.every((i) => i.source === "default"), true);
     check("each entry names its var", body.items.every((i) => typeof i.var === "string" && i.var.startsWith("CFPRESS_")), true);
     check("each entry states its declared default", body.items.every((i) => i.default_on === false), true);
@@ -429,18 +429,20 @@ async function main() {
     await save(bare, { key: "cache_mirror_kv", value: true });
     const r2 = await save(bare, { key: "theme_runtime_worker", value: true });
     check("a second save is 200", r2.status, 200);
+    const r3 = await save(bare, { key: "ui_locale_follow_site", value: true });
+    check("a third save is 200", r3.status, 200);
 
     const rows = sqlite.prepare(`SELECT value FROM settings WHERE site_id='default' AND key='${FEATURES_KEY}'`).all();
-    check("still exactly one row after two saves", rows.length, 1);
+    check("still exactly one row after three saves", rows.length, 1);
     // Same guard as section 3: never index before checking the shape, or a
     // failure here ends the suite before its summary and reads as "aborted".
     let parsed = null;
     try { parsed = rows.length ? JSON.parse(rows[0].value) : null; } catch { parsed = "<unparseable>"; }
-    check("both switches live in that one row", parsed, { cache_mirror_kv: true, theme_runtime_worker: true });
+    check("every declared switch lives in that one row", parsed, { cache_mirror_kv: true, theme_runtime_worker: true, ui_locale_follow_site: true });
 
     const state = await getFeatures(bare);
-    check("both switches read back on", state.items.every((i) => i.enabled === true), true);
-    check("both report the row as their source", state.items.every((i) => i.source === "site"), true);
+    check("every declared switch reads back on", state.items.every((i) => i.enabled === true), true);
+    check("every one reports the row as its source", state.items.every((i) => i.source === "site"), true);
     clearRow();
   });
 

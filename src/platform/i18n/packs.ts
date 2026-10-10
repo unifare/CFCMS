@@ -23,8 +23,9 @@
  * null checks.
  */
 import { Env } from "../../shared/types";
+import { featureEnabled } from "../../shared/features";
 import { CORE_PACKS, CORE_PACK_NAMES } from "./core-pack";
-import { platformLocales } from "./locale-registry";
+import { platformLocales, siteLocales } from "./locale-registry";
 import { createTranslator, packForLocale, parsePack, type Pack, type Translator } from "./translate";
 
 /** Returns the pack for `locale`, or null when this extension has none. */
@@ -117,8 +118,38 @@ export async function uiTranslator(env: Env, siteId: string, locale: string): Pr
  * `i18n/messages`) and the validation set (`availableUiLocales` below) —
  * the switcher can never offer what the server would refuse, or refuse
  * what it offers.
+ *
+ * The `ui_locale_follow_site` switch (off by default) replaces the union with
+ * the site's own enabled languages, for operators who want the menu to mirror
+ * what the site serves. It is applied inside this function rather than in the
+ * SPA precisely so the "one fact" property above survives the switch.
  */
 export async function availableUiLocaleEntries(env: Env, siteId: string): Promise<{ code: string; name: string }[]> {
+  // Opt-in (`ui_locale_follow_site`, off by default): some operators want the
+  // admin's language menu to mirror what the site actually serves, so a site
+  // publishing in English alone does not advertise a Chinese admin. The
+  // default is the opposite **on purpose** (§2.4) — an English-only site whose
+  // owner reads Chinese must still offer Chinese, which is the case the
+  // decoupling exists for. The switch is how an operator says "not here".
+  //
+  // ⚠️ This filter belongs *here*, not in the SPA. `availableUiLocales()` is a
+  // projection of this same array, so it is also the validation set for
+  // `ui-locale` and the set `resolveUiLocale` checks against. Filtering here
+  // keeps "the menu offers X" and "the server accepts X" one fact; filtering in
+  // `i18n.js` would leave the server accepting a language the menu no longer
+  // shows, and `resolveUiLocale` handing back a locale with no entry in the
+  // switcher.
+  if (await featureEnabled(env, siteId, "ui_locale_follow_site")) {
+    const served = (await siteLocales(env, siteId)).map((l) => ({
+      code: l.code,
+      name: l.native_name || l.name || l.code,
+    }));
+    // An empty menu is not a configuration, it is a trap: `resolveUiLocale`
+    // would have nothing to fall back to. A site with no switch rows at all
+    // (a pre-0011 database) lands exactly here, so fall through instead.
+    if (served.length) return sortEnFirst(served);
+  }
+
   const names = new Map<string, string>();
   for (const code of Object.keys(CORE_PACKS)) names.set(code, CORE_PACK_NAMES[code] ?? code);
   try {
@@ -137,10 +168,13 @@ export async function availableUiLocaleEntries(env: Env, siteId: string): Promis
       if (code && !names.has(code)) names.set(code, code);
     }
   } catch { /* table absent on a pre-0011 database */ }
-  const entries = [...names].map(([code, name]) => ({ code, name }));
-  // English first — it is the fallback language and the escape hatch.
-  entries.sort((a, b) => (a.code === "en" ? -1 : b.code === "en" ? 1 : a.code.localeCompare(b.code)));
-  return entries;
+  return sortEnFirst([...names].map(([code, name]) => ({ code, name })));
+}
+
+/** English first — it is the fallback language and the escape hatch. Shared by
+ *  both branches above so the menu cannot order itself two different ways. */
+function sortEnFirst(entries: { code: string; name: string }[]): { code: string; name: string }[] {
+  return entries.sort((a, b) => (a.code === "en" ? -1 : b.code === "en" ? 1 : a.code.localeCompare(b.code)));
 }
 
 /** The codes only — what `ui-locale` validation and `resolveUiLocale` check. */

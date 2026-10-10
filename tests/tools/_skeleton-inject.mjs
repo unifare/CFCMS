@@ -63,6 +63,7 @@ const BLOCK_FIELDS = join(ROOT, "public/admin/js/block-fields.js");
 const MEDIA_PICKER = join(ROOT, "public/admin/js/media-picker.js");
 const MEDIA_SCREEN = join(ROOT, "public/admin/js/screens/media.js");
 const CORE_PACK = join(ROOT, "src/platform/i18n/core-pack.ts");
+const PACKS = join(ROOT, "src/platform/i18n/packs.ts");
 const EDITOR_SCREEN = join(ROOT, "public/admin/js/screens/editor.js");
 const API = join(ROOT, "src/api.ts");
 
@@ -234,13 +235,26 @@ const SCENARIOS = [
   },
   {
     // A switch that defaults to on is a feature nobody asked for, shipping to
-    // every free-plan deploy. The two current switches gate a paid binding and
-    // a KV write amplifier, so "on by default" is wrong for both.
+    // every deploy. Two of the current switches gate a paid binding and a KV
+    // write amplifier; the third narrows a documented default, so "on by
+    // default" is wrong for all three.
     label: "a switch defaults to on",
     file: join(ROOT, "src/shared/features.ts"),
     before: ['    defaultOn: false,\n    label: "Mirror the content-cache version into KV",'],
     after: ['    defaultOn: true,\n    label: "Mirror the content-cache version into KV",'],
-    runs: [["tests/suites/architecture.test.mjs", "both switches default to off"]],
+    runs: [["tests/suites/architecture.test.mjs", "every switch defaults to off"]],
+  },
+  {
+    // `ui_locale_follow_site` is the only thing between "the operator asked for
+    // a site-only language menu" and "the menu shows everything anyway". It is
+    // the quietest kind of defect: the menu still renders, still switches
+    // languages, and is simply the wrong set — so nothing looks broken. The
+    // named assertion is the only observer.
+    label: "the interface-language menu stops honouring ui_locale_follow_site",
+    file: PACKS,
+    before: ['  if (await featureEnabled(env, siteId, "ui_locale_follow_site")) {'],
+    after: ['  if (false) {'],
+    runs: [["tests/suites/i18n.test.mjs", "on: the menu lists the site's languages only"]],
   },
   {
     // If the API ever persists a key that `FEATURE_SWITCHES` does not declare,
@@ -522,7 +536,9 @@ const SCENARIOS = [
 /** Every file any scenario may touch, hashed before and after. */
 const WATCHED = [...new Set([SCHEMA, EVENTS, ARCH, SCOPE, MANIFEST, VALIDATION,
   join(ROOT, "src/shared/features.ts"),
+  join(ROOT, "src/shared/types.ts"),
   join(ROOT, "src/shared/bundled.ts"),
+  PACKS,
   join(ROOT, "src/extensions/theme/runtime-declarative.ts"),
   join(ROOT, "public/themes/default/templates/home.html"),
   join(ROOT, "src/api.ts"),

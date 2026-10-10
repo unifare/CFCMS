@@ -24,6 +24,7 @@ export interface Env {
    */
   CFPRESS_CACHE_MIRROR_KV?: string;
   CFPRESS_THEME_RUNTIME_WORKER?: string;
+  CFPRESS_UI_LOCALE_FOLLOW_SITE?: string;
 }
 export interface User {
   id: string;

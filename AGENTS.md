@@ -271,12 +271,13 @@ KV 镜像在免费计划上纯属写入放大器。这类能力一律走**开关
 「声明先于运行时」缺陷族。所以 `_tenant-query-audit.mjs` 之外再加一条：
 `tests/suites/architecture.test.mjs` 断言 `FEATURE_SWITCHES` 只在**一个文件**里定义。
 
-**当前两个开关**（都在 `wrangler.jsonc` 的 `vars` 里显式写 `"false"`）：
+**当前三个开关**（都在 `wrangler.jsonc` 的 `vars` 里显式写 `"false"`）：
 
 | key | var | 关掉时发生什么 |
 |---|---|---|
 | `cache_mirror_kv` | `CFPRESS_CACHE_MIRROR_KV` | 不往 KV 镜像内容缓存版本号；D1 仍是权威 |
 | `theme_runtime_worker` | `CFPRESS_THEME_RUNTIME_WORKER` | 主题 Worker 沙箱不启动，全部走声明式渲染器 |
+| `ui_locale_follow_site` | `CFPRESS_UI_LOCALE_FOLLOW_SITE` | 后台界面语言菜单照旧列出平台知道的所有语言（§2.4 的解耦）；**打开**才收窄成"本站启用的语言" |
 
 > ⚠️ **`theme_runtime_worker` 的开关必须检查在绑定之前**。反过来的话，一个付费账号
 > （有 `worker_loaders`）会让"绑定在"**静默压过**运营者的意图，这个开关就白加了。

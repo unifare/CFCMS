@@ -45,10 +45,12 @@
   //
   //   CFPRESS_CACHE_MIRROR_KV         -> cache_mirror_kv
   //   CFPRESS_THEME_RUNTIME_WORKER    -> theme_runtime_worker
+  //   CFPRESS_UI_LOCALE_FOLLOW_SITE   -> ui_locale_follow_site
   // ---------------------------------------------------------------------------
   "vars": {
     "CFPRESS_CACHE_MIRROR_KV": "false",
-    "CFPRESS_THEME_RUNTIME_WORKER": "false"
+    "CFPRESS_THEME_RUNTIME_WORKER": "false",
+    "CFPRESS_UI_LOCALE_FOLLOW_SITE": "false"
   },
 
   // ---------------------------------------------------------------------------

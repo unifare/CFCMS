@@ -32,16 +32,18 @@
  *
  *   1. `settings` row `cfpress.features` for this site (set from the admin)
  *   2. `env.<varName>` from `wrangler.jsonc` `vars` (set at deploy time)
- *   3. the switch's `defaultOn` (both switches default to off)
+ *   3. the switch's `defaultOn` (every switch defaults to off)
  *
  * ## Failure policy
  *
  * Every step is wrapped. A switch that cannot be resolved reads as **off**,
- * which is the safe direction for both consumers: the KV mirror is skipped and
- * worker themes fall back to the declarative renderer. Neither degrades the
- * site. The runtime path is deliberately forgiving because it is on the
- * critical path of every page render, while each consumer still requires an
- * explicit "on" before it does anything.
+ * which is the safe direction for all three consumers: the KV mirror is
+ * skipped, worker themes fall back to the declarative renderer, and the
+ * interface-language menu keeps offering every language the platform knows
+ * (the documented decoupling of UI language from content language, §2.4).
+ * None of them degrades the site. The runtime path is deliberately forgiving
+ * because it is on the critical path of every page render, while each consumer
+ * still requires an explicit "on" before it does anything.
  *
  * A settings row that is present but does not mention this switch (because it
  * was saved before the switch existed) falls through to step 2, not to the
@@ -102,6 +104,12 @@ export const FEATURE_SWITCHES: readonly FeatureSwitch[] = [
     varName: "CFPRESS_THEME_RUNTIME_WORKER",
     defaultOn: false,
     label: "Run theme Workers in the sandbox (requires a paid plan)",
+  },
+  {
+    key: "ui_locale_follow_site",
+    varName: "CFPRESS_UI_LOCALE_FOLLOW_SITE",
+    defaultOn: false,
+    label: "Offer only this site's languages in the admin interface-language menu",
   },
 ] as const;
 

@@ -89,9 +89,10 @@ a81e5e0  Re-key tenant audit verdicts after the mobai batch
 
 **批次 11（`0aa6ed6`，平台功能开关）**：`src/shared/features.ts` 单一定义
 （`FEATURE_SWITCHES`：key/varName/defaultOn/label），优先级 站点 settings 行 →
-`wrangler.jsonc` vars → `defaultOn`，解析不了=关。两个开关都默认关：
+`wrangler.jsonc` vars → `defaultOn`，解析不了=关。三个开关都默认关：
 `cache_mirror_kv`（KV 写入镜像）、`theme_runtime_worker`（主题 Worker 沙箱，
-**检查必须在绑定之前**）。后台 Tools → Features 屏 + `GET/POST /api/v1/features`。
+**检查必须在绑定之前**）、`ui_locale_follow_site`（**打开**后后台界面语言菜单只列本站启用的
+语言；默认关=维持 §2.4 的解耦）。后台 Tools → Features 屏 + `GET/POST /api/v1/features`。
 规则 52–55。
 
 **批次 12（写入路径修复 + journal 主题）**：三个「200 + 内容错」真缺陷——

@@ -1,11 +1,18 @@
 /**
  * Screen: Features — platform capability switches.
  *
- * Two switches, both backed by a paid Cloudflare feature and both **off by
- * default**:
+ * Three switches, all **off by default**:
  *
- *   cache_mirror_kv        mirror the content-cache version into KV
- *   theme_runtime_worker   run `runtime: "worker"` themes in the sandbox
+ *   cache_mirror_kv         mirror the content-cache version into KV
+ *   theme_runtime_worker    run `runtime: "worker"` themes in the sandbox
+ *                           (needs a paid plan + the `worker_loaders` binding)
+ *   ui_locale_follow_site   offer only this site's languages in the admin
+ *                           interface-language menu
+ *
+ * The first two gate a paid Cloudflare feature; the third changes a documented
+ * default (§2.4 decouples the interface language from the site's languages, so
+ * an English-only site whose owner reads Chinese still offers Chinese).
+ * Turning it on is how an operator says "not here".
  *
  * Three things this screen refuses to hide:
  *
@@ -15,8 +22,8 @@
  *     something the operator can change here — so the source is labelled on
  *     every row and "Reset to inherited" is offered when a site overrides.
  *
- *  2. **What happens when it is off.** "Off" is not "broken": both features
- *     degrade to a working fallback. The description says which fallback,
+ *  2. **What happens when it is off.** "Off" is not "broken": every feature
+ *     degrades to a working fallback. The description says which fallback,
  *     because a switch whose consequence is invisible gets flipped blindly.
  *
  *  3. **Consequences that cost money.** `theme_runtime_worker` needs
@@ -83,10 +90,11 @@ export default async function features(c) {
     crumbs: [{ label: "Tools" }, { label: "Features" }],
   })}
   <div class="panel" style="margin-bottom:1rem">
-    <div class="card-desc">These switches are stored per site and take effect on the next request — no redeploy. A site with no stored value inherits the wrangler config, then the platform default. Both default to <b>off</b>.</div>
+    <div class="card-desc">These switches are stored per site and take effect on the next request — no redeploy. A site with no stored value inherits the wrangler config, then the platform default. All default to <b>off</b>.</div>
   </div>
   ${rows || `<div class="panel"><div class="empty">No feature switches are declared.</div></div>`}
-  <p class="muted text-sm">Turning <code>cache_mirror_kv</code> off stops the mirror being written. Values already mirrored stay readable, so switching it off never orphans cached entries — and switching it on cannot resurrect a stale one, because the authoritative version lives in the database either way.</p>`;
+  <p class="muted text-sm">Turning <code>cache_mirror_kv</code> off stops the mirror being written. Values already mirrored stay readable, so switching it off never orphans cached entries — and switching it on cannot resurrect a stale one, because the authoritative version lives in the database either way.</p>
+  <p class="muted text-sm"><code>ui_locale_follow_site</code> off is the platform default: the interface-language menu offers every language the platform knows, so an English-only site whose owner reads Chinese can still read the admin in Chinese. Turning it on narrows that menu to the languages this site serves — and with it the set the server will accept, because the menu and the validation set are one definition.</p>`;
 }
 
 async function saveFeature(key, value) {

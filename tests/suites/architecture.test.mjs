@@ -698,7 +698,7 @@ const EXPECTED_SCREENS = [
 
 /** The switch keys the platform ships. Pinned so deleting or renaming one is a
  *  deliberate edit here rather than a silent removal from the admin. */
-const FEATURE_SWITCH_KEYS_EXPECTED = ["cache_mirror_kv", "theme_runtime_worker"];
+const FEATURE_SWITCH_KEYS_EXPECTED = ["cache_mirror_kv", "theme_runtime_worker", "ui_locale_follow_site"];
 check(
   "ALLOWED_ADMIN_SCREENS contains exactly the pinned set",
   JSON.stringify([...allowedScreens].sort()) === JSON.stringify([...EXPECTED_SCREENS].sort()),
@@ -752,7 +752,7 @@ check(
   `parsed ${declaredSwitches.length} of ${FEATURE_SWITCH_KEYS_EXPECTED.length}: ${declaredSwitches.map((s) => s.key).join(", ")}`
 );
 check(
-  "both switches default to off",
+  "every switch defaults to off",
   declaredSwitches.length > 0 && declaredSwitches.every((s) => s.defaultOn === false),
   declaredSwitches.filter((s) => s.defaultOn).map((s) => `${s.key}=on`).join(", ")
 );
