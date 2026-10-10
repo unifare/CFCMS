@@ -1,8 +1,9 @@
 # 多站点隔离 / 用户隔离 / 后台隐身 / 设置分两级 —— 实施方案（批次 A–F）
 
-> 状态：**批次 A 已完成并实测绑定**（`cfpress.test` / `shop.cfpress.test` / `de.cfpress.test`
-> 三个域名经 dev server 各自命中 default / shop-demo / de-demo；hosts 改动在标记块内、已自动备份）。
-> 其余批次待做：B 设置分两级 → C 后台隐身 → D 前台会员 → E staff 按站点 → F 收尾。
+> 状态：**批次 A（hosts/域名绑定）与 B（设置分两级）已完成**。
+> A：三个域名经 dev server 各自命中 default / shop-demo / de-demo，hosts 改动在标记块内、已自动备份。
+> B：`platform_settings` + `SETTING_DEFS` + 唯一读取阶梯 + 设置屏两栏 + `platform.manage`。
+> 其余批次待做：C 后台隐身（消费 admin.path）→ D 前台会员 → E staff 按站点 → F 收尾。
 > 原则沿用本仓库既有纪律：每批独立可交付、独立验证、**改完必须 commit**；
 > 新增守卫必须反向验证；规则三处同步；新表必须过 `contract/schema.ts` 两轴分类。
 
