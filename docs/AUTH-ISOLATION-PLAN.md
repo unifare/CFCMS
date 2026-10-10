@@ -1,4 +1,4 @@
-# 多站点隔离 / 用户隔离 / 后台隐身 —— 实施方案（批次 A–E）
+# 多站点隔离 / 用户隔离 / 后台隐身 / 设置分两级 —— 实施方案（批次 A–F）
 
 > 状态：**方案，待确认批次划分后动工**。
 > 原则沿用本仓库既有纪律：每批独立可交付、独立验证、**改完必须 commit**；
@@ -19,6 +19,7 @@
 | 权限 | `can()`：`role === "admin"` 直接 `true`；否则查 `role_permissions`（**install 级**，无站点维度） | **A 站的 admin 天然能管 B 站** —— 这是"用户隔离"最大的洞 |
 | 前台用户 | **完全没有**：无 member 表、无前台会话、无登录/注册、主题无登录部件 | 需要从零建，但因此可以一开始就做对 |
 | 防爆破 | **没有任何限流/锁定**（全库无 rate limit / attempt / lockout） | 登录端点可被无限尝试 |
+| 设置 | `settings` **只有站点级**（`UNIQUE(site_id,key)`）；**没有 facade**，读写内联在 `src/api.ts` 十几处；`plugin/runtime.ts:19` 的注释记录过一次同款事故（"`UPDATE settings … WHERE key=?` 会重写**每个**站点"）。现有键全部是站点级：`site.title` / `site.description` / `seo.*` / `theme.active` / `cfpress.features` / `i18n.defaultLocale` / `admin.menu.custom` | **没有平台级设置**，`admin.path` 无处安放；也没有"键属于哪一层"的声明 |
 | 域名 | `sites.host` 已有列；本地没有任何测试域名绑定 | 需要改 hosts（系统级操作） |
 
 ---
@@ -27,13 +28,52 @@
 
 | # | 决定 | 我的建议 | 理由 |
 |---|---|---|---|
-| D1 | 后台前缀的作用域 | **install 级**（一处），存 `settings(site_id='*', key='admin.path')` | 后台是一个管理面，不是站点内容；`site_id='*'` 是本仓库已有先例（`admin_menu_registry` 的插件行，规则 32），不必新表 |
+| D1 | 后台前缀存哪 | **新表 `platform_settings`**（install 级），`admin.path` 是它的第一个键 | `settings` 是站点级且 `UNIQUE(site_id,key)`——用 `site_id='*'` 是给一张**声明为站点级**的表开后门，`_schema-scope` 的两轴模型会跟着变脏。平台级就该有自己的表（§2.5） |
 | D2 | staff 用户模型 | **install 级身份 + 按站点角色**（WordPress multisite 式）：身份在 `site_users`，新增 `site_users_sites(user_id, site_id, role)` | 一个人一个账号即可管理多个站点；隔离的是**能力**而不是身份。彻底每站点一套用户会让 staff 在每个站重复注册，且丢失"同一个作者跨站写作" |
 | D3 | 前台会员模型 | **天然按站点**：`members(site_id, …)`，A 站注册的账号在 B 站不存在 | 前台用户的隔离就应该是数据级的，不是角色级的 |
 | D4 | 旧后台路径的行为 | **404**，不是 301/302 | 重定向会把新路径泄露给扫描器 |
 | D5 | 测试域名后缀 | **`.test`**（RFC 6761 保留给测试，永不解析到公网） | `.local` 会被 mDNS 抢答，Linux/macOS 上行为不一致 |
 
 其余默认值（可改）：三个测试站点与域名 —— `cfpress.test`（default）、`shop.cfpress.test`（shop）、`de.cfpress.test`（de）。
+
+---
+
+## 1b. 设置分两级（这是 D1 的地基，单独成批）
+
+**现状的问题**：`settings` 只有一层，而系统确实存在两层设置。今天所有键都恰好是站点级的
+（`site.title` / `seo.*` / `theme.active` / `cfpress.features` / `i18n.defaultLocale`），
+所以"没有平台层"看不见——但后台前缀、会员注册开关、默认站点语言这些**天生是平台级**的键
+一旦出现，就只能在一张站点级的表里开后门。
+
+**设计**（沿用本仓库"声明 + 单一权威 + 派生"的既有形状）：
+
+1. **新表 `platform_settings(key, value, autoload)`** —— `tenant: "platform"`（无 `site_id`，
+   与 `theme_installs` 同类），语言中立。
+2. **`SETTING_DEFS`** —— 每个设置键的**唯一权威声明**（放在 `src/platform/settings.ts`）：
+   `key` / `scope`（`platform` \| `site`）/ 类型 / 默认值 / 是否敏感（设置屏是否回显）。
+   **每个键必须声明 scope**，未声明的键 → 架构套件红。这是"加一个设置键忘了说它属于哪一层"
+   的机制化，与 `onSiteDelete` 同款。
+3. **读取阶梯只有一份定义**：`getSetting(env, siteId, key)`：
+   - `scope: "platform"` → 只读 `platform_settings` → 声明的默认值
+   - `scope: "site"` → 只读 `settings(site_id)` → 声明的默认值
+   - `scope: "site"` 且声明 `inherit: true` → 站点值 → 平台值 → 声明的默认值
+   **不做隐式跨层回退**：未声明的组合不存在，避免"同一个问题两份答案"（规则 23）。
+4. **写入只走 facade**：`setSetting(env, siteId, key, value)` 按 `SETTING_DEFS[key].scope`
+   决定写哪张表，**拒绝写未声明的键**。`src/api.ts` 里十几处内联 SQL 全部收口到这里。
+   `_tenant-query-audit.mjs` 会把残留的直接读写报成 `NEW`，逼着逐条裁决或收口。
+5. **设置屏拆两栏**：「平台设置」（新增能力 `platform.manage`，仅平台管理员）与
+   「本站点设置」（`settings.manage`）。改后台前缀的入口就在平台设置栏。
+6. **迁移**：建表 + 现有站点键**原位不动**（它们全是 `site` 级，无需搬家）；
+   `platform_settings` 初始为空，键按需出现。
+
+**验收（具名断言 + 注入场景）**：
+- `architecture.test.mjs`：每个被读写的设置键都声明了 scope；`platform_settings` 存在且是
+  platform 级；`getSetting` 的阶梯只此一处（不许第二份定义，同规则 70 的做法）。
+- `_tenant-query-audit.mjs`：`settings` 的直接读写应归零或逐条有裁决。
+- `admin-contract`：平台键改了、站点键不动；`site.manage` 之外的角色改平台键 → 403。
+- 注入：直接对 `settings` 写一个未声明键 → 红。
+
+**这一批必须在「后台隐身」之前做**：`admin.path` 需要平台级设置先存在。
 
 ---
 
@@ -97,25 +137,36 @@
 - **验收**：`./scripts/cfpress.sh hosts --verify` 全绿；浏览器访问 `http://shop.cfpress.test:47913/` 命中 shop；hosts 文件在改动前后 diff 只差标记块。
 - **改动面**：`scripts/`、`seed:demo`（站点部分）、`multisite.test.mjs`、`docs/`。
 
-### 批次 B —— 后台隐身：前缀可配置 + cookie 收紧
-- **B1（路由与 cookie）**：`admin.path` 设置（`site_id='*'`）+ memo；`index.ts` 按前缀服务 SPA 与后台 API；旧路径 404；cookie 改名 `cfpress_admin` 并 `Path=<前缀>`；登录端点搬到后台前缀下；**登录限流**。
-- **B2（SPA base）**：`index.html` 三处路径、`state.js` 的 `/api/v1/` 改为服务端注入的 base；真实浏览器验收。
+### 批次 B —— 设置分两级：`platform_settings` + 唯一读取阶梯
+- **做什么**：新表 `platform_settings`；`SETTING_DEFS`（每键声明 scope / 类型 / 默认 / 敏感）；
+  `getSetting` / `setSetting` facade，并把 `src/api.ts` 十几处内联 SQL 全部收口；
+  设置屏拆「平台设置 / 本站点设置」两栏；新增能力 `platform.manage`；迁移建表。
+- **验收**：`architecture.test.mjs` 断言"每个被读写的键都声明了 scope" + "阶梯只此一处"；
+  `_tenant-query-audit.mjs` 对 `settings` 的直接读写归零（或逐条裁决）；
+  `admin-contract` 平台键与站点键互不影响、无 `platform.manage` 改平台键 → 403；
+  注入：对 `settings` 写一个未声明键 → 红。
+- **改动面**：迁移、`contract/schema.ts`（新表两轴分类）、新模块 `src/platform/settings.ts`、
+  `src/api.ts`、`admin-spa`、注入器。
+
+### 批次 C —— 后台隐身：前缀可配置 + cookie 收紧
+- **C1（路由与 cookie）**：`admin.path`（`platform_settings`，见批次 B）+ memo；`index.ts` 按前缀服务 SPA 与后台 API；旧路径 404；cookie 改名 `cfpress_admin` 并 `Path=<前缀>`；登录端点搬到后台前缀下；**登录限流**。
+- **C2（SPA base）**：`index.html` 三处路径、`state.js` 的 `/api/v1/` 改为服务端注入的 base；真实浏览器验收。
 - **验收**：`/{旧路径}` → 404；`/{新路径}` 可用；`/{新路径}/api/v1/auth/login` 可登录；**旧路径下的资产请求也 404**；未登录访问 `/{新路径}` 只见登录页；连续 5 次错密码触发限流；前台页面响应**不含** `Set-Cookie: cfpress_admin`。
 - **改动面**：`src/index.ts`、`src/api.ts`、`src/platform/auth.ts`、`public/admin/*`、`admin-contract`、`admin-spa`、注入器场景、真实浏览器验收。
 
-### 批次 C —— 前台会员（与后台完全分离）
-- **C1（数据与 API）**：`members` + `member_sessions` 两张新表（过 `_schema-scope` 两轴分类 + `onSiteDelete: purge`）；`/api/v1/front/auth/{login,register,logout}` 与 `/api/v1/front/me`；`requireMember(env, request, siteId)`。
-- **C2（主题）**：`login`/`register` 模板部件、`member` 作用域进模板、登出动作；中英词典。
+### 批次 D —— 前台会员（与后台完全分离）
+- **D1（数据与 API）**：`members` + `member_sessions` 两张新表（过 `_schema-scope` 两轴分类 + `onSiteDelete: purge`）；`/api/v1/front/auth/{login,register,logout}` 与 `/api/v1/front/me`；`requireMember(env, request, siteId)`。
+- **D2（主题）**：`login`/`register` 模板部件、`member` 作用域进模板、登出动作；中英词典。
 - **验收（具名断言 + 注入场景）**：member cookie 打 `requireAdmin` 端点 → 401；admin cookie 打 `/front/*` → 401；A 站 member 在 B 站登录失败；注册开关关闭时 403；`_schema-scope` 对新表两轴分类与真库一致。
 - **改动面**：迁移、`contract/schema.ts`、`src/platform/members.ts`、`src/api.ts`、主题模板与词典、`theme-default.test.mjs`、注入器。
 
-### 批次 D —— 后台用户按站点隔离
-- **D1（权限接线）**：`site_users_sites` 表 + 迁移平移；`can(env,user,perm,siteId)` 站点感知；**全部** `requirePermission` 调用点补 `siteId`（先统计数量）+ 一条架构守卫强制。
-- **D2（UI）**：站点切换器按角色过滤；`users` 屏的站点-角色编辑；中英词典。
+### 批次 E —— 后台用户按站点隔离
+- **E1（权限接线）**：`site_users_sites` 表 + 迁移平移；`can(env,user,perm,siteId)` 站点感知；**全部** `requirePermission` 调用点补 `siteId`（先统计数量）+ 一条架构守卫强制。
+- **E2（UI）**：站点切换器按角色过滤；`users` 屏的站点-角色编辑；中英词典。
 - **验收**：A 站 editor 打 B 站 `content.write` → 403；`superadmin` 全站；`site_users.role` 平移后旧行为不回归；跨站点列表互不可见。
 - **改动面**：迁移、`contract/schema.ts`、`src/platform/permissions.ts`、`src/api.ts`（所有调用点）、`admin-spa`、`admin-contract`、注入器。
 
-### 批次 E —— 契约与守卫收尾
+### 批次 F —— 契约与守卫收尾
 - `CHANGE-CONTRACT.md` 新增三个维度（**前台/后台分离**、**后台前缀隐身**、**每站点角色**）+ 交织矩阵补行；`AGENTS.md` DoD 同步；`_schema-scope` 新表两轴；注入器场景；`_residue-guard` 跑一遍确认无残留。
 
 ---
@@ -125,13 +176,15 @@
 ```
 A（hosts + 域名）          最小、独立、不碰鉴权；做完立刻能验证 host 路由
    ↓
-B（后台隐身）              依赖 A：域名绑好后才能验证"旧路径在某些域下也 404"
+B（设置分两级）            地基：C 的 admin.path 需要平台级设置先存在
    ↓
-C（前台会员）              与 B 都动 index.ts 路由，分开做降低冲突；模型先立起来
+C（后台隐身）              依赖 A（域名绑好后才能验证"旧路径在某些域下也 404"）+ B
    ↓
-D（staff 按站点）          依赖 C 的按站点身份模型 + B 的 cookie 命名
+D（前台会员）              与 C 都动 index.ts 路由，分开做降低冲突；模型先立起来
    ↓
-E（契约与守卫收尾）
+E（staff 按站点）          依赖 D 的按站点身份模型 + C 的 cookie 命名
+   ↓
+F（契约与守卫收尾）
 ```
 
 A 不碰任何鉴权代码，是最安全的第一步；B 与 C 都在 `index.ts` 里加路由分支，**合并在一起做会互相干扰**，所以拆开。
@@ -163,6 +216,8 @@ A 不碰任何鉴权代码，是最安全的第一步；B 与 C 都在 `index.ts
 | 批 | 单元/契约 | 真实浏览器 | 反向验证 |
 |---|---|---|---|
 | A | `multisite`（host 路由 ×3） | 三个域名各命中对应站 | hosts 工具：非提权/坏标记块/重复运行 |
+| B | `architecture`（键必声明 scope + 阶梯唯一）、`admin-contract`（平台键/站点键互不影响、403）、`_tenant-query-audit`（settings 直读写归零） | 设置屏两栏，平台栏无 `platform.manage` 不可改 | 注入：写未声明的键 |
+| C | `admin-contract`（路径、404、cookie、限流）、`admin-spa`（base） | 旧路径 404、新路径可用、限流触发、前台不带后台 cookie | 注入：硬编码 `/admin`、cookie `Path=/` |
 | B | `admin-contract`（路径、404、cookie、限流）、`admin-spa`（base） | 旧路径 404、新路径可用、限流触发、前台不带后台 cookie | 注入：硬编码 `/admin`、cookie `Path=/` |
 | C | `admin-contract`（member 401/403）、`_schema-scope`（新表）、`theme-default`（部件） | 前台登录/注册/登出、A 站 member ≠ B 站 | 注入：member 会话当 admin 用 |
 | D | `admin-contract`（跨站点 403）、`architecture`（siteId 接线守卫） | 切换器按角色过滤 | 注入：`requirePermission` 丢 siteId |
