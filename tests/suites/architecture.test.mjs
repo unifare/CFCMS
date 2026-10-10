@@ -2365,12 +2365,40 @@ section("The schema declaration covers the real database (§10 rules 41–44)");
     dupTables
   );
 
+  // Every site-scoped table must also say what happens to **its rows** when the
+  // site is deleted. `deleteSite()` walks `PURGE_ON_SITE_DELETE`, derived from
+  // this declaration, so an entry without a policy is a table whose rows
+  // silently survive the site — which is exactly how a deleted site's admin
+  // menus and generated-table mappings kept showing up in the admin. Same shape
+  // as "every entry states a tenant scope" above: a declaration is only useful
+  // if it is total.
+  const siteLines = entryLines.filter((l) => /tenant:\s*"site"/.test(l));
+  const withoutPolicy = siteLines.filter((l) => !/onSiteDelete:\s*"(?:purge|retain)"/.test(l));
+  check(
+    "every site-scoped table declares an onSiteDelete policy",
+    siteLines.length > 0 && withoutPolicy.length === 0,
+    `${siteLines.length} site-scoped entries, ${withoutPolicy.length} without a policy: ` +
+      withoutPolicy.map((l) => l.match(/table:\s*"([^"]+)"/)?.[1]).join(", ")
+  );
+  // Non-vacuity: a policy field that is always the same value would pass the
+  // check above while deciding nothing.
+  const purgeCount = entryLines.filter((l) => /onSiteDelete:\s*"purge"/.test(l)).length;
+  const retainCount = entryLines.filter((l) => /onSiteDelete:\s*"retain"/.test(l)).length;
+  check(
+    "both delete policies are actually used (non-vacuity)",
+    purgeCount > 0 && retainCount > 0,
+    `${purgeCount} purge / ${retainCount} retain`
+  );
+
   // The derived exports must be derived. If someone hand-writes `TENANT_TABLES`
   // it will drift from `PLATFORM_SCHEMA` on the next edit, and the collection
   // script will agree with whichever it happens to read.
   for (const [name, filter] of [
     ["TENANT_TABLES", '"site"'],
     ["PLATFORM_TABLES", '"platform"'],
+    // `deleteSite()` walks this one, so a hand-written copy would silently
+    // disagree with the declaration about which rows a deleted site leaves.
+    ["PURGE_ON_SITE_DELETE", '"site"'],
   ]) {
     const derivedFrom = new RegExp(
       `export const ${name}\\s*=\\s*PLATFORM_SCHEMA[\\s\\S]{0,120}?tenant\\s*===\\s*${filter}`

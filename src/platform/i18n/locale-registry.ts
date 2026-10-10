@@ -49,8 +49,13 @@ const CODE_RE = /^[a-z]{2}(?:-[A-Za-z]{2})?$/;
  * Terminal fallback, used only when the dictionary itself is empty — i.e. a
  * database so broken that even `locales` has no rows. It exists so callers get
  * a usable string instead of `undefined`; it is not a policy.
+ *
+ * **Exported so it stays the only one.** A second `"en"` literal somewhere else
+ * is a second answer to "what do we say when we know nothing", and the two will
+ * drift (rule 23). `tests/tools/_locale-literal.mjs` fails on a new literal
+ * outside the i18n layer for exactly this reason.
  */
-const TERMINAL_LOCALE = "en";
+export const TERMINAL_LOCALE = "en";
 
 export function isLocaleCode(code: unknown): boolean {
   return typeof code === "string" && CODE_RE.test(code);

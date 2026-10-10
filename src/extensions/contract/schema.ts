@@ -67,25 +67,40 @@
  *           - `{ kind: "i18n" }`    — this IS an `X_i18n` sidecar
  *           Note: sidecar tables have no `site_id`; their scope is inherited
  *           from the parent row they point at via `row_id`.
+ * `onSiteDelete`: what happens to **this site's rows** when the site itself is
+ *           deleted. Required on every `tenant: "site"` entry.
+ *           - `"purge"` — per-site config or registry: it means nothing without
+ *             the site, so `deleteSite()` removes it. A leftover
+ *             `admin_menu_registry` row for a deleted site is a menu that
+ *             appears in the admin and cannot be opened.
+ *           - `"retain"` — content, media or audit history: the rows become
+ *             unreachable (nothing resolves the deleted site) but are **not**
+ *             destroyed. Deleting a site must not destroy an author's work —
+ *             the same policy a theme switch follows.
+ *           ⚠️ The requirement is the point. A new site-scoped table that does
+ *           not declare a policy fails `architecture.test.mjs`, so "we deleted
+ *           a site and its registry rows are still there" cannot happen again
+ *           by omission. The list `deleteSite()` walks is *derived from here*,
+ *           so there is no second place to forget.
  */
 export const PLATFORM_SCHEMA = [
   // -- tenant-scoped, language-neutral ---------------------------------------
-  { table: "admin_menu_registry", tenant: "site", locale: null, note: "menus are per site; plugin rows use site_id='*' (rule 32)" },
-  { table: "field_defs", tenant: "site", locale: null, note: "post-type field definitions are per site" },
-  { table: "menu_items", tenant: "site", locale: { kind: "column" }, note: "nav items are translated in place (locale column)" },
-  { table: "menus", tenant: "site", locale: null, note: "menu containers; items carry the locale" },
-  { table: "post_types", tenant: "site", locale: null, note: "CPT registration is per site (theme activation differs per site)" },
-  { table: "posts", tenant: "site", locale: null, note: "content language is expressed by lang_group + post_translations" },
-  { table: "redirects", tenant: "site", locale: null, note: "redirects are per site" },
-  { table: "rewrites", tenant: "site", locale: null, note: "rewrite rules are per site" },
-  { table: "settings", tenant: "site", locale: null, note: "site settings (UNIQUE(site_id,key))" },
-  { table: "site_locales", tenant: "site", locale: null, note: "which languages this site serves" },
-  { table: "taxonomies", tenant: "site", locale: null, note: "taxonomy registration is per site" },
-  { table: "terms", tenant: "site", locale: null, note: "terms are per site" },
-  { table: "theme_blocks", tenant: "site", locale: null, note: "declared blocks are per site" },
-  { table: "theme_routes", tenant: "site", locale: null, note: "front-end routes are per site; the 404-on-theme-switch defect lived here" },
-  { table: "theme_table_defs", tenant: "site", locale: null, note: "logical→physical table map is per site" },
-  { table: "media_files", tenant: "site", locale: null, note: "site_id added in migration 0009; uploaded_by added in 0018 (NULL = uploaded before ownership existed, grandfathered visible site-wide); alt_text/title are language-neutral by design — one alt for every language, stated in the editor UI rather than silently assumed" },
+  { table: "admin_menu_registry", tenant: "site", locale: null, onSiteDelete: "purge", note: "menus are per site; plugin rows use site_id='*' (rule 32)" },
+  { table: "field_defs", tenant: "site", locale: null, onSiteDelete: "purge", note: "post-type field definitions are per site" },
+  { table: "menu_items", tenant: "site", locale: { kind: "column" }, onSiteDelete: "purge", note: "nav items are translated in place (locale column)" },
+  { table: "menus", tenant: "site", locale: null, onSiteDelete: "purge", note: "menu containers; items carry the locale" },
+  { table: "post_types", tenant: "site", locale: null, onSiteDelete: "purge", note: "CPT registration is per site (theme activation differs per site)" },
+  { table: "posts", tenant: "site", locale: null, onSiteDelete: "retain", note: "content language is expressed by lang_group + post_translations" },
+  { table: "redirects", tenant: "site", locale: null, onSiteDelete: "purge", note: "redirects are per site" },
+  { table: "rewrites", tenant: "site", locale: null, onSiteDelete: "purge", note: "rewrite rules are per site" },
+  { table: "settings", tenant: "site", locale: null, onSiteDelete: "purge", note: "site settings (UNIQUE(site_id,key))" },
+  { table: "site_locales", tenant: "site", locale: null, onSiteDelete: "purge", note: "which languages this site serves" },
+  { table: "taxonomies", tenant: "site", locale: null, onSiteDelete: "purge", note: "taxonomy registration is per site" },
+  { table: "terms", tenant: "site", locale: null, onSiteDelete: "purge", note: "terms are per site" },
+  { table: "theme_blocks", tenant: "site", locale: null, onSiteDelete: "purge", note: "declared blocks are per site" },
+  { table: "theme_routes", tenant: "site", locale: null, onSiteDelete: "purge", note: "front-end routes are per site; the 404-on-theme-switch defect lived here" },
+  { table: "theme_table_defs", tenant: "site", locale: null, onSiteDelete: "purge", note: "logical→physical table map is per site" },
+  { table: "media_files", tenant: "site", locale: null, onSiteDelete: "retain", note: "site_id added in migration 0009; uploaded_by added in 0018 (NULL = uploaded before ownership existed, grandfathered visible site-wide); alt_text/title are language-neutral by design — one alt for every language, stated in the editor UI rather than silently assumed" },
 
   // -- tenant-scoped via a parent (no local site_id, by design) --------------
   { table: "post_meta", tenant: "platform", derivedTenant: "post_id → posts.site_id", locale: { kind: "column" }, note: "custom post fields; scoped by the post they hang off, per language since 0019 (a category name is prose, not a number). '' = written before the dimension existed; the read ladder is own locale → site default → '' → any" },
@@ -103,7 +118,7 @@ export const PLATFORM_SCHEMA = [
   { table: "admin_sessions", tenant: "platform", locale: null, note: "session token → user; site is resolved per request, not per session" },
   { table: "admin_activity", tenant: "platform", locale: null, note: "audit log is install-wide" },
   { table: "role_permissions", tenant: "platform", locale: null, note: "role→permission matrix is install-wide (an explicit §9 decision)" },
-  { table: "i18n_overrides", tenant: "site", locale: { kind: "column" }, note: "UI-string overrides ARE per site AND per language — the one table that is both" },
+  { table: "i18n_overrides", tenant: "site", locale: { kind: "column" }, onSiteDelete: "purge", note: "UI-string overrides ARE per site AND per language — the one table that is both" },
   { table: "content_cache_versions", tenant: "platform", locale: null, note: "cache generation counters; bumped per site by key" },
   { table: "extension_versions", tenant: "platform", locale: null, note: "installed extension packages (theme/plugin zips)" },
   { table: "extension_capabilities", tenant: "platform", locale: null, note: "capability flags per installed extension" },
@@ -114,8 +129,8 @@ export const PLATFORM_SCHEMA = [
   { table: "theme_setting_defs", tenant: "platform", locale: null, note: "theme-declared setting schema, keyed by theme_name" },
   { table: "theme_settings", tenant: "platform", locale: null, note: "theme setting values, keyed (theme_name,key); config read only by the admin, not the front end" },
   { table: "shortcodes", tenant: "platform", locale: null, note: "registered shortcodes (platform-global registry)" },
-  { table: "widget_instances", tenant: "site", locale: { kind: "column" }, note: "sidebar widget placement; per site since 0020 (was install-wide — leaked across sites)" },
-  { table: "notification_log", tenant: "site", locale: null, note: "host-written send ledger: also the dedup store for ChannelMessage.dedupKey" },
+  { table: "widget_instances", tenant: "site", locale: { kind: "column" }, onSiteDelete: "purge", note: "sidebar widget placement; per site since 0020 (was install-wide — leaked across sites)" },
+  { table: "notification_log", tenant: "site", locale: null, onSiteDelete: "retain", note: "host-written send ledger: also the dedup store for ChannelMessage.dedupKey" },
 ] as const;
 
 /**
@@ -153,6 +168,17 @@ export const PLATFORM_TABLES = PLATFORM_SCHEMA
 /** Tables whose tenant scope is inherited through a parent row. */
 export const DERIVED_TENANT_TABLES = PLATFORM_SCHEMA
   .filter((t) => "derivedTenant" in t && t.derivedTenant)
+  .map((t) => t.table);
+
+/**
+ * Site-scoped tables whose rows `deleteSite()` removes.
+ *
+ * Derived from the declaration above, for the same reason `TENANT_TABLES` is:
+ * a hand-written list drifts, and the drift is invisible until someone deletes
+ * a site and finds its menus still in the admin.
+ */
+export const PURGE_ON_SITE_DELETE = PLATFORM_SCHEMA
+  .filter((t) => t.tenant === "site" && t.onSiteDelete === "purge")
   .map((t) => t.table);
 
 /** Tables that express language through a `locale` column. */

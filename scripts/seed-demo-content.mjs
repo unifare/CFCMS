@@ -24,16 +24,41 @@
  * category name is a word a reader sees. "Design" on a Chinese page is exactly
  * the half-translated page this seeder exists to make impossible.
  *
+ * ## Running it blind
+ *
+ * This script is meant to be safe to run at any time, on any database state —
+ * a fresh deploy, a re-deploy over existing content, or a second run right
+ * after the first. Three properties make that true, and all three are checked
+ * by the verification pass at the end rather than assumed:
+ *
+ *   1. **Idempotent** — every piece is written against a **fixed post id**, so
+ *      running it twice updates the same rows instead of duplicating them.
+ *   2. **Fresh-database safe** — it enables the languages it needs and creates
+ *      every piece it references; nothing has to exist beforehand.
+ *   3. **Verified, not just attempted** — after writing, it reads the content
+ *      back through the API *per language* and fetches the front page for each
+ *      seeded language. A seed that writes rows nobody can see is the failure
+ *      this pass exists to catch (`savePost` + `bumpContentCache`, a theme that
+ *      drops the fields, a language that never got enabled).
+ *
  * Local dev only. Usage: node scripts/seed-demo-content.mjs
  * Against a deployment: CFP_BASE=https://your.workers.dev node scripts/seed-demo-content.mjs
+ *
+ * `CFP_LOCALES` overrides which languages are seeded (`en,zh-CN` by default).
+ * A language with no authored content in this file is skipped rather than
+ * faked — adding a third language means adding its text, not editing a list.
  */
 const BASE = process.env.CFP_BASE || "http://127.0.0.1:47913";
 const USER = process.env.CFP_USER || "admin";
 const PASS = process.env.CFP_PASS || "change-me-now";
 const SITE = process.env.CFP_SITE || "default";
-/** The language this script seeds as the site default, and the second one. */
-const DEFAULT_LOCALE = "en";
-const SECOND_LOCALE = "zh-CN";
+/**
+ * The languages to seed. **Not** a hardcoded pair: the platform is meant to
+ * carry dozens, and the list a script assumes is the list it will keep.
+ * Order matters only for the log; the site's *default* language is whatever
+ * `site_locales.is_default` says, never "the first one here".
+ */
+const LOCALES = (process.env.CFP_LOCALES || "en,zh-CN").split(",").map((s) => s.trim()).filter(Boolean);
 
 const b = (type, text) => ({ type, attrs: { text } });
 // `core/image` is the one block whose attrs are not `{text}` — the renderer
@@ -501,28 +526,41 @@ if (login.status >= 400) {
 }
 console.log(`login ok  (${BASE}, site=${SITE})`);
 
-// A bilingual seed needs both languages *served*: `siteLocales()` filters on
-// `enabled = 1`, so a disabled `zh-CN` row means the theme is handed a
-// one-entry list and renders no switcher at all. The endpoint is idempotent
-// (enable, not toggle), and `is_default: false` keeps the site default alone.
-const enabled = await api(`i18n/locales${site}`, {
-  method: "POST",
-  body: JSON.stringify({
-    code: SECOND_LOCALE,
-    name: "Simplified Chinese",
-    native_name: "简体中文",
-    is_default: false,
-  }),
-});
-if (enabled.status >= 400) {
-  console.error("could not enable", SECOND_LOCALE, enabled.status, enabled.json);
-  process.exit(1);
+// A seed in N languages needs all N *served*: `siteLocales()` filters on
+// `enabled = 1`, so a disabled row means the theme is handed a shorter list and
+// renders no switcher for that language. The endpoint is idempotent (enable,
+// not toggle), and `is_default: false` leaves whatever the site already chose
+// as its default alone.
+//
+// The display names come from `Intl.DisplayNames`, not from a table here: a
+// hand-written `{ "zh-CN": "简体中文" }` is exactly the kind of list that stops
+// at the languages its author happened to know.
+// Only languages this file actually has text for. Enabling one we do not seed
+// would put an empty language into the site's switcher — a language that
+// renders a fallback page at HTTP 200 is worse than one that is not offered.
+const seeded = LOCALES.filter((l) => Object.values(CONTENTS).some((c) => c[l]));
+for (const code of LOCALES) {
+  if (!seeded.includes(code)) {
+    console.log(`skip  ${code} — no authored content in this file (add its text, not just its code)`);
+    continue;
+  }
+  let name = code, native = code;
+  try { name = new Intl.DisplayNames(["en"], { type: "language" }).of(code) || code; } catch { /* unknown tag */ }
+  try { native = new Intl.DisplayNames([code], { type: "language" }).of(code) || name; } catch { /* falls back to English */ }
+  const r = await api(`i18n/locales${site}`, {
+    method: "POST",
+    body: JSON.stringify({ code, name, native_name: native, is_default: false }),
+  });
+  if (r.status >= 400) {
+    console.error("could not enable", code, r.status, r.json);
+    process.exit(1);
+  }
+  console.log(`locale ${code} enabled  (${r.status}, ${name} / ${native})`);
 }
-console.log(`locale ${SECOND_LOCALE} enabled  (${enabled.status})`);
 
 let failures = 0;
 for (const [id, c] of Object.entries(CONTENTS)) {
-  for (const locale of [DEFAULT_LOCALE, SECOND_LOCALE]) {
+  for (const locale of seeded) {
     const v = c[locale];
     if (!v) continue;
     const r = await api(`${c.kind}/${id}${site}`, {
@@ -545,6 +583,55 @@ for (const [id, c] of Object.entries(CONTENTS)) {
     console.log(`${okFlag ? "ok  " : "FAIL"} ${locale.padEnd(5)} ${id} (${v.title}) -> ${r.status}${okFlag ? "" : " " + JSON.stringify(r.json)}`);
   }
 }
+console.log(`\n${Object.keys(CONTENTS).length} pieces × ${seeded.length} language(s) written, ${failures} failure(s).`);
 
-console.log(`\n${Object.keys(CONTENTS).length} pieces × 2 languages seeded, ${failures} failure(s).`);
-if (failures) process.exit(1);
+// ---------------------------------------------------------------------------
+// Verify — written ≠ readable. Read it back, per language, through both doors.
+// ---------------------------------------------------------------------------
+//
+// Everything above is "the write returned 2xx", which is not the same claim as
+// "a reader can see it": `savePost` can drop `meta` when the active theme does
+// not declare the field, a language can be written but left disabled, and the
+// front end can render a fallback page at HTTP 200. Those are the three ways a
+// blind re-deploy produces a site that looks seeded and is not.
+console.log("\nverify");
+let verifyFailures = 0;
+
+for (const locale of LOCALES) {
+  const expected = Object.entries(CONTENTS).filter(([, c]) => c[locale]);
+  if (!expected.length) continue;
+
+  // 1. The API agrees, for *this* language — the strong check. `?locale=` is
+  //    the filter the admin list uses, so a row that only exists in the
+  //    default language is invisible here even though the write said 200.
+  for (const kind of ["posts", "pages"]) {
+    const want = expected.filter(([, c]) => c.kind === kind);
+    if (!want.length) continue;
+    const list = await api(`${kind}${site}&locale=${encodeURIComponent(locale)}&limit=100`);
+    const rows = new Map((list.json?.items ?? []).map((r) => [r.id, r]));
+    for (const [id, c] of want) {
+      const row = rows.get(id);
+      const ok = row && row.title === c[locale].title;
+      if (!ok) {
+        verifyFailures++;
+        console.log(`  FAIL ${locale} ${kind}/${id} not readable (${row ? `title=${JSON.stringify(row.title)}` : "no row"})`);
+      }
+    }
+  }
+
+  // 2. The front end renders this language at all — the smoke check. A prefix
+  //    rather than the whole title, because a theme is free to truncate a card.
+  const home = await fetch(`${BASE}/${encodeURIComponent(locale)}`);
+  const html = await home.text();
+  const hits = expected.filter(([, c]) => html.includes(c[locale].title.slice(0, 20))).length;
+  if (home.status !== 200 || hits === 0) {
+    verifyFailures++;
+    console.log(`  FAIL ${locale} front page did not render the seeded content (HTTP ${home.status}, ${hits} title(s) found)`);
+  } else {
+    console.log(`  ok   ${locale} API + front page (${hits}/${expected.length} title(s) on the home page)`);
+  }
+}
+
+console.log(`\n${failures + verifyFailures} failure(s) (${failures} write, ${verifyFailures} verify).`);
+if (failures || verifyFailures) process.exit(1);
+console.log("Seed verified: every language readable through the API and rendered on its front page.");

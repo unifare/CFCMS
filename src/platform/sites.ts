@@ -226,20 +226,55 @@ export async function updateSite(
 }
 
 /**
- * Delete a site. The default site can never be deleted, and business data
- * itself is left untouched (rows are keyed by site_id and merely become
- * unreachable), matching the theme-switch policy.
+ * Delete a site.
+ *
+ * The default site can never be deleted. Everything else splits in two, and the
+ * split is **declared** rather than decided here:
+ *
+ *   - `"purge"` tables (`PURGE_ON_SITE_DELETE`) are per-site config and
+ *     registry — a menu, a route, a generated-table mapping. They mean nothing
+ *     without the site, and leaving them behind is not neutral: a leftover
+ *     `admin_menu_registry` row is a menu that shows up in the admin and cannot
+ *     be opened, and a leftover `theme_table_defs` row keeps declaring a table
+ *     for a site nobody can see.
+ *   - `"retain"` tables are content, media and audit history. Their rows become
+ *     unreachable (nothing resolves the deleted site) but are not destroyed —
+ *     deleting a site must not destroy an author's work, the same policy a
+ *     theme switch follows.
+ *
+ * ⚠️ **`purgeTables` is a required parameter, and that is the point.** The list
+ * is derived from `contract/schema.ts` (`PURGE_ON_SITE_DELETE`), where every
+ * site-scoped table has to declare what happens to its rows — and
+ * `architecture.test.mjs` fails if one does not. This function cannot import
+ * that declaration itself: `platform/` must not know about `extensions/` (rule
+ * 2), so the caller injects it, the same way the rest of the platform takes an
+ * interface rather than reaching for an implementation. Required, not optional,
+ * so a caller cannot forget to decide.
+ *
+ * It used to delete only the `sites` row and `theme.active`: the deleted site's
+ * theme-registry and admin-menu rows survived, which is how "I deleted the site
+ * and its menus are still listed" was possible.
+ *
+ * `settings` is in the purge list, which is what removes the site's
+ * `theme.active` row — that row is what theme uninstall checks per site, so
+ * leaving it would block the uninstall of a theme nobody can see or deactivate,
+ * surfacing as "still active on: <deleted site>" with no way out.
  */
-export async function deleteSite(env: Env, id: string): Promise<{ ok: true } | { error: string }> {
+export async function deleteSite(
+  env: Env,
+  id: string,
+  purgeTables: readonly string[],
+): Promise<{ ok: true } | { error: string }> {
   if (id === DEFAULT_SITE_ID) return { error: "the default site cannot be deleted" };
   const row = await env.DB.prepare("SELECT is_default FROM sites WHERE id=?").bind(id).first<any>();
   if (!row) return { error: "site not found" };
   if (row.is_default) return { error: "the default site cannot be deleted" };
   await env.DB.prepare("DELETE FROM sites WHERE id=?").bind(id).run();
-  // A deleted site must stop selecting a theme. `settings.theme.active` is what
-  // theme uninstall checks per site, so leaving the row behind would block the
-  // uninstall of a theme nobody can see or deactivate — the failure surfaces as
-  // "still active on: <deleted site>" with nothing the operator can do about it.
-  await env.DB.prepare("DELETE FROM settings WHERE site_id=? AND key='theme.active'").bind(id).run();
+  for (const table of purgeTables) {
+    // No `catch`: every one of these is a platform table created by a
+    // migration, so a failure here is a real failure and must be visible
+    // rather than leaving half a deletion behind (AGENTS.md, false-green #5).
+    await env.DB.prepare(`DELETE FROM ${table} WHERE site_id=?`).bind(id).run();
+  }
   return { ok: true };
 }

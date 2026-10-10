@@ -1,6 +1,6 @@
 import { Env } from "../shared/types";
 import { parseBlocks } from "../rendering/blocks";
-import { siteLocales, siteDefaultLocale } from "./i18n/locale-registry";
+import { siteLocales, siteDefaultLocale, TERMINAL_LOCALE } from "./i18n/locale-registry";
 import { resolveMetaByPost } from "./post-meta";
 
 export function esc(v:unknown){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!))}
@@ -54,7 +54,7 @@ export async function siteInfo(env:Env,siteId:string){return {title:await settin
  * placeholder glyph on first paint. Returning a ready-to-print string keeps
  * the template free of both problems.
  */
-export function readingTime(html:string, wpm=220, locale="en"){
+export function readingTime(html:string, wpm:number, locale:string){
   const text=String(html).replace(/<[^>]*>/g," ").replace(/&[a-z]+;|&#\d+;/gi," ");
   // Counting whitespace-delimited words reports "1 min read" for a long
   // Chinese article, because CJK text has no spaces. CJK characters are
@@ -87,7 +87,9 @@ export function formatDate(secs: unknown, locale: string): string {
   let fmt = dateFormatters.get(locale);
   if (!fmt) {
     try { fmt = new Intl.DateTimeFormat(locale, opts); }
-    catch { fmt = new Intl.DateTimeFormat("en", opts); }
+    // An unusable tag falls back to the platform's one terminal locale rather
+    // than to a second hardcoded "en" — one question, one answer (rule 23).
+    catch { fmt = new Intl.DateTimeFormat(TERMINAL_LOCALE, opts); }
     dateFormatters.set(locale, fmt);
   }
   return fmt.format(new Date(n * 1000));

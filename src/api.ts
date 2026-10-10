@@ -7,6 +7,7 @@ import { installedPlugins, installedThemes, seedBundledExtensions, capabilityLis
 import { unzipSync } from "fflate";
 import { validateManifest } from "./extensions/contract/validation";
 import { CAPABILITIES } from "./extensions/contract/capabilities";
+import { PURGE_ON_SITE_DELETE } from "./extensions/contract/schema";
 import { safeZipPath, sha256 } from "./extensions/security";
 import { createRevision, autosave } from "./platform/revisions";
 import { requirePermission, can } from "./platform/permissions";
@@ -1101,7 +1102,10 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
     }
     if (method === "DELETE") {
       if(!(await requirePermission(env,user,"settings.manage"))) return ok({error:"Forbidden"},403);
-      const r = await deleteSite(env, siteMatch[1]);
+      // `api.ts` is the composition root — the one place allowed to know every
+      // layer — so it is where the declared purge list is injected into the
+      // platform function (rule 2: `platform/` may not import `extensions/`).
+      const r = await deleteSite(env, siteMatch[1], PURGE_ON_SITE_DELETE);
       if ("error" in r) return ok({ error: r.error }, 400);
       await activity(env, user.id, "delete", "site", siteMatch[1]);
       return ok({ ok: true });

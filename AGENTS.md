@@ -8,6 +8,60 @@
 
 ---
 
+## 改动面清单（Definition of Done）—— **先读这一节**
+
+完整版与**交织矩阵**见 [`docs/CHANGE-CONTRACT.md`](docs/CHANGE-CONTRACT.md)。
+`docs/ARCHITECTURE.md` §10 是**历史教训目录**（踩过的坑）；那份契约是**要做的清单**。
+
+**铁律：任一「适用」维度未覆盖 = 没做完。** 不适用的维度要**写明为什么不适用**，
+不能默认跳过——本仓库所有「丢三拉四」都是这一条的反面：改动者心里只有 1–2 个维度，
+而系统有 17 个。
+
+动手前先过一遍，交付时逐条给出「做了 / 不适用（为什么）」：
+
+```
+ 1 分层          shared ← platform ← rendering ← extensions ← index.ts，只向右依赖
+ 2 租户          表有归属声明 + 查询带 site_id + 删站点不留注册表残留
+ 3 内容语言      lang_group + 每语言一行 + 每语言自己的 slug + 回退阶梯只一处
+ 4 界面语言      每个用户可见串走 t() + 中英两套 + 界面语言≠内容语言
+ 5 主题数据语言  tables[].language{} + 散文字段标 translatable + _i18n 永不 drop
+ 6 菜单语言      menu_items.locale（'' = 全语言，故意不跨语言回退）
+ 7 小工具语言    widget_instances.locale + 每次读取带 site_id
+ 8 URL/SEO       显式语言 404 不回退 + alternates/hreflang + per-locale feed/sitemap
+ 9 用户与权限    requireAdmin + capability + 越权 403 + 每用户偏好带 user_id
+10 扩展契约      每个声明都被消费 + validateManifest + 注册行 ≠ 安装
+11 hook/事件     DECLARABLE_HOOKS / DOMAIN_EVENTS（事件是事实，不是通道）
+12 渲染          只解释不执行 + CORE_BLOCKS 唯一声明 + include/section 配得上
+13 缓存          改内容/主题/设置之后 bumpContentCache
+14 后台 SPA      注册屏 + WINDOW_HANDLERS + 按服务端层级读字段 + URL + 桩载荷非空
+15 迁移          只增有序 + 改 PK 要重建表 + 遗留行不回填 + 新表进 schema
+16 测试与文档    规则三处同步 + 新套件进四张表 + 文档里写的路径必须存在
+17 部署          配置一份生成 + 主题随 assets + 新增声明要重新激活 + ps1 的 BOM
+```
+
+**最容易漏、也最贵的三条交织**（完整表见契约 §2）：
+
+- **加表 / 加字段** → ① `contract/schema.ts` 分类（租户 + 语言 + 理由）
+  ② 扩展表要写 `tables[].language{}` ③ **读它的每个查询带 `site_id`**
+  —— 不带 = 多站点串台，而**单站点安装测不出来**。
+- **加 / 改后台屏** → ① 每个串 `t()` 且中英齐 ② 内联 `onclick` 的 handler 登记进
+  `WINDOW_HANDLERS` ③ **桩载荷必须非空** —— 空载荷会让屏幕的行渲染代码从不执行，
+  少 import 一个标识符也能一路绿到浏览器（§12 第 15 种）。
+- **改内容保存路径** → ① `bumpContentCache` ② 每语言自己的 slug
+  ③ `meta` 按语言写（`resolveMetaByPost` 是唯一读阶梯）。
+
+**为「几十种语言」做准备**（今天 2 种，目标是几十种）：**不得**写 `locale === "en"`
+这类分支、不得把语言清单写死在数组里、不得用 `ORDER BY` 的第一个语言或 `MIN(locale)`
+当「站点默认语言」（站点默认只从 `site_locales.is_default` 读）。
+语言字面量只允许出现在 i18n 层，`node tests/tools/_locale-literal.mjs` 会拦，
+每条白名单都要写理由。
+
+**发现一个「以后每次都要做」的东西时**：写进契约 §1/§2/§3 + 这一节 +
+**尽量变成机器判据**（能断言的别留在文档里）+ **反向验证**它。
+只写文档不写判据 = 它会在下一次改动里消失。
+
+---
+
 ## 改代码前
 
 1. 跑 `npm test`，确认基线是绿的（**判据是 0 failures**；断言数会随套件增减变化）。
@@ -26,6 +80,9 @@
    **如果动了字段分类表（`PROSE_FIELD_TYPES` / `LANGUAGE_NEUTRAL_FIELD_TYPES`）
    或规则 41 的任一强制点，必须跑 `node tests/tools/_i18n-field-inject.mjs`** ——
    它注入 6 个缺陷、断言每个都真的变红（含"断言注入确实生效"与"还原也验证"）。
+   **任何与语言有关的逻辑（尤其"以后会有几十种语言"的假设）都要跑
+   `node tests/tools/_locale-literal.mjs`** —— 它拦 `locale === "xx"`、
+   `/^zh/i.test(locale)`、写死的语言清单，以及 i18n 层之外的任何语言字面量。
 6. 如果改了后台界面，跑 `node tests/suites/admin-spa.test.mjs`，并跑一次真实浏览器验收
    `node tests/tools/_i18n-browser.cjs` / `node tests/tools/_admin-menus-browser.cjs`
    （需要另开 `npx wrangler dev --port 47913 --ip 127.0.0.1`）。

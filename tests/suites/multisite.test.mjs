@@ -235,6 +235,10 @@ async function main() {
       "DELETE FROM site_locales WHERE site_id IN ('shop','de')",
       "DELETE FROM settings WHERE site_id IN ('shop','de')",
       "DELETE FROM content_cache_versions WHERE id IN ('content_version_shop','content_version_de')",
+      // The throwaway site's registry rows too, so an aborted run cannot leave
+      // them for the next one (the delete purges them, but it may not have run).
+      "DELETE FROM admin_menu_registry WHERE site_id='tmp'",
+      "DELETE FROM theme_table_defs WHERE site_id='tmp'",
       "DELETE FROM sites WHERE id IN ('shop','de','tmp')",
     ]) {
       try { sqlite.exec(sql); } catch { /* table may not exist yet */ }
@@ -637,10 +641,29 @@ async function main() {
     method: "POST", headers: { ...auth, "Content-Type": "application/json" },
     body: JSON.stringify({ id: "tmp", name: "Temp" }),
   });
+  // Give the throwaway site per-site **registry** rows before deleting it, so
+  // the delete has something to prove. A site's admin menus and its
+  // generated-table mappings are not content: leaving them behind shows up as a
+  // menu in the admin that cannot be opened, and a table declared for a site
+  // nobody can see. Which tables a delete purges is declared in
+  // `contract/schema.ts` (`onSiteDelete`), not decided here.
+  sqlite.prepare(
+    "INSERT INTO admin_menu_registry (id,site_id,owner_type,owner_name,menu_id,label,icon,screen,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+  ).run("amr_tmp", "tmp", "theme", "default", "tmp-menu", "Tmp", "file", "dashboard", 0, 0);
+  sqlite.prepare(
+    "INSERT INTO theme_table_defs (id,site_id,owner_type,owner_name,logical_name,table_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)"
+  ).run("ttd_tmp", "tmp", "theme", "default", "listing", "theme_default_listing", 0, 0);
+
   const delTmp = await req(worker, env, "/api/v1/sites/tmp", { method: "DELETE", headers: auth });
   check("non-default site deletes ok", delTmp.status, 200);
   const after = await (await req(worker, env, "/api/v1/sites", { headers: auth })).json();
   check("tmp site gone", after.items.some((s) => s.id === "tmp"), false);
+  check("deleting a site purges its admin-menu rows",
+    sqlite.prepare("SELECT COUNT(*) AS n FROM admin_menu_registry WHERE site_id='tmp'").get().n, 0);
+  check("deleting a site purges its generated-table mappings",
+    sqlite.prepare("SELECT COUNT(*) AS n FROM theme_table_defs WHERE site_id='tmp'").get().n, 0);
+  check("deleting a site purges its settings",
+    sqlite.prepare("SELECT COUNT(*) AS n FROM settings WHERE site_id='tmp'").get().n, 0);
 
   const upd = await req(worker, env, "/api/v1/sites/shop", {
     method: "PUT", headers: { ...auth, "Content-Type": "application/json" },

@@ -63,6 +63,12 @@ const BLOCK_FIELDS = join(ROOT, "public/admin/js/block-fields.js");
 const MEDIA_PICKER = join(ROOT, "public/admin/js/media-picker.js");
 const MEDIA_SCREEN = join(ROOT, "public/admin/js/screens/media.js");
 const CORE_PACK = join(ROOT, "src/platform/i18n/core-pack.ts");
+// Deleting a site walks `PURGE_ON_SITE_DELETE`, a list `contract/schema.ts`
+// derives from the per-table `onSiteDelete` policy. The platform function takes
+// that list as a required parameter (it may not import `extensions/`), so the
+// defect this scenario injects is "the caller called it with a list that loops
+// zero times" — the historical shape, verbatim.
+const SITES = join(ROOT, "src/platform/sites.ts");
 const PACKS = join(ROOT, "src/platform/i18n/packs.ts");
 const EDITOR_SCREEN = join(ROOT, "public/admin/js/screens/editor.js");
 const API = join(ROOT, "src/api.ts");
@@ -110,7 +116,7 @@ const SCENARIOS = [
     label: "a table is removed from the schema declaration",
     file: SCHEMA,
     before: [
-      '  { table: "rewrites", tenant: "site", locale: null, note: "rewrite rules are per site" },\n',
+      '  { table: "rewrites", tenant: "site", locale: null, onSiteDelete: "purge", note: "rewrite rules are per site" },\n',
     ],
     after: [""],
     runs: [["tests/tools/_schema-scope.mjs", "no table is missing from the schema declaration"]],
@@ -119,7 +125,7 @@ const SCENARIOS = [
     label: "a tenant-scoped table is misclassified as platform-global",
     file: SCHEMA,
     before: [
-      '{ table: "settings", tenant: "site", locale: null, note: "site settings (UNIQUE(site_id,key))" }',
+      '{ table: "settings", tenant: "site", locale: null, onSiteDelete: "purge", note: "site settings (UNIQUE(site_id,key))" }',
     ],
     after: [
       '{ table: "settings", tenant: "platform", locale: null, note: "site settings (UNIQUE(site_id,key))" }',
@@ -141,10 +147,10 @@ const SCENARIOS = [
     label: "the same table is declared twice",
     file: SCHEMA,
     before: [
-      '  { table: "menus", tenant: "site", locale: null, note: "menu containers; items carry the locale" },\n',
+      '  { table: "menus", tenant: "site", locale: null, onSiteDelete: "purge", note: "menu containers; items carry the locale" },\n',
     ],
     after: [
-      '  { table: "menus", tenant: "site", locale: null, note: "menu containers; items carry the locale" },\n' +
+      '  { table: "menus", tenant: "site", locale: null, onSiteDelete: "purge", note: "menu containers; items carry the locale" },\n' +
         '  { table: "menus", tenant: "platform", locale: null, note: "a contradictory second answer" },\n',
     ],
     runs: [["tests/suites/architecture.test.mjs", "no table is declared twice"]],
@@ -941,6 +947,36 @@ const SCENARIOS = [
     before: ["    widgetGroups(env, siteId, o.locale),"],
     after: ["    Promise.resolve({}),"],
     runs: [["tests/suites/architecture.test.mjs", "buildScope feeds the rendered widget groups into the template scope (rule 74b)"]],
+  },
+  // --- deleting a site purges its registry rows (contract: onSiteDelete) -----
+  {
+    // The historical shape, verbatim: `deleteSite()` deleted the `sites` row
+    // and the site's `theme.active` setting and stopped there. The deleted
+    // site's admin-menu rows and generated-table mappings survived, so the
+    // admin kept listing a menu for a site that no longer existed — and a
+    // `theme_table_defs` row for a site nobody can see kept declaring its
+    // generated tables. Which tables a delete purges is now **declared**
+    // (`onSiteDelete` in `contract/schema.ts`) and `deleteSite()` walks the
+    // list derived from it; calling it with a list that loops zero times must
+    // turn both assertions red.
+    label: "deleting a site leaves its registry rows behind",
+    file: SITES,
+    before: ["  for (const table of purgeTables) {"],
+    after: ["  for (const table of []) {"],
+    runs: [
+      ["tests/suites/multisite.test.mjs", "deleting a site purges its admin-menu rows"],
+      ["tests/suites/multisite.test.mjs", "deleting a site purges its generated-table mappings"],
+    ],
+  },
+  {
+    // The declaration half of the same guard. `onSiteDelete` is required on
+    // every site-scoped table; dropping it from one entry means the table's
+    // rows have no policy, and the architecture suite must name it.
+    label: "a site-scoped table does not declare what happens on site delete",
+    file: SCHEMA,
+    before: ['  { table: "admin_menu_registry", tenant: "site", locale: null, onSiteDelete: "purge", note:'],
+    after: ['  { table: "admin_menu_registry", tenant: "site", locale: null, note:'],
+    runs: [["tests/suites/architecture.test.mjs", "every site-scoped table declares an onSiteDelete policy"]],
   },
 ];
 
