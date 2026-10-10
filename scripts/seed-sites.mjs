@@ -42,8 +42,8 @@ const PASS = process.env.CFP_PASS || "change-me-now";
  */
 const SITES = [
   { id: "default", name: "Default Site", host: "cfpress.test" },
-  { id: "shop", name: "Shop", host: "shop.cfpress.test" },
-  { id: "de", name: "Deutsch", host: "de.cfpress.test" },
+  { id: "shop-demo", name: "Shop (demo)", host: "shop.cfpress.test" },
+  { id: "de-demo", name: "Deutsch (demo)", host: "de.cfpress.test" },
 ];
 
 let cookie = "";
