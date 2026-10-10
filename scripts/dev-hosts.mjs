@@ -58,8 +58,7 @@ const END = "# <<< cfpress-dev end";
 const BEGIN_RE = /^#\s*>>>?\s*cfpress-dev begin/i;
 const END_RE = /^#\s*<<<??\s*cfpress-dev end/i;
 
-/** The dev server's address as the operator would type it. */
-const devBase = `http://127.0.0.1:${PORT}`;
+/** The dev server's port; the hosts file maps names to addresses, not ports. */
 
 function openDb() {
   const dir = join(ROOT, ".wrangler", "state", "v3", "d1", "miniflare-D1DatabaseObject");
@@ -229,11 +228,19 @@ function cmdAdd(dryRun) {
   const w = writeHosts(HOSTS_PATH, next);
   if (w.error) { console.error(`\n${w.error}`); return 3; }
 
-  // Verify the write: the markers must be present exactly once.
+  // Verify the write: the block must contain exactly the domains we asked for.
+  // ⚠️ `splitBlock` counts only the lines *between* the markers (the markers
+  // themselves are consumed), so the right expectation is `sites.length` — not
+  // `sites.length + 2`. The first draft expected +2 and reported a write that
+  // had landed perfectly as a failure.
   const check = splitBlock(readFileSync(HOSTS_PATH, "utf8"));
   if (check.error) { console.error(check.error); return 1; }
-  if (check.block.length !== sites.length + 2) {
-    console.error(`write did not land as expected (${check.block.length} block lines)`);
+  const expectedLines = sites.map((s) => `127.0.0.1 ${s.host}`);
+  const landed = check.block.join(eol);
+  const matches = expectedLines.every((l) => landed.includes(l)) &&
+                  landed.split(eol).filter(Boolean).length === expectedLines.length;
+  if (!matches) {
+    console.error(`write did not land as expected (block has ${check.block.length} line(s))`);
     console.error(`restore from: ${bak.path}`);
     return 1;
   }
@@ -280,9 +287,13 @@ async function cmdVerify() {
     }
     // 2. Does the dev server answer *as that site*? `X-CFPress-Site` is the
     //    router's own answer, so this checks the mapping end to end.
+    //    The domain goes in the **URL**, not in a hand-set `Host` header: a
+    //    real visitor resolves the name and connects, and `fetch` is free to
+    //    rewrite a manually supplied Host — the first verify run reported
+    //    every domain as the default site for exactly that reason.
     let siteId = null, status = 0;
     try {
-      const res = await fetch(`${devBase}/`, { headers: { host: s.host } });
+      const res = await fetch(`http://${s.host}:${PORT}/`);
       status = res.status;
       siteId = res.headers.get("x-cfpress-site");
     } catch (e) {
