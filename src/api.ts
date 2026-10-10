@@ -828,7 +828,11 @@ async function mediaRowForWrite(
  * a live site takes the site down with it, and the 409 names the sites so the
  * operator knows what to switch first. `active` on `theme_installs` cannot
  * answer that (it is a global recomputed flag); `settings.theme.active` is the
- * per-site truth.
+ * per-site truth. The refusal is the authority for the *unforced* call; a
+ * `?force=1` DELETE is the operator's way out — it deactivates the theme on
+ * every occupying site (they fall back to the bundled default, which rule 66
+ * keeps renderable everywhere) and then removes it. A refusal without an exit
+ * is how "this theme cannot be deleted" gets believed.
  *
  * Order matters the same way it does for media: the registry row is what names
  * the generated tables, so the tables are dropped **while the mapping is still
@@ -837,7 +841,7 @@ async function mediaRowForWrite(
  * next listing, whereas files gone with the row still present is a theme the
  * admin believes exists and cannot load.
  */
-async function uninstallTheme(env: Env, userId: string, name: string) {
+async function uninstallTheme(env: Env, userId: string, name: string, force: boolean) {
   // A bundled theme has no R2 package to remove and its files come back with
   // the next deploy anyway; uninstalling it would only pretend to work.
   if((BUNDLED_THEMES as readonly string[]).includes(name)) return ok({error:`"${name}" ships with the product and cannot be uninstalled`},400);
@@ -845,7 +849,17 @@ async function uninstallTheme(env: Env, userId: string, name: string) {
   if(!row) return ok({error:"theme not found"},404);
   const active=await env.DB.prepare("SELECT site_id FROM settings WHERE key='theme.active' AND value=?").bind(name).all();
   const sites=((active.results as any[])??[]).map(r=>String(r.site_id));
-  if(sites.length) return ok({error:`still active on: ${sites.join(", ")}`},409);
+  if(sites.length && !force) return ok({error:`still active on: ${sites.join(", ")}`},409);
+  if(sites.length){
+    // Forced: the operator has said this theme goes. Repoint every occupying
+    // site to the bundled default — rule 66 keeps it installed and renderable
+    // everywhere, so the fallback is a site that still renders. Capability
+    // rows, menus, settings and generated tables are cleaned for *all* sites
+    // by the uninstall below; only the per-site selection needs a write here.
+    for(const s of sites){
+      await env.DB.prepare("UPDATE settings SET value='default' WHERE site_id=? AND key='theme.active'").bind(s).run().catch(()=>{});
+    }
+  }
 
   const defs=await env.DB.prepare("SELECT table_name, i18n_table FROM theme_table_defs WHERE owner_type='theme' AND owner_name=?").bind(name).all();
   for(const d of ((defs.results as any[])??[])){
@@ -1779,7 +1793,7 @@ async function routeApi(env: Env, request: Request): Promise<Response> {
   const td=path.match(/^extensions\/themes\/([^/]+)$/);
   if(td&&method==="DELETE"){
     if(!(await requirePermission(env,user,"extensions.manage"))) return ok({error:"Forbidden"},403);
-    return uninstallTheme(env,user.id,decodeURIComponent(td[1]));
+    return uninstallTheme(env,user.id,decodeURIComponent(td[1]),url.searchParams.get("force")==="1");
   }
   // Theme business-capability introspection
   if(path==="theme/post-types"&&method==="GET") return ok({items:await listPostTypes(env,siteId),site:siteId});

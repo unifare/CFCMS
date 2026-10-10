@@ -547,8 +547,8 @@ const SCENARIOS = [
     // guard is how an operator discovers their front page is gone.
     label: "theme uninstall accepts a theme a site is still using",
     file: API,
-    before: ['  if(sites.length) return ok({error:`still active on: ${sites.join(", ")}`},409);'],
-    after: [''],
+    before: ["  if(sites.length && !force) return ok({error:`still active on: ${sites.join(\", \")}`},409);"],
+    after: [""],
     runs: [["tests/suites/theme-integration.test.mjs", "uninstalling the active theme is refused"]],
   },
   // The other half of uninstalling: what it removes *besides* the obvious three.
@@ -884,6 +884,19 @@ const SCENARIOS = [
     before: ["    const versions = Array.isArray(x.locales) && x.locales.length ? x.locales : [x.locale].filter(Boolean);"],
     after: ["    const versions = [x.locale].filter(Boolean);"],
     runs: [["tests/suites/admin-spa.test.mjs", "the list shows a badge per language version the post has"]],
+  },
+  // --- a refusal must have an exit: forced theme uninstall (batch 25) --------
+  {
+    // The historical shape, verbatim: the uninstall refused whenever any site
+    // rendered the theme, force or no force. The screen could only explain
+    // the refusal — "deactivate it there first" — with no way to do that from
+    // where the operator stood, which is how "this theme cannot be deleted"
+    // gets believed.
+    label: "the theme uninstall refuses even when forced",
+    file: API,
+    before: ["  if(sites.length && !force) return ok({error:`still active on: ${sites.join(\", \")}`},409);"],
+    after: ["  if(sites.length) return ok({error:`still active on: ${sites.join(\", \")}`},409);"],
+    runs: [["tests/suites/theme-integration.test.mjs", "a forced uninstall is accepted while the theme is in use"]],
   },
 ];
 

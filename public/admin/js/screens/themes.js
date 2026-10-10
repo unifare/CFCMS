@@ -110,27 +110,34 @@ document.addEventListener("click", async (e) => {
   const del = e.target.closest("[data-theme-del]");
   if (del) {
     const name = del.dataset.themeDel;
-    // A theme another site is rendering cannot be uninstalled — the endpoint
-    // answers 409. The card already knows which sites those are, so say it
-    // before sending a request whose only possible answer is the refusal.
-    // (The 409 stays as the authority; this only spares the round trip, and a
-    // site that activates the theme in between is still caught by it.)
+    // A theme another site is rendering is refused with a 409 — but a refusal
+    // without an exit is how "this theme cannot be deleted" gets believed.
+    // The card already knows the occupying sites, so the dialog offers the
+    // real way out: deactivate there (those sites fall back to the bundled
+    // default) and uninstall. The 409 stays as the authority for the
+    // unforced call; a site that activates the theme in between is caught by it.
     const used = (del.dataset.themeDelSites || "").split(",").filter(Boolean);
+    let force = false;
     if (used.length) {
-      await alertDialog({
+      const go = await confirmDialog({
         title: t("core.themes.uninstallTitle", "Uninstall this theme?"),
-        description: t("core.themes.stillActive", "Still active on: {sites}. Deactivate it there first.", { sites: used.join(", ") }),
+        description: t("core.themes.forceDesc",
+          "Still active on: {sites}. Uninstalling deactivates it there — those sites fall back to the default theme — and removes its files and data.",
+          { sites: used.join(", ") }),
+        confirmLabel: t("core.themes.forceConfirm", "Deactivate & uninstall"),
       });
-      return;
+      if (!go) return;
+      force = true;
+    } else {
+      const sure = await confirmDialog({
+        title: t("core.themes.uninstallTitle", "Uninstall this theme?"),
+        description: t("core.themes.uninstallDesc", "Removes its files, registry row and generated tables. A theme that is still active on a site cannot be uninstalled."),
+        confirmLabel: t("core.themes.uninstall", "Uninstall"),
+      });
+      if (!sure) return;
     }
-    const sure = await confirmDialog({
-      title: t("core.themes.uninstallTitle", "Uninstall this theme?"),
-      description: t("core.themes.uninstallDesc", "Removes its files, registry row and generated tables. A theme that is still active on a site cannot be uninstalled."),
-      confirmLabel: t("core.themes.uninstall", "Uninstall"),
-    });
-    if (!sure) return;
     try {
-      await api(`extensions/themes/${encodeURIComponent(name)}`, { method: "DELETE" });
+      await api(`extensions/themes/${encodeURIComponent(name)}${force ? "?force=1" : ""}`, { method: "DELETE" });
       toast(t("core.themes.uninstalled", "Theme uninstalled"));
       render();
     } catch (err) {

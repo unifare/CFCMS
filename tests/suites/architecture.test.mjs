@@ -2140,6 +2140,39 @@ section("Switching a language version is a fetch, not a rename (rule 71)");
 }
 
 // ---------------------------------------------------------------------------
+section("A refusal must have an exit: forced theme uninstall (rule 72)");
+// ---------------------------------------------------------------------------
+
+/**
+ * The themes screen told an operator whose theme was active elsewhere:
+ * "Still active on: de. Deactivate it there first." — with no way to do that
+ * from where they stood, and the occupying site possibly being one they had
+ * just been handed by a test run. The 409 is the right *authority* (a theme
+ * that renders a live site must not vanish silently), but a refusal with no
+ * way out is how "this theme cannot be deleted" gets believed — the same
+ * shape as the dead anchor and the unreachable dialog: the UI said something
+ * true and useless.
+ *
+ * The exit is explicit: `?force=1` deactivates the theme on every occupying
+ * site (they fall back to the bundled default, which rule 66 keeps renderable)
+ * and then removes it. Two structural claims:
+ *   1. the refusal is conditional on force being absent;
+ *   2. the forced path repoints the occupying sites before removing anything.
+ */
+{
+  const apiSrc = blankComments(read(join(ROOT, "src/api.ts")));
+
+  check(
+    "the uninstall refusal is conditional on force (rule 72)",
+    /if\(sites\.length && !force\)/.test(apiSrc)
+  );
+  check(
+    "the forced path deactivates occupants onto the bundled default (rule 72b)",
+    /UPDATE settings SET value='default' WHERE site_id=\? AND key='theme\.active'/.test(apiSrc)
+  );
+}
+
+// ---------------------------------------------------------------------------
 section("This suite's own assertions can actually fail (meta-guard)");
 // ---------------------------------------------------------------------------
 

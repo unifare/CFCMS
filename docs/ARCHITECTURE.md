@@ -2265,6 +2265,17 @@ SPA 的 `if (d.error)` 分支因此不可达，错误对话框要 `explain(err.m
    守卫：`architecture.test.mjs`（规则 71 节，3 条）；行为：`admin-spa.test.mjs`（切换后
    标题/块/徽标来自目标语言）+ `admin-contract.test.mjs` §12；注入 `_skeleton-inject.mjs`
    （4 条：编辑器只改名 / 列表钉死语言 / 丢 `locales` / 列表只显示行自己的语言）
+
+【拒绝必须带出口：强制卸载】（AGENTS.md 规则 72，批次 25）
+72. 主题被占用时卸载 409，屏幕只说"请先在那里停用"——**没有出口的拒绝**就是
+    "这个主题删不掉"的来源（与死锚点/不可达对话框同族：真实但没用的真话）
+   a) 409 仍是**无条件强制路径**的权威：不带 force 照样拒绝；出口是显式确认（`?force=1`）
+   b) 强制卸载先把占用站点的 `theme.active` 改回**捆绑默认主题**（规则 66 保证可渲染），
+      再走同一条全局卸载清理（能力/菜单/设置/生成表/文件按主题名本来就是全局删）
+   c) SPA 占用卡片弹**确认**（列站点 + 说明回落），不是死胡同提示框
+   守卫：`architecture.test.mjs`（规则 72 节，2 条）；行为：`theme-integration.test.mjs` §9
+   （占用中 force=1 → 200 + 占用站点回落 default）；注入 `_skeleton-inject.mjs`
+   （force 被无视，历史形状逐字）
 ```
 
 ---

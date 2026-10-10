@@ -711,6 +711,34 @@ async function main() {
   check("uninstalling a theme in use is refused",
     (await req(worker, env, "/api/v1/extensions/themes/uninstallme", { method: "DELETE", headers: authHeaders })).status, 409);
 
+  // The operator's way out: a **forced** uninstall deactivates the theme on
+  // every site that renders it (they fall back to the bundled default, which
+  // rule 66 keeps renderable everywhere) and then removes it. The refusal
+  // above stays the authority for the unforced call — force is an explicit
+  // confirmation, not a default.
+  const forced = await req(worker, env, "/api/v1/extensions/themes/uninstallme?force=1", { method: "DELETE", headers: authHeaders });
+  check("a forced uninstall is accepted while the theme is in use", forced.status, 200);
+  check("and the occupying site falls back to the bundled default",
+    sqlite.prepare("SELECT value FROM settings WHERE site_id='default' AND key='theme.active'").get().value, "default");
+  check("and the theme is really gone",
+    (await (await req(worker, env, "/api/v1/extensions/themes", { headers: authHeaders })).json()).items.some((x) => x.name === "uninstallme"), false);
+
+  // Re-upload and re-activate so the section below can prove the *unforced*
+  // path's cleanup against the same leftover faces (menus, settings, tables).
+  // The activation is idempotent upsert, so this rebuilds exactly the state
+  // the first activation left.
+  const up3 = await req(worker, env, "/api/v1/extensions/themes/upload", {
+    method: "POST", headers: authHeaders,
+    body: (() => {
+      const fd = new FormData();
+      fd.append("file", new File([buildThemeZip("uninstallme")], "uninstallme.zip", { type: "application/zip" }));
+      return fd;
+    })(),
+  });
+  check("throwaway theme re-uploaded for the unforced path", up3.status, 201);
+  const reAct = await req(worker, env, "/api/v1/extensions/themes/uninstallme/activate", { method: "POST", headers: authHeaders });
+  check("and re-activated", (await reAct.json()).ok, true);
+
   // Make it unused *without* going through deactivation. Deactivation clears the
   // owner's admin menus itself, so switching the site away first would erase the
   // very rows this section exists to prove the uninstall removes. A missing
