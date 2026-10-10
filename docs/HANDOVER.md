@@ -256,6 +256,19 @@ x-default）；`/{locale}/feed.xml`；`lang_nav` 切换器进 scope。规则 56�
 - **错误结论比没有结论更持久**：10ms CPU 的成本分析看起来像测量，于是 reading_time
   缺席了整整两批没人质疑。量它只花了一分钟——`attachMeta` 的循环就在那里。
 
+**线上部署与验证（2026-10-11）**
+
+- `migrations apply --remote`（0019 ✅）→ `deploy`（6 个主题资产更新、三条 `CFPRESS_*` binding 可见）。
+- **部署后 `/zh-CN/blog` 404**：新声明的 `routes[]` 只在**激活**时 upsert 进 `theme_routes`，而
+  `ensureThemeCapabilities` 的计数谓词看到主题**已拥有**能力行就跳过——它是"从零修复"，不是"增量同步"。
+  管理员重新激活后返回 `"routes":1`，归档立即生效。**运行事实：主题清单新增声明（routes/blocks/…）
+  在既有安装上需要重新激活该主题**（新安装不受影响——boot 链从零装）。
+- 播种前实测旧 `''` 行照旧渲染（中文页仍显示 Design/Life/Technology）——**阶梯第 2 层在线上成立**；
+  重新播种 12×200 后 `/zh-CN` 显示 设计/生活/技术。
+- 线上终验 **17 项全过**：`/zh-CN/blog` 与 `/en/blog` 各 5 卡（中文卡用中文 slug：`/zh-CN/blog/ni-hao-shi-jie`）、
+  文章 kicker `设计 · CFPress` / `Design · CFPress`（原 "Long read"）、导航双语言指向 `/blog`、
+  `id="sec-topics"` 恰一次、`/zh-CN/feed.xml` 5 条。
+
 **新基线**：**24 套件 / 1415 条 + `_schema-scope` 26 = 1441 条 / 0 失败**；
 `_skeleton-inject` **64 场景 / 0 问题**（本轮新增 5 条）；`tsc --noEmit` src/ 0 错误。
 
